@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
@@ -22,97 +22,108 @@ function computeStreak(logs: { date: string; checked_ids: string[] }[]) {
   return n
 }
 
-const draftKey = (name: string, date: string) => `superhuman-draft:${name}:${date}`
+const sameSet = (a: string[], b: string[]) =>
+  a.length === b.length && a.every(x => b.includes(x))
 
 export default function ChecklistPage() {
   const params   = useParams()
   const router   = useRouter()
   const username = decodeURIComponent(params.username as string)
 
-  const [userId,    setUserId]    = useState<string | null>(null)
-  const [checked,   setChecked]   = useState<string[]>([])
-  const [saved,     setSaved]     = useState<string[]>([])
-  const [streak,    setStreak]    = useState(0)
-  const [loading,   setLoading]   = useState(true)
-  const [saving,    setSaving]    = useState(false)
-  const [justSaved, setJustSaved] = useState(false)
+  const [userId,  setUserId]  = useState<string | null>(null)
+  const [checked, setChecked] = useState<string[]>([])
+  const [streak,  setStreak]  = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [status,  setStatus]  = useState<'idle' | 'saving' | 'saved'>('idle')
 
+  const checkedRef = useRef<string[]>([])
+  const saveTimer  = useRef<ReturnType<typeof setTimeout> | null>(null)
+  checkedRef.current = checked
+
+  const refreshStreak = useCallback(async (uid: string) => {
+    const from60 = toDateStr(new Date(Date.now() - 60 * 864e5))
+    const { data } = await supabase
+      .from('daily_logs').select('date, checked_ids')
+      .eq('user_id', uid).gte('date', from60)
+    setStreak(computeStreak(data ?? []))
+  }, [])
+
+  // initial load + realtime subscribe
   useEffect(() => {
+    let channel: ReturnType<typeof supabase.channel> | null = null
+
     async function init() {
       const { data: user } = await supabase
         .from('users').select('id').eq('name', username).single()
       if (!user) { router.push('/'); return }
-
       setUserId(user.id)
 
-      const today  = todayStr()
-      const from60 = toDateStr(new Date(Date.now() - 60 * 864e5))
+      const today = todayStr()
+      const { data: log } = await supabase
+        .from('daily_logs').select('checked_ids')
+        .eq('user_id', user.id).eq('date', today).single()
 
-      const [{ data: log }, { data: streakLogs }] = await Promise.all([
-        supabase.from('daily_logs').select('checked_ids')
-          .eq('user_id', user.id).eq('date', today).single(),
-        supabase.from('daily_logs').select('date, checked_ids')
-          .eq('user_id', user.id).gte('date', from60),
-      ])
-
-      const dbVal = log?.checked_ids ?? []
-
-      let working = dbVal
-      try {
-        const raw = localStorage.getItem(draftKey(username, today))
-        if (raw) working = JSON.parse(raw)
-      } catch {}
-
-      setChecked(working)
-      setSaved(dbVal)
-      setStreak(computeStreak(streakLogs ?? []))
+      setChecked(log?.checked_ids ?? [])
+      await refreshStreak(user.id)
       setLoading(false)
+
+      // realtime: dengerin perubahan row hari ini dari device manapun
+      channel = supabase
+        .channel(`logs:${user.id}:${today}`)
+        .on('postgres_changes',
+          { event: '*', schema: 'public', table: 'daily_logs', filter: `user_id=eq.${user.id}` },
+          (payload) => {
+            const row = payload.new as { date: string; checked_ids: string[] }
+            if (row?.date === todayStr()) {
+              const incoming = row.checked_ids ?? []
+              if (!sameSet(incoming, checkedRef.current)) setChecked(incoming)
+            }
+          })
+        .subscribe()
     }
     init()
-  }, [username, router])
+
+    return () => { if (channel) supabase.removeChannel(channel) }
+  }, [username, router, refreshStreak])
+
+  // simpen ke DB (debounced)
+  const persist = useCallback((next: string[]) => {
+    if (saveTimer.current) clearTimeout(saveTimer.current)
+    setStatus('saving')
+    saveTimer.current = setTimeout(async () => {
+      const uid = userId
+      if (!uid) return
+      const { error } = await supabase.from('daily_logs').upsert(
+        { user_id: uid, date: todayStr(), checked_ids: next, updated_at: new Date().toISOString() },
+        { onConflict: 'user_id,date' }
+      )
+      if (!error) {
+        setStatus('saved')
+        refreshStreak(uid)
+        setTimeout(() => setStatus('idle'), 1500)
+      } else {
+        setStatus('idle')
+      }
+    }, 500)
+  }, [userId, refreshStreak])
 
   const toggle = useCallback((id: string) => {
-    setJustSaved(false)
     setChecked(prev => {
       const next = prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id]
-      try { localStorage.setItem(draftKey(username, todayStr()), JSON.stringify(next)) } catch {}
+      persist(next)
       return next
     })
-  }, [username])
+  }, [persist])
 
   const resetDay = () => {
-    setJustSaved(false)
     setChecked([])
-    try { localStorage.setItem(draftKey(username, todayStr()), JSON.stringify([])) } catch {}
-  }
-
-  const submit = async () => {
-    if (!userId) return
-    setSaving(true)
-    const { error } = await supabase.from('daily_logs').upsert(
-      { user_id: userId, date: todayStr(), checked_ids: checked, updated_at: new Date().toISOString() },
-      { onConflict: 'user_id,date' }
-    )
-    setSaving(false)
-    if (!error) {
-      setSaved(checked)
-      setJustSaved(true)
-      try { localStorage.setItem(draftKey(username, todayStr()), JSON.stringify(checked)) } catch {}
-      const from60 = toDateStr(new Date(Date.now() - 60 * 864e5))
-      const { data: streakLogs } = await supabase
-        .from('daily_logs').select('date, checked_ids')
-        .eq('user_id', userId).gte('date', from60)
-      setStreak(computeStreak(streakLogs ?? []))
-    } else {
-      alert('Gagal submit. Coba lagi.')
-    }
+    persist([])
   }
 
   const pct         = TOTAL ? Math.round((checked.length / TOTAL) * 100) : 0
   const p           = TOTAL ? checked.length / TOTAL : 0
   const anchorsDone = ANCHOR_IDS.filter(a => checked.includes(a)).length
   const allAnchors  = anchorsDone === ANCHOR_IDS.length
-  const dirty       = checked.length !== saved.length || checked.some(c => !saved.includes(c))
 
   if (loading) return (
     <div style={{ background: S.bg, minHeight: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: S.muted, fontFamily: '"IBM Plex Mono", monospace' }}>
@@ -121,7 +132,7 @@ export default function ChecklistPage() {
   )
 
   return (
-    <div style={{ background: S.bg, minHeight: '100dvh', color: S.ink, fontFamily: '"IBM Plex Sans", sans-serif', paddingBottom: 110 }}>
+    <div style={{ background: S.bg, minHeight: '100dvh', color: S.ink, fontFamily: '"IBM Plex Sans", sans-serif', paddingBottom: 80 }}>
       <div style={{ maxWidth: 560, margin: '0 auto', padding: '0 18px' }}>
 
         <header style={{ padding: '34px 0 18px', textAlign: 'center' }}>
@@ -159,11 +170,15 @@ export default function ChecklistPage() {
             <div style={{ height: '100%', width: `${pct}%`, background: `linear-gradient(90deg,${S.amber},${S.gold})`, boxShadow: `0 0 12px rgba(246,178,75,${.6 * p})`, transition: 'width 450ms ease' }} />
           </div>
 
-          <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 11, color: S.muted, textAlign: 'center', margin: '14px 0 8px' }}>
+          <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 11, color: S.muted, textAlign: 'center', margin: '14px 0 6px' }}>
             {allAnchors
-              ? <span>⚡ <strong style={{ color: S.amber }}>5 jangkar kelar — submit buat ngunci streak.</strong></span>
+              ? <span>⚡ <strong style={{ color: S.amber }}>5 jangkar kelar — hari ini lo menang.</strong></span>
               : <span>Jangkar wajib: <strong style={{ color: S.amber }}>{anchorsDone}/{ANCHOR_IDS.length}</strong> kelar buat streak jalan</span>
             }
+          </div>
+
+          <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 10, color: status === 'saved' ? S.amber : S.muted, opacity: status === 'idle' ? 0 : .9, height: 14, transition: 'opacity 300ms ease', marginBottom: 6 }}>
+            {status === 'saving' ? 'nyimpen…' : status === 'saved' ? '✓ tersimpan, sinkron semua device' : ''}
           </div>
 
           <Link href={`/${encodeURIComponent(username)}/history`} style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 11, color: S.amber, textDecoration: 'none', letterSpacing: '.08em' }}>
@@ -239,35 +254,9 @@ export default function ChecklistPage() {
             ← GANTI USER
           </Link>
           <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 10.5, color: S.muted, opacity: .65, lineHeight: 1.6, maxWidth: 300 }}>
-            Draft tersimpan otomatis. <strong>SUBMIT</strong> buat ngunci ke history + streak.
+            Centang auto-tersimpan ke cloud. Buka dari device manapun, progress lo tetap sama.
           </div>
         </footer>
-      </div>
-
-      <div style={{
-        position: 'fixed', bottom: 0, left: 0, right: 0,
-        background: 'linear-gradient(180deg, rgba(12,15,20,0) 0%, rgba(12,15,20,0.92) 30%)',
-        padding: '24px 18px 18px', display: 'flex', justifyContent: 'center',
-        pointerEvents: 'none',
-      }}>
-        <div style={{ width: '100%', maxWidth: 560, pointerEvents: 'auto' }}>
-          <button
-            onClick={submit}
-            disabled={saving || (!dirty && !justSaved)}
-            style={{
-              width: '100%', borderRadius: 14, padding: '16px',
-              fontFamily: '"Space Grotesk", sans-serif', fontWeight: 700, fontSize: 15,
-              cursor: saving || !dirty ? 'default' : 'pointer',
-              color: dirty ? S.bg : S.muted,
-              background: dirty ? `linear-gradient(135deg,${S.amber},${S.gold})` : S.panel,
-              border: dirty ? 'none' : `1px solid ${S.line}`,
-              boxShadow: dirty ? '0 4px 24px rgba(246,178,75,.3)' : 'none',
-              transition: 'all 200ms ease',
-            }}
-          >
-            {saving ? 'NYIMPEN...' : dirty ? `SUBMIT PROGRESS (${pct}%)` : justSaved ? '✓ TERSIMPAN' : 'BELUM ADA PERUBAHAN'}
-          </button>
-        </div>
       </div>
     </div>
   )
