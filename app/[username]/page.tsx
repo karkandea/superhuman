@@ -22,17 +22,19 @@ function computeStreak(logs: { date: string; checked_ids: string[] }[]) {
   return n
 }
 
+const draftKey = (name: string, date: string) => `superhuman-draft:${name}:${date}`
+
 export default function ChecklistPage() {
   const params   = useParams()
   const router   = useRouter()
   const username = decodeURIComponent(params.username as string)
 
-  const [userId,  setUserId]  = useState<string | null>(null)
-  const [checked, setChecked] = useState<string[]>([])
-  const [saved,   setSaved]   = useState<string[]>([])   // versi terakhir di DB
-  const [streak,  setStreak]  = useState(0)
-  const [loading, setLoading] = useState(true)
-  const [saving,  setSaving]  = useState(false)
+  const [userId,    setUserId]    = useState<string | null>(null)
+  const [checked,   setChecked]   = useState<string[]>([])
+  const [saved,     setSaved]     = useState<string[]>([])
+  const [streak,    setStreak]    = useState(0)
+  const [loading,   setLoading]   = useState(true)
+  const [saving,    setSaving]    = useState(false)
   const [justSaved, setJustSaved] = useState(false)
 
   useEffect(() => {
@@ -43,8 +45,8 @@ export default function ChecklistPage() {
 
       setUserId(user.id)
 
-      const today   = todayStr()
-      const from60  = toDateStr(new Date(Date.now() - 60 * 864e5))
+      const today  = todayStr()
+      const from60 = toDateStr(new Date(Date.now() - 60 * 864e5))
 
       const [{ data: log }, { data: streakLogs }] = await Promise.all([
         supabase.from('daily_logs').select('checked_ids')
@@ -53,27 +55,37 @@ export default function ChecklistPage() {
           .eq('user_id', user.id).gte('date', from60),
       ])
 
-      const init = log?.checked_ids ?? []
-      setChecked(init)
-      setSaved(init)
+      const dbVal = log?.checked_ids ?? []
+
+      let working = dbVal
+      try {
+        const raw = localStorage.getItem(draftKey(username, today))
+        if (raw) working = JSON.parse(raw)
+      } catch {}
+
+      setChecked(working)
+      setSaved(dbVal)
       setStreak(computeStreak(streakLogs ?? []))
       setLoading(false)
     }
     init()
   }, [username, router])
 
-  // toggle = ubah lokal doang, GA langsung ke DB
   const toggle = useCallback((id: string) => {
     setJustSaved(false)
-    setChecked(prev => prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id])
-  }, [])
+    setChecked(prev => {
+      const next = prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id]
+      try { localStorage.setItem(draftKey(username, todayStr()), JSON.stringify(next)) } catch {}
+      return next
+    })
+  }, [username])
 
   const resetDay = () => {
     setJustSaved(false)
     setChecked([])
+    try { localStorage.setItem(draftKey(username, todayStr()), JSON.stringify([])) } catch {}
   }
 
-  // SUBMIT = baru rekam ke DB
   const submit = async () => {
     if (!userId) return
     setSaving(true)
@@ -85,7 +97,7 @@ export default function ChecklistPage() {
     if (!error) {
       setSaved(checked)
       setJustSaved(true)
-      // refresh streak abis submit
+      try { localStorage.setItem(draftKey(username, todayStr()), JSON.stringify(checked)) } catch {}
       const from60 = toDateStr(new Date(Date.now() - 60 * 864e5))
       const { data: streakLogs } = await supabase
         .from('daily_logs').select('date, checked_ids')
@@ -100,9 +112,7 @@ export default function ChecklistPage() {
   const p           = TOTAL ? checked.length / TOTAL : 0
   const anchorsDone = ANCHOR_IDS.filter(a => checked.includes(a)).length
   const allAnchors  = anchorsDone === ANCHOR_IDS.length
-
-  // dirty = ada perubahan yg belum di-submit
-  const dirty = checked.length !== saved.length || checked.some(c => !saved.includes(c))
+  const dirty       = checked.length !== saved.length || checked.some(c => !saved.includes(c))
 
   if (loading) return (
     <div style={{ background: S.bg, minHeight: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: S.muted, fontFamily: '"IBM Plex Mono", monospace' }}>
@@ -114,7 +124,6 @@ export default function ChecklistPage() {
     <div style={{ background: S.bg, minHeight: '100dvh', color: S.ink, fontFamily: '"IBM Plex Sans", sans-serif', paddingBottom: 110 }}>
       <div style={{ maxWidth: 560, margin: '0 auto', padding: '0 18px' }}>
 
-        {/* ── HEADER ── */}
         <header style={{ padding: '34px 0 18px', textAlign: 'center' }}>
           <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 12, letterSpacing: '.18em', textTransform: 'uppercase', color: S.muted }}>
             SELAMAT PAGI · {username.toUpperCase()}
@@ -135,7 +144,6 @@ export default function ChecklistPage() {
             </span>
           </h1>
 
-          {/* meters */}
           <div style={{ display: 'flex', gap: 12, margin: '22px 0 6px' }}>
             <div style={{ flex: 1, background: S.panel, border: `1px solid ${S.line}`, borderRadius: 16, padding: '14px 16px' }}>
               <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontWeight: 600, fontSize: 26, color: p > 0.5 ? S.gold : S.ink }}>{pct}%</div>
@@ -147,12 +155,10 @@ export default function ChecklistPage() {
             </div>
           </div>
 
-          {/* bar */}
           <div style={{ height: 6, borderRadius: 99, background: '#1c222c', overflow: 'hidden' }}>
             <div style={{ height: '100%', width: `${pct}%`, background: `linear-gradient(90deg,${S.amber},${S.gold})`, boxShadow: `0 0 12px rgba(246,178,75,${.6 * p})`, transition: 'width 450ms ease' }} />
           </div>
 
-          {/* anchor status */}
           <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 11, color: S.muted, textAlign: 'center', margin: '14px 0 8px' }}>
             {allAnchors
               ? <span>⚡ <strong style={{ color: S.amber }}>5 jangkar kelar — submit buat ngunci streak.</strong></span>
@@ -165,7 +171,6 @@ export default function ChecklistPage() {
           </Link>
         </header>
 
-        {/* ── SECTIONS ── */}
         <main>
           {DATA.map(sec => (
             <section key={sec.title} style={{ marginTop: 26 }}>
@@ -223,7 +228,6 @@ export default function ChecklistPage() {
           ))}
         </main>
 
-        {/* ── FOOTER ── */}
         <footer style={{ marginTop: 30, textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center' }}>
           <button
             onClick={resetDay}
@@ -235,12 +239,11 @@ export default function ChecklistPage() {
             ← GANTI USER
           </Link>
           <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 10.5, color: S.muted, opacity: .65, lineHeight: 1.6, maxWidth: 300 }}>
-            Centang dulu, terus <strong>SUBMIT</strong> buat ngerekam progress. 5 jangkar <strong>WAJIB</strong> = syarat streak jalan.
+            Draft tersimpan otomatis. <strong>SUBMIT</strong> buat ngunci ke history + streak.
           </div>
         </footer>
       </div>
 
-      {/* ── STICKY SUBMIT BAR ── */}
       <div style={{
         position: 'fixed', bottom: 0, left: 0, right: 0,
         background: 'linear-gradient(180deg, rgba(12,15,20,0) 0%, rgba(12,15,20,0.92) 30%)',
