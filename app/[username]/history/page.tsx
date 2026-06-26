@@ -131,7 +131,7 @@ export default function HistoryPage() {
                 contentStyle={{ background: S.panel, border: `1px solid ${S.line}`, borderRadius: 8, fontFamily: '"IBM Plex Mono", monospace', fontSize: 11 }}
                 labelStyle={{ color: S.muted }}
                 itemStyle={{ color: S.amber }}
-                formatter={(v: number) => [`${v}%`, 'Completion']}
+                formatter={(v) => [`${v}%`, 'Completion']}
               />
               <Bar dataKey="pct" radius={[4, 4, 0, 0]}>
                 {days.map((d, i) => (
