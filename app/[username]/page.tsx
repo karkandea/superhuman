@@ -252,7 +252,7 @@ export default function ChecklistPage() {
             onClick={submit}
             disabled={saving || (!dirty && !justSaved)}
             style={{
-              width: '100%', border: 'none', borderRadius: 14, padding: '16px',
+              width: '100%', borderRadius: 14, padding: '16px',
               fontFamily: '"Space Grotesk", sans-serif', fontWeight: 700, fontSize: 15,
               cursor: saving || !dirty ? 'default' : 'pointer',
               color: dirty ? S.bg : S.muted,
