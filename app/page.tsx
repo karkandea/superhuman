@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { SEED_ITEMS } from '@/lib/checklist-data'
 
 const S = {
   bg: '#0c0f14', panel: '#13171f', line: '#232a35',
@@ -13,12 +14,12 @@ interface User { id: string; name: string }
 
 export default function HomePage() {
   const router = useRouter()
-  const [users,    setUsers]    = useState<User[]>([])
+  const [users, setUsers] = useState<User[]>([])
   const [loginName, setLoginName] = useState('')
-  const [newName,  setNewName]  = useState('')
-  const [loading,  setLoading]  = useState(true)
-  const [adding,   setAdding]   = useState(false)
-  const [busy,     setBusy]     = useState(false)
+  const [newName, setNewName] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [adding, setAdding] = useState(false)
+  const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     supabase.from('users').select('id, name').order('created_at').then(({ data }) => {
@@ -27,7 +28,6 @@ export default function HomePage() {
     })
   }, [])
 
-  // login user existing — cukup nama
   const login = async () => {
     const name = loginName.trim()
     if (!name) return
@@ -48,6 +48,11 @@ export default function HomePage() {
     setAdding(true)
     const { data, error } = await supabase.from('users').insert({ name }).select().single()
     if (!error && data) {
+      const seedRows = SEED_ITEMS.map((it, i) => ({
+        user_id: data.id, label: it.label, category: it.category,
+        anchor: !!it.anchor, sort_order: i,
+      }))
+      await supabase.from('checklist_items').insert(seedRows)
       router.push(`/${encodeURIComponent(data.name)}`)
     } else {
       alert('Nama sudah ada atau error. Coba nama lain.')
@@ -79,26 +84,18 @@ export default function HomePage() {
           Masuk dulu.
         </h1>
 
-        {/* ── LOGIN ── */}
         <div style={{ background: S.panel, border: `1px solid ${S.line}`, borderRadius: 16, padding: 20, marginBottom: 16 }}>
           <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 11, color: S.muted, marginBottom: 12, letterSpacing: '.08em' }}>
             LOGIN — KETIK NAMA LO
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
-            <input
-              value={loginName}
-              onChange={e => setLoginName(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && login()}
-              placeholder="Nama lo..."
-              style={inputStyle}
-            />
+            <input value={loginName} onChange={e => setLoginName(e.target.value)} onKeyDown={e => e.key === 'Enter' && login()} placeholder="Nama lo..." style={inputStyle} />
             <button onClick={login} disabled={busy || !loginName.trim()} style={btnStyle(busy || !loginName.trim())}>
               {busy ? '...' : 'MASUK'}
             </button>
           </div>
         </div>
 
-        {/* ── QUICK PICK ── */}
         {loading ? (
           <div style={{ textAlign: 'center', color: S.muted, fontFamily: '"IBM Plex Mono", monospace', fontSize: 12, marginBottom: 16 }}>loading...</div>
         ) : users.length > 0 && (
@@ -108,16 +105,12 @@ export default function HomePage() {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {users.map(u => (
-                <button
-                  key={u.id}
-                  onClick={() => router.push(`/${encodeURIComponent(u.name)}`)}
-                  style={{
-                    background: S.panel, border: `1px solid ${S.line}`, borderRadius: 12,
-                    padding: '14px 18px', textAlign: 'left', color: S.ink, cursor: 'pointer',
-                    fontFamily: '"Space Grotesk", sans-serif', fontWeight: 600, fontSize: 15,
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  }}
-                >
+                <button key={u.id} onClick={() => router.push(`/${encodeURIComponent(u.name)}`)} style={{
+                  background: S.panel, border: `1px solid ${S.line}`, borderRadius: 12,
+                  padding: '14px 18px', textAlign: 'left', color: S.ink, cursor: 'pointer',
+                  fontFamily: '"Space Grotesk", sans-serif', fontWeight: 600, fontSize: 15,
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                }}>
                   {u.name}
                   <span style={{ color: S.amber }}>→</span>
                 </button>
@@ -126,19 +119,12 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* ── ADD USER ── */}
         <div style={{ background: S.panel, border: `1px solid ${S.line}`, borderRadius: 16, padding: 20 }}>
           <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 11, color: S.muted, marginBottom: 12, letterSpacing: '.08em' }}>
             TAMBAH USER BARU
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
-            <input
-              value={newName}
-              onChange={e => setNewName(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && addUser()}
-              placeholder="Nama baru..."
-              style={inputStyle}
-            />
+            <input value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === 'Enter' && addUser()} placeholder="Nama baru..." style={inputStyle} />
             <button onClick={addUser} disabled={adding || !newName.trim()} style={btnStyle(adding || !newName.trim())}>
               {adding ? '...' : 'ADD'}
             </button>

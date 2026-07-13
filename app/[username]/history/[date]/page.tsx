@@ -4,12 +4,14 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
-import { DATA, TOTAL, ANCHOR_IDS, toDateStr } from '@/lib/checklist-data'
+import { CATEGORY_ORDER, CATEGORY_LABEL, Category, toDateStr } from '@/lib/checklist-data'
 
 const S = {
   bg: '#0c0f14', panel: '#13171f', line: '#232a35',
   ink: '#ECEAE3', muted: '#7e8795', amber: '#f6b24b', gold: '#ffd488',
 } as const
+
+interface Item { id: string; label: string; category: Category; anchor: boolean; is_deleted: boolean; sort_order: number }
 
 export default function DayDetailPage() {
   const params   = useParams()
@@ -18,6 +20,7 @@ export default function DayDetailPage() {
   const date     = params.date as string
 
   const [checked, setChecked] = useState<string[]>([])
+  const [items,   setItems]   = useState<Item[]>([])
   const [found,   setFound]   = useState(false)
   const [loading, setLoading] = useState(true)
 
@@ -27,21 +30,26 @@ export default function DayDetailPage() {
         .from('users').select('id').eq('name', username).single()
       if (!user) { router.push('/'); return }
 
-      const { data: log } = await supabase
-        .from('daily_logs').select('checked_ids')
-        .eq('user_id', user.id).eq('date', date).single()
+      const [{ data: log }, { data: itemRows }] = await Promise.all([
+        supabase.from('daily_logs').select('checked_ids').eq('user_id', user.id).eq('date', date).single(),
+        supabase.from('checklist_items').select('id,label,category,anchor,is_deleted,sort_order')
+          .eq('user_id', user.id).lte('created_at', `${date}T23:59:59`)
+          .order('sort_order', { ascending: true }),
+      ])
 
       setChecked(log?.checked_ids ?? [])
+      setItems(itemRows ?? [])
       setFound(!!log)
       setLoading(false)
     }
     init()
   }, [username, date, router])
 
-  const pct         = TOTAL ? Math.round((checked.length / TOTAL) * 100) : 0
-  const p           = TOTAL ? checked.length / TOTAL : 0
-  const anchorsDone = ANCHOR_IDS.filter(a => checked.includes(a)).length
-  const allAnchors  = anchorsDone === ANCHOR_IDS.length
+  const total        = items.length
+  const pct          = total ? Math.round((checked.length / total) * 100) : 0
+  const anchorItems  = items.filter(i => i.anchor)
+  const anchorsDone  = anchorItems.filter(i => checked.includes(i.id)).length
+  const allAnchors   = anchorItems.length > 0 && anchorsDone === anchorItems.length
 
   const today     = toDateStr(new Date())
   const yesterday = toDateStr(new Date(Date.now() - 864e5))
@@ -83,19 +91,19 @@ export default function DayDetailPage() {
                   <div style={{ fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase', color: S.muted }}>Progress</div>
                 </div>
                 <div style={{ flex: 1, background: S.panel, border: `1px solid ${S.line}`, borderRadius: 16, padding: '14px 16px' }}>
-                  <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontWeight: 600, fontSize: 26, color: S.amber }}>{checked.length}/{TOTAL}</div>
+                  <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontWeight: 600, fontSize: 26, color: S.amber }}>{checked.length}/{total}</div>
                   <div style={{ fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase', color: S.muted }}>Item selesai</div>
                 </div>
               </div>
 
               <div style={{ height: 6, borderRadius: 99, background: '#1c222c', overflow: 'hidden', margin: '16px 0 10px' }}>
-                <div style={{ height: '100%', width: `${pct}%`, background: `linear-gradient(90deg,${S.amber},${S.gold})`, transition: 'width 450ms ease' }} />
+                <div style={{ height: '100%', width: `${pct}%`, background: `linear-gradient(90deg,${S.amber},${S.gold})` }} />
               </div>
 
               <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 11, color: S.muted, textAlign: 'center' }}>
                 {allAnchors
-                  ? <span>⚡ <strong style={{ color: S.amber }}>5 jangkar kelar hari itu.</strong></span>
-                  : <span>Jangkar wajib: <strong style={{ color: S.amber }}>{anchorsDone}/{ANCHOR_IDS.length}</strong> kelar</span>
+                  ? <span>⚡ <strong style={{ color: S.amber }}>jangkar kelar hari itu.</strong></span>
+                  : <span>Jangkar wajib: <strong style={{ color: S.amber }}>{anchorsDone}/{anchorItems.length}</strong> kelar</span>
                 }
               </div>
             </>
@@ -103,54 +111,48 @@ export default function DayDetailPage() {
         </header>
 
         <main>
-          {DATA.map(sec => (
-            <section key={sec.title} style={{ marginTop: 26 }}>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, margin: '0 2px 10px' }}>
-                <span style={{ fontFamily: '"Space Grotesk", sans-serif', fontWeight: 600, fontSize: 16 }}>{sec.title}</span>
-                <span style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 11, color: S.muted, marginLeft: 'auto' }}>{sec.clock}</span>
-              </div>
-              <div style={{ background: S.panel, border: `1px solid ${S.line}`, borderRadius: 18, overflow: 'hidden' }}>
-                {sec.items.map((item, idx) => {
-                  const done = checked.includes(item.id)
-                  return (
-                    <div
-                      key={item.id}
-                      style={{
-                        display: 'flex', alignItems: 'flex-start', gap: 13,
-                        padding: '15px 16px',
-                        borderTop: idx === 0 ? 'none' : `1px solid ${S.line}`,
-                        background: done ? 'rgba(246,178,75,0.03)' : 'transparent',
-                      }}
-                    >
-                      <span style={{
-                        flexShrink: 0, width: 22, height: 22, borderRadius: 7, marginTop: 1,
-                        display: 'grid', placeItems: 'center',
-                        border: done ? 'none' : '1.6px solid #39414e',
-                        background: done ? `linear-gradient(135deg,${S.amber},${S.gold})` : 'transparent',
-                        boxShadow: done ? '0 0 14px rgba(246,178,75,.55)' : 'none',
-                      }}>
-                        {done && (
-                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={S.bg} strokeWidth="3.4">
-                            <polyline points="20 6 9 17 4 12" />
-                          </svg>
-                        )}
-                      </span>
-                      <span style={{ fontSize: 14.5, lineHeight: 1.4, letterSpacing: '.005em', color: done ? S.ink : S.muted }}>
-                        {item.label}
-                        {item.anchor && (
-                          <span style={{
-                            display: 'inline-block', fontFamily: '"IBM Plex Mono", monospace',
-                            fontSize: 9.5, letterSpacing: '.1em', border: `1px solid rgba(246,178,75,.5)`,
-                            color: S.amber, borderRadius: 6, padding: '1px 5px', marginLeft: 7, verticalAlign: '1.5px',
-                          }}>WAJIB</span>
-                        )}
-                      </span>
-                    </div>
-                  )
-                })}
-              </div>
-            </section>
-          ))}
+          {CATEGORY_ORDER.map(cat => {
+            const catItems = items.filter(i => i.category === cat)
+            if (catItems.length === 0) return null
+            return (
+              <section key={cat} style={{ marginTop: 26 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, margin: '0 2px 10px' }}>
+                  <span style={{ fontFamily: '"Space Grotesk", sans-serif', fontWeight: 600, fontSize: 16 }}>{CATEGORY_LABEL[cat]}</span>
+                </div>
+                <div style={{ background: S.panel, border: `1px solid ${S.line}`, borderRadius: 18, overflow: 'hidden' }}>
+                  {catItems.map((item, idx) => {
+                    const done = checked.includes(item.id)
+                    return (
+                      <div key={item.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 13, padding: '15px 16px', borderTop: idx === 0 ? 'none' : `1px solid ${S.line}`, background: done ? 'rgba(246,178,75,0.03)' : 'transparent' }}>
+                        <span style={{
+                          flexShrink: 0, width: 22, height: 22, borderRadius: 7, marginTop: 1,
+                          display: 'grid', placeItems: 'center',
+                          border: done ? 'none' : '1.6px solid #39414e',
+                          background: done ? `linear-gradient(135deg,${S.amber},${S.gold})` : 'transparent',
+                          boxShadow: done ? '0 0 14px rgba(246,178,75,.55)' : 'none',
+                        }}>
+                          {done && (
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={S.bg} strokeWidth="3.4">
+                              <polyline points="20 6 9 17 4 12" />
+                            </svg>
+                          )}
+                        </span>
+                        <span style={{ fontSize: 14.5, lineHeight: 1.4, color: done ? S.ink : S.muted }}>
+                          {item.label}
+                          {item.anchor && (
+                            <span style={{ display: 'inline-block', fontFamily: '"IBM Plex Mono", monospace', fontSize: 9.5, letterSpacing: '.1em', border: `1px solid rgba(246,178,75,.5)`, color: S.amber, borderRadius: 6, padding: '1px 5px', marginLeft: 7, verticalAlign: '1.5px' }}>WAJIB</span>
+                          )}
+                          {item.is_deleted && (
+                            <span style={{ display: 'inline-block', fontFamily: '"IBM Plex Mono", monospace', fontSize: 9.5, letterSpacing: '.05em', color: S.muted, marginLeft: 7 }}>[dihapus]</span>
+                          )}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </section>
+            )
+          })}
         </main>
       </div>
     </div>

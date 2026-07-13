@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import { supabase } from '@/lib/supabase'
-import { TOTAL, ANCHOR_IDS, toDateStr } from '@/lib/checklist-data'
+import { toDateStr } from '@/lib/checklist-data'
 
 const S = {
   bg: '#0c0f14', panel: '#13171f', line: '#232a35',
@@ -18,11 +18,13 @@ interface DayData {
   fullLabel: string
   pct: number
   done: number
-  anchors: number
+  total: number
+  anchorsDone: number
+  anchorsTotal: number
 }
 
 function computeStreak(days: DayData[]) {
-  const qualSet = new Set(days.filter(d => d.anchors === ANCHOR_IDS.length).map(d => d.date))
+  const qualSet = new Set(days.filter(d => d.anchorsTotal > 0 && d.anchorsDone === d.anchorsTotal).map(d => d.date))
   let n = 0
   const cur = new Date()
   if (!qualSet.has(toDateStr(cur))) cur.setDate(cur.getDate() - 1)
@@ -49,13 +51,20 @@ export default function HistoryPage() {
         .from('users').select('id').eq('name', username).single()
       if (!user) { router.push('/'); return }
 
+      const [{ data: activeItems }, { data: anchorItems }] = await Promise.all([
+        supabase.from('checklist_items').select('id').eq('user_id', user.id).eq('is_deleted', false),
+        supabase.from('checklist_items').select('id').eq('user_id', user.id).eq('is_deleted', false).eq('anchor', true),
+      ])
+      const fallbackTotal = (activeItems ?? []).length
+      const anchorIdSet = new Set((anchorItems ?? []).map(r => r.id))
+
       const from90 = toDateStr(new Date(Date.now() - 90 * 864e5))
       const { data: logs } = await supabase
-        .from('daily_logs').select('date, checked_ids')
+        .from('daily_logs').select('date, checked_ids, item_count')
         .eq('user_id', user.id).gte('date', from90)
         .order('date', { ascending: true })
 
-      const logMap = new Map((logs ?? []).map(l => [l.date, l.checked_ids as string[]]))
+      const logMap = new Map((logs ?? []).map(l => [l.date, l]))
       const today     = toDateStr(new Date())
       const yesterday = toDateStr(new Date(Date.now() - 864e5))
 
@@ -63,14 +72,18 @@ export default function HistoryPage() {
       for (let i = 29; i >= 0; i--) {
         const d   = new Date(Date.now() - i * 864e5)
         const key = toDateStr(d)
-        const ids = logMap.get(key) ?? []
+        const log = logMap.get(key)
+        const ids = log?.checked_ids ?? []
+        const total = log?.item_count ?? (ids.length > 0 ? fallbackTotal : 0)
         result.push({
-          date:      key,
-          label:     d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' }),
+          date: key,
+          label: d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' }),
           fullLabel: dayLabel(key, today, yesterday, d),
-          pct:       TOTAL ? Math.round((ids.length / TOTAL) * 100) : 0,
-          done:      ids.length,
-          anchors:   ANCHOR_IDS.filter(a => ids.includes(a)).length,
+          pct: total ? Math.round((ids.length / total) * 100) : 0,
+          done: ids.length,
+          total,
+          anchorsDone: ids.filter((id: string) => anchorIdSet.has(id)).length,
+          anchorsTotal: anchorIdSet.size,
         })
       }
 
@@ -135,13 +148,13 @@ export default function HistoryPage() {
               />
               <Bar dataKey="pct" radius={[4, 4, 0, 0]}>
                 {days.map((d, i) => (
-                  <Cell key={i} fill={d.anchors === ANCHOR_IDS.length ? S.gold : d.pct > 0 ? S.amber : S.line} fillOpacity={d.pct > 0 ? 1 : 0.5} />
+                  <Cell key={i} fill={d.anchorsTotal > 0 && d.anchorsDone === d.anchorsTotal ? S.gold : d.pct > 0 ? S.amber : S.line} fillOpacity={d.pct > 0 ? 1 : 0.5} />
                 ))}
               </Bar>
             </BarChart>
           </ResponsiveContainer>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 16px', padding: '10px 16px 0', fontFamily: '"IBM Plex Mono", monospace', fontSize: 10, color: S.muted }}>
-            <span><span style={{ color: S.gold }}>■</span> 5 jangkar ✓</span>
+            <span><span style={{ color: S.gold }}>■</span> jangkar ✓</span>
             <span><span style={{ color: S.amber }}>■</span> partial</span>
             <span><span style={{ color: S.line }}>■</span> kosong</span>
           </div>
@@ -154,37 +167,19 @@ export default function HistoryPage() {
               <Link
                 key={d.date}
                 href={`/${encodeURIComponent(username)}/history/${d.date}`}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px',
-                  borderTop: idx === 0 ? 'none' : `1px solid ${S.line}`,
-                  textDecoration: 'none', color: 'inherit', cursor: 'pointer',
-                }}
+                style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', borderTop: idx === 0 ? 'none' : `1px solid ${S.line}`, textDecoration: 'none', color: 'inherit', cursor: 'pointer' }}
               >
                 <div style={{ width: 96, flexShrink: 0 }}>
-                  <div style={{ fontFamily: '"Space Grotesk", sans-serif', fontWeight: 600, fontSize: 13, color: d.pct > 0 ? S.ink : S.muted }}>
-                    {d.fullLabel}
-                  </div>
-                  <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 10, color: S.muted, marginTop: 1 }}>
-                    {d.done}/{TOTAL} item
-                  </div>
+                  <div style={{ fontFamily: '"Space Grotesk", sans-serif', fontWeight: 600, fontSize: 13, color: d.pct > 0 ? S.ink : S.muted }}>{d.fullLabel}</div>
+                  <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 10, color: S.muted, marginTop: 1 }}>{d.done}/{d.total || '—'} item</div>
                 </div>
-
                 <div style={{ flex: 1, height: 5, borderRadius: 99, background: '#1c222c', overflow: 'hidden' }}>
-                  <div style={{
-                    height: '100%', width: `${d.pct}%`, transition: 'width 400ms ease',
-                    background: d.anchors === ANCHOR_IDS.length ? `linear-gradient(90deg,${S.amber},${S.gold})` : S.amber,
-                    opacity: d.pct > 0 ? 1 : 0,
-                  }} />
+                  <div style={{ height: '100%', width: `${d.pct}%`, background: d.anchorsTotal > 0 && d.anchorsDone === d.anchorsTotal ? `linear-gradient(90deg,${S.amber},${S.gold})` : S.amber, opacity: d.pct > 0 ? 1 : 0 }} />
                 </div>
-
                 <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 12, width: 38, textAlign: 'right', flexShrink: 0, color: d.pct >= 80 ? S.gold : d.pct > 0 ? S.amber : S.muted }}>
                   {d.pct > 0 ? `${d.pct}%` : '—'}
                 </div>
-
-                <span style={{ fontSize: 13, width: 18, textAlign: 'center', flexShrink: 0 }}>
-                  {d.anchors === ANCHOR_IDS.length ? '⚡' : ''}
-                </span>
-
+                <span style={{ fontSize: 13, width: 18, textAlign: 'center', flexShrink: 0 }}>{d.anchorsTotal > 0 && d.anchorsDone === d.anchorsTotal ? '⚡' : ''}</span>
                 <span style={{ color: S.muted, flexShrink: 0 }}>→</span>
               </Link>
             ))}
