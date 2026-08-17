@@ -1,14 +1,15 @@
 'use client'
 
-import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
+import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { CATEGORY_ORDER, CATEGORY_LABEL, Category, todayStr, toDateStr } from '@/lib/checklist-data'
+import { CATEGORY_LABEL, CATEGORY_ORDER, Category, todayStr, toDateStr } from '@/lib/checklist-data'
+import { legacyItemToQuest, questKindLabel } from '@/lib/quest-system'
 
 const S = {
-  bg: '#0c0f14', panel: '#13171f', line: '#232a35',
-  ink: '#ECEAE3', muted: '#7e8795', amber: '#f6b24b', gold: '#ffd488',
+  bg: '#0c0f14', panel: '#13171f', panel2: '#10141b', line: '#232a35',
+  ink: '#ECEAE3', muted: '#7e8795', amber: '#f6b24b', gold: '#ffd488', red: '#e5687a',
 } as const
 
 interface Item {
@@ -20,57 +21,61 @@ interface Item {
 }
 
 function computeStreak(logs: { date: string; checked_ids: string[] }[], anchorIds: string[]) {
-  const qualSet = new Set(
-    logs.filter(l => anchorIds.length === 0 ? l.checked_ids.length > 0 : anchorIds.every(a => l.checked_ids.includes(a))).map(l => l.date)
+  const qualified = new Set(
+    logs
+      .filter(log => anchorIds.length === 0 ? log.checked_ids.length > 0 : anchorIds.every(id => log.checked_ids.includes(id)))
+      .map(log => log.date)
   )
-  let n = 0
-  const cur = new Date()
-  if (!qualSet.has(toDateStr(cur))) cur.setDate(cur.getDate() - 1)
-  while (qualSet.has(toDateStr(cur))) { n++; cur.setDate(cur.getDate() - 1) }
-  return n
+
+  let streak = 0
+  const cursor = new Date()
+  if (!qualified.has(toDateStr(cursor))) cursor.setDate(cursor.getDate() - 1)
+  while (qualified.has(toDateStr(cursor))) {
+    streak += 1
+    cursor.setDate(cursor.getDate() - 1)
+  }
+  return streak
 }
 
-const inputStyle = {
-  width: '100%', background: S.bg, border: `1px solid ${S.line}`, borderRadius: 8,
-  padding: '10px 12px', color: S.ink, fontFamily: '"IBM Plex Sans", sans-serif',
-  fontSize: 14, outline: 'none',
-} as const
-
-const selectStyle = {
-  background: S.bg, border: `1px solid ${S.line}`, borderRadius: 8,
-  padding: '8px 10px', color: S.ink, fontFamily: '"IBM Plex Mono", monospace',
-  fontSize: 11, outline: 'none',
-} as const
-
 export default function ChecklistPage() {
-  const params   = useParams()
-  const router   = useRouter()
+  const params = useParams()
+  const router = useRouter()
   const username = decodeURIComponent(params.username as string)
 
-  const [userId,   setUserId]   = useState<string | null>(null)
-  const [items,    setItems]    = useState<Item[]>([])
-  const [checked,  setChecked]  = useState<string[]>([])
-  const [streak,   setStreak]   = useState(0)
-  const [loading,  setLoading]  = useState(true)
-  const [status,   setStatus]   = useState<'idle' | 'saving' | 'saved'>('idle')
-  const [filter,   setFilter]   = useState<'semua' | Category>('semua')
-  const [editMode, setEditMode] = useState(false)
-  const [newLabel,    setNewLabel]    = useState('')
-  const [newCategory, setNewCategory] = useState<Category>('pagi')
-  const [newAnchor,   setNewAnchor]   = useState(false)
+  const [userId, setUserId] = useState<string | null>(null)
+  const [items, setItems] = useState<Item[]>([])
+  const [checked, setChecked] = useState<string[]>([])
+  const [streak, setStreak] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [status, setStatus] = useState<'idle' | 'saving' | 'saved'>('idle')
+  const [filter, setFilter] = useState<'semua' | Category>('semua')
 
   const checkedRef = useRef<string[]>([])
-  const saveTimer  = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   checkedRef.current = checked
 
-  const anchorIds = useMemo(() => items.filter(i => i.anchor).map(i => i.id), [items])
-  const total     = items.length
+  const quests = useMemo(() => items.map(legacyItemToQuest), [items])
+  const anchorIds = useMemo(() => items.filter(item => item.anchor).map(item => item.id), [items])
+  const total = quests.length
+  const completed = checked.length
+  const pct = total ? Math.round((completed / total) * 100) : 0
+  const xpEarned = quests.filter(q => checked.includes(q.id)).reduce((sum, q) => sum + q.xp, 0)
+  const xpTotal = quests.reduce((sum, q) => sum + q.xp, 0)
+  const mainQuests = quests.filter(q => q.kind === 'main')
+  const mainDone = mainQuests.filter(q => checked.includes(q.id)).length
+  const systemMessage = mainDone === mainQuests.length && mainQuests.length > 0
+    ? 'Main Quest complete. Hari ini sudah aman — lanjutkan side quest kalau energi masih ada.'
+    : mainQuests.length > 0
+      ? `${mainQuests.length - mainDone} Main Quest masih aktif. Sistem menyarankan selesaikan ini sebelum mengejar bonus.`
+      : 'Quest hari ini masih memakai checklist legacy. AI-generated quest akan menggantikan sumber ini setelah Player Knowledge aktif.'
 
   const refreshStreak = useCallback(async (uid: string, anchors: string[]) => {
     const from60 = toDateStr(new Date(Date.now() - 60 * 864e5))
     const { data } = await supabase
-      .from('daily_logs').select('date, checked_ids')
-      .eq('user_id', uid).gte('date', from60)
+      .from('daily_logs')
+      .select('date, checked_ids')
+      .eq('user_id', uid)
+      .gte('date', from60)
     setStreak(computeStreak(data ?? [], anchors))
   }, [])
 
@@ -78,269 +83,233 @@ export default function ChecklistPage() {
     let channel: ReturnType<typeof supabase.channel> | null = null
 
     async function init() {
-      const { data: user } = await supabase
-        .from('users').select('id').eq('name', username).single()
-      if (!user) { router.push('/'); return }
+      const { data: user } = await supabase.from('users').select('id').eq('name', username).single()
+      if (!user) {
+        router.push('/')
+        return
+      }
+
       setUserId(user.id)
 
       const { data: itemRows } = await supabase
-        .from('checklist_items').select('id,label,category,anchor,sort_order')
-        .eq('user_id', user.id).eq('is_deleted', false)
+        .from('checklist_items')
+        .select('id,label,category,anchor,sort_order')
+        .eq('user_id', user.id)
+        .eq('is_deleted', false)
         .order('sort_order', { ascending: true })
+
       const activeItems = itemRows ?? []
       setItems(activeItems)
 
       const today = todayStr()
       const { data: log } = await supabase
-        .from('daily_logs').select('checked_ids')
-        .eq('user_id', user.id).eq('date', today).single()
+        .from('daily_logs')
+        .select('checked_ids')
+        .eq('user_id', user.id)
+        .eq('date', today)
+        .single()
 
       setChecked(log?.checked_ids ?? [])
-      await refreshStreak(user.id, activeItems.filter(i => i.anchor).map(i => i.id))
+      await refreshStreak(user.id, activeItems.filter(item => item.anchor).map(item => item.id))
       setLoading(false)
 
       channel = supabase
         .channel(`logs:${user.id}:${today}`)
         .on('postgres_changes',
           { event: '*', schema: 'public', table: 'daily_logs', filter: `user_id=eq.${user.id}` },
-          (payload) => {
+          payload => {
             const row = payload.new as { date: string; checked_ids: string[] }
-            if (row?.date === todayStr()) {
-              const incoming = row.checked_ids ?? []
-              const same = incoming.length === checkedRef.current.length && incoming.every(x => checkedRef.current.includes(x))
-              if (!same) setChecked(incoming)
-            }
-          })
+            if (row?.date !== todayStr()) return
+            const incoming = row.checked_ids ?? []
+            const same = incoming.length === checkedRef.current.length && incoming.every(id => checkedRef.current.includes(id))
+            if (!same) setChecked(incoming)
+          }
+        )
         .subscribe()
     }
-    init()
 
+    init()
     return () => { if (channel) supabase.removeChannel(channel) }
   }, [username, router, refreshStreak])
 
-  const persist = useCallback((next: string[], itemCount: number) => {
+  const persist = useCallback((next: string[]) => {
     if (saveTimer.current) clearTimeout(saveTimer.current)
     setStatus('saving')
+
     saveTimer.current = setTimeout(async () => {
-      const uid = userId
-      if (!uid) return
+      if (!userId) return
       const { error } = await supabase.from('daily_logs').upsert(
-        { user_id: uid, date: todayStr(), checked_ids: next, item_count: itemCount, updated_at: new Date().toISOString() },
+        {
+          user_id: userId,
+          date: todayStr(),
+          checked_ids: next,
+          item_count: total,
+          updated_at: new Date().toISOString(),
+        },
         { onConflict: 'user_id,date' }
       )
-      if (!error) {
-        setStatus('saved')
-        refreshStreak(uid, anchorIds)
-        setTimeout(() => setStatus('idle'), 1500)
-      } else {
+
+      if (error) {
         setStatus('idle')
+        return
       }
-    }, 500)
-  }, [userId, refreshStreak, anchorIds])
+
+      setStatus('saved')
+      await refreshStreak(userId, anchorIds)
+      setTimeout(() => setStatus('idle'), 1400)
+    }, 450)
+  }, [userId, total, refreshStreak, anchorIds])
 
   const toggle = useCallback((id: string) => {
     setChecked(prev => {
-      const next = prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id]
-      persist(next, total)
+      const next = prev.includes(id) ? prev.filter(value => value !== id) : [...prev, id]
+      persist(next)
       return next
     })
-  }, [persist, total])
+  }, [persist])
 
-  const resetDay = () => {
-    setChecked([])
-    persist([], total)
+  if (loading) {
+    return (
+      <div style={{ minHeight: '100dvh', background: S.bg, display: 'grid', placeItems: 'center', color: S.muted, fontFamily: '"IBM Plex Mono", monospace' }}>
+        INITIALIZING SYSTEM...
+      </div>
+    )
   }
-
-  const addItem = async () => {
-    if (!userId || !newLabel.trim()) return
-    const { data } = await supabase.from('checklist_items').insert({
-      user_id: userId, label: newLabel.trim(), category: newCategory,
-      anchor: newAnchor, sort_order: items.length,
-    }).select().single()
-    if (data) {
-      setItems(prev => [...prev, data])
-      setNewLabel('')
-      setNewAnchor(false)
-    }
-  }
-
-  const deleteItem = async (id: string) => {
-    if (!confirm('Hapus item ini? History lama tetep kesimpen kok.')) return
-    await supabase.from('checklist_items').update({ is_deleted: true }).eq('id', id)
-    setItems(prev => prev.filter(i => i.id !== id))
-    setChecked(prev => {
-      const next = prev.filter(c => c !== id)
-      persist(next, total - 1)
-      return next
-    })
-  }
-
-  const updateItem = async (id: string, patch: Partial<Item>) => {
-    await supabase.from('checklist_items').update(patch).eq('id', id)
-    setItems(prev => prev.map(i => i.id === id ? { ...i, ...patch } : i))
-  }
-
-  const pct         = total ? Math.round((checked.length / total) * 100) : 0
-  const p           = total ? checked.length / total : 0
-  const anchorsDone = anchorIds.filter(a => checked.includes(a)).length
-  const allAnchors  = anchorIds.length > 0 && anchorsDone === anchorIds.length
 
   const visibleCategories = filter === 'semua' ? CATEGORY_ORDER : [filter]
 
-  if (loading) return (
-    <div style={{ background: S.bg, minHeight: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: S.muted, fontFamily: '"IBM Plex Mono", monospace' }}>
-      loading...
-    </div>
-  )
-
   return (
-    <div style={{ background: S.bg, minHeight: '100dvh', color: S.ink, fontFamily: '"IBM Plex Sans", sans-serif', paddingBottom: 80 }}>
-      <div style={{ maxWidth: 560, margin: '0 auto', padding: '0 18px' }}>
-
-        <header style={{ padding: '34px 0 18px', textAlign: 'center' }}>
-          <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 12, letterSpacing: '.18em', textTransform: 'uppercase', color: S.muted }}>
-            SELAMAT PAGI · {username.toUpperCase()}
-          </div>
-          <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 12, color: S.muted, opacity: .7, marginTop: 4 }}>
-            {new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
-          </div>
-          <h1 style={{
-            fontFamily: '"Space Grotesk", sans-serif', fontWeight: 700, lineHeight: 1.04,
-            fontSize: 'clamp(26px,7vw,34px)', margin: '14px 0 2px', letterSpacing: '-.02em',
-            color: p > 0.7 ? S.gold : S.ink,
-            textShadow: p > 0.7 ? `0 0 ${18 * p}px rgba(255,212,136,${0.55 * p})` : 'none',
-            transition: 'color 500ms ease',
-          }}>
-            Menangin Hari.
-          </h1>
-
-          <div style={{ display: 'flex', gap: 12, margin: '22px 0 6px' }}>
-            <div style={{ flex: 1, background: S.panel, border: `1px solid ${S.line}`, borderRadius: 16, padding: '14px 16px' }}>
-              <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontWeight: 600, fontSize: 26, color: p > 0.5 ? S.gold : S.ink }}>{pct}%</div>
-              <div style={{ fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase', color: S.muted }}>Hari ini</div>
+    <div style={{ minHeight: '100dvh', background: S.bg, color: S.ink, fontFamily: '"IBM Plex Sans", sans-serif', paddingBottom: 72 }}>
+      <div style={{ maxWidth: 600, margin: '0 auto', padding: '0 18px' }}>
+        <header style={{ padding: '30px 0 16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+            <div>
+              <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 10, color: S.amber, letterSpacing: '.18em' }}>SYSTEM ONLINE</div>
+              <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 11, color: S.muted, marginTop: 5 }}>
+                PLAYER · {username.toUpperCase()}
+              </div>
             </div>
-            <div style={{ flex: 1, background: S.panel, border: `1px solid ${S.line}`, borderRadius: 16, padding: '14px 16px' }}>
-              <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontWeight: 600, fontSize: 26, color: S.amber }}>{streak}</div>
-              <div style={{ fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase', color: S.muted }}>Streak hari</div>
-            </div>
-          </div>
-
-          <div style={{ height: 6, borderRadius: 99, background: '#1c222c', overflow: 'hidden' }}>
-            <div style={{ height: '100%', width: `${pct}%`, background: `linear-gradient(90deg,${S.amber},${S.gold})`, transition: 'width 450ms ease' }} />
-          </div>
-
-          <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 11, color: S.muted, textAlign: 'center', margin: '14px 0 4px' }}>
-            {allAnchors
-              ? <span>⚡ <strong style={{ color: S.amber }}>jangkar kelar — hari ini lo menang.</strong></span>
-              : <span>Jangkar wajib: <strong style={{ color: S.amber }}>{anchorsDone}/{anchorIds.length}</strong> kelar</span>
-            }
-          </div>
-
-          <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 10, color: status === 'saved' ? S.amber : S.muted, opacity: status === 'idle' ? 0 : .9, height: 14, transition: 'opacity 300ms ease' }}>
-            {status === 'saving' ? 'nyimpen…' : status === 'saved' ? '✓ tersimpan, sinkron semua device' : ''}
-          </div>
-
-          <div style={{ display: 'flex', gap: 14, justifyContent: 'center', marginTop: 6 }}>
-            <Link href={`/${encodeURIComponent(username)}/history`} style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 11, color: S.amber, textDecoration: 'none', letterSpacing: '.08em' }}>
-              LIHAT HISTORY →
+            <Link href={`/${encodeURIComponent(username)}/history`} style={{ color: S.muted, fontFamily: '"IBM Plex Mono", monospace', fontSize: 10, textDecoration: 'none', letterSpacing: '.08em' }}>
+              HISTORY →
             </Link>
-            <button onClick={() => setEditMode(v => !v)} style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 11, color: editMode ? S.gold : S.muted, background: 'none', border: 'none', letterSpacing: '.08em', cursor: 'pointer' }}>
-              {editMode ? '✓ SELESAI EDIT' : '✏️ EDIT ITEM'}
-            </button>
+          </div>
+
+          <div style={{ marginTop: 26 }}>
+            <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.muted, fontSize: 11 }}>
+              {new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+            </div>
+            <h1 style={{ fontFamily: '"Space Grotesk", sans-serif', fontSize: 'clamp(30px,8vw,42px)', lineHeight: 1, letterSpacing: '-.04em', margin: '8px 0 0' }}>
+              Daily Quest
+            </h1>
+            <p style={{ color: S.muted, fontSize: 13, lineHeight: 1.55, margin: '10px 0 0', maxWidth: 500 }}>
+              Sistem menentukan apa yang perlu lo selesaikan hari ini. Saat ini quest masih dimigrasikan dari checklist lama; berikutnya sumber quest akan datang dari Player Knowledge + AI.
+            </p>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10, marginTop: 22 }}>
+            <Stat value={`${pct}%`} label="PROGRESS" />
+            <Stat value={`${xpEarned}/${xpTotal}`} label="XP" />
+            <Stat value={`${streak}`} label="STREAK" />
+          </div>
+
+          <div style={{ marginTop: 12, height: 6, background: '#1c222c', borderRadius: 99, overflow: 'hidden' }}>
+            <div style={{ width: `${pct}%`, height: '100%', background: `linear-gradient(90deg,${S.amber},${S.gold})`, transition: 'width 400ms ease' }} />
+          </div>
+
+          <div style={{ marginTop: 14, background: S.panel2, border: `1px solid ${S.line}`, borderRadius: 14, padding: '13px 14px' }}>
+            <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.amber, fontSize: 9, letterSpacing: '.12em' }}>SYSTEM ASSESSMENT</div>
+            <div style={{ color: S.ink, fontSize: 12.5, lineHeight: 1.5, marginTop: 6 }}>{systemMessage}</div>
+          </div>
+
+          <div style={{ height: 14, marginTop: 8, fontFamily: '"IBM Plex Mono", monospace', fontSize: 10, color: status === 'saved' ? S.amber : S.muted, opacity: status === 'idle' ? 0 : 1 }}>
+            {status === 'saving' ? 'SYNCING...' : status === 'saved' ? '✓ QUEST STATE SAVED' : ''}
           </div>
         </header>
 
-        {/* chips */}
-        <div style={{ display: 'flex', gap: 8, overflowX: 'auto', padding: '4px 2px 18px' }}>
-          {(['semua', ...CATEGORY_ORDER] as const).map(c => (
-            <button key={c} onClick={() => setFilter(c)} style={{
-              flexShrink: 0, padding: '8px 16px', borderRadius: 99, fontFamily: '"IBM Plex Mono", monospace',
-              fontSize: 12, fontWeight: 600, cursor: 'pointer',
-              border: filter === c ? 'none' : `1px solid ${S.line}`,
-              background: filter === c ? `linear-gradient(135deg,${S.amber},${S.gold})` : 'transparent',
-              color: filter === c ? S.bg : S.muted,
-            }}>
-              {c === 'semua' ? 'Semua' : CATEGORY_LABEL[c]}
+        <div style={{ display: 'flex', gap: 8, overflowX: 'auto', padding: '2px 0 14px' }}>
+          {(['semua', ...CATEGORY_ORDER] as const).map(category => (
+            <button
+              key={category}
+              onClick={() => setFilter(category)}
+              style={{
+                flexShrink: 0,
+                border: filter === category ? 'none' : `1px solid ${S.line}`,
+                background: filter === category ? S.amber : 'transparent',
+                color: filter === category ? S.bg : S.muted,
+                borderRadius: 99,
+                padding: '8px 13px',
+                fontFamily: '"IBM Plex Mono", monospace',
+                fontSize: 10,
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              {category === 'semua' ? 'SEMUA' : CATEGORY_LABEL[category].toUpperCase()}
             </button>
           ))}
         </div>
 
         <main>
-          {visibleCategories.map(cat => {
-            const catItems = items.filter(i => i.category === cat)
-            if (!editMode && catItems.length === 0) return null
+          {visibleCategories.map(category => {
+            const categoryQuests = quests.filter(quest => quest.category === category)
+            if (categoryQuests.length === 0) return null
+
             return (
-              <section key={cat} style={{ marginTop: 20 }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, margin: '0 2px 10px' }}>
-                  <span style={{ fontFamily: '"Space Grotesk", sans-serif', fontWeight: 600, fontSize: 16 }}>{CATEGORY_LABEL[cat]}</span>
+              <section key={category} style={{ marginTop: 16 }}>
+                <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 10, color: S.muted, letterSpacing: '.12em', margin: '0 2px 8px' }}>
+                  {CATEGORY_LABEL[category].toUpperCase()}
                 </div>
                 <div style={{ background: S.panel, border: `1px solid ${S.line}`, borderRadius: 18, overflow: 'hidden' }}>
-                  {catItems.length === 0 && (
-                    <div style={{ padding: '16px', fontFamily: '"IBM Plex Mono", monospace', fontSize: 11, color: S.muted, textAlign: 'center' }}>
-                      Belum ada item di kategori ini
-                    </div>
-                  )}
-                  {catItems.map((item, idx) => {
-                    const done = checked.includes(item.id)
-
-                    if (editMode) {
-                      return (
-                        <div key={item.id} style={{ padding: '12px 16px', borderTop: idx === 0 ? 'none' : `1px solid ${S.line}`, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                          <input
-                            defaultValue={item.label}
-                            onBlur={e => { const v = e.target.value.trim(); if (v && v !== item.label) updateItem(item.id, { label: v }) }}
-                            style={{ background: 'transparent', border: 'none', borderBottom: `1px solid ${S.line}`, color: S.ink, fontSize: 14, padding: '4px 0', outline: 'none', fontFamily: '"IBM Plex Sans", sans-serif' }}
-                          />
-                          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                            <select value={item.category} onChange={e => updateItem(item.id, { category: e.target.value as Category })} style={selectStyle}>
-                              {CATEGORY_ORDER.map(c => <option key={c} value={c}>{CATEGORY_LABEL[c]}</option>)}
-                            </select>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontFamily: '"IBM Plex Mono", monospace', fontSize: 10, color: S.muted }}>
-                              <input type="checkbox" checked={item.anchor} onChange={e => updateItem(item.id, { anchor: e.target.checked })} />
-                              WAJIB
-                            </label>
-                            <button onClick={() => deleteItem(item.id)} style={{ marginLeft: 'auto', background: 'none', border: `1px solid ${S.line}`, borderRadius: 8, color: '#e5687a', fontSize: 11, fontFamily: '"IBM Plex Mono", monospace', padding: '5px 10px', cursor: 'pointer' }}>
-                              HAPUS
-                            </button>
-                          </div>
-                        </div>
-                      )
-                    }
-
+                  {categoryQuests.map((quest, index) => {
+                    const done = checked.includes(quest.id)
                     return (
                       <div
-                        key={item.id}
-                        onClick={() => toggle(item.id)}
+                        key={quest.id}
+                        onClick={() => toggle(quest.id)}
                         role="checkbox"
                         aria-checked={done}
                         tabIndex={0}
-                        onKeyDown={e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggle(item.id) } }}
+                        onKeyDown={event => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault()
+                            toggle(quest.id)
+                          }
+                        }}
                         style={{
-                          display: 'flex', alignItems: 'flex-start', gap: 13,
-                          padding: '15px 16px', cursor: 'pointer', userSelect: 'none',
-                          borderTop: idx === 0 ? 'none' : `1px solid ${S.line}`,
-                          background: done ? 'rgba(246,178,75,0.03)' : 'transparent',
+                          display: 'flex',
+                          gap: 13,
+                          padding: '15px 16px',
+                          borderTop: index === 0 ? 'none' : `1px solid ${S.line}`,
+                          cursor: 'pointer',
+                          background: done ? 'rgba(246,178,75,.035)' : 'transparent',
                         }}
                       >
                         <span style={{
-                          flexShrink: 0, width: 22, height: 22, borderRadius: 7, marginTop: 1,
-                          display: 'grid', placeItems: 'center',
-                          border: done ? 'none' : '1.6px solid #39414e',
+                          width: 22,
+                          height: 22,
+                          flexShrink: 0,
+                          borderRadius: 7,
+                          border: done ? 'none' : '1.5px solid #39414e',
+                          display: 'grid',
+                          placeItems: 'center',
                           background: done ? `linear-gradient(135deg,${S.amber},${S.gold})` : 'transparent',
-                          boxShadow: done ? '0 0 14px rgba(246,178,75,.55)' : 'none',
+                          boxShadow: done ? '0 0 14px rgba(246,178,75,.4)' : 'none',
+                          marginTop: 2,
                         }}>
-                          {done && (
-                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={S.bg} strokeWidth="3.4">
-                              <polyline points="20 6 9 17 4 12" />
-                            </svg>
-                          )}
+                          {done ? '✓' : ''}
                         </span>
-                        <span style={{ fontSize: 14.5, lineHeight: 1.4, color: done ? S.muted : S.ink }}>
-                          {item.label}
-                          {item.anchor && (
-                            <span style={{ display: 'inline-block', fontFamily: '"IBM Plex Mono", monospace', fontSize: 9.5, letterSpacing: '.1em', border: `1px solid rgba(246,178,75,.5)`, color: S.amber, borderRadius: 6, padding: '1px 5px', marginLeft: 7, verticalAlign: '1.5px' }}>WAJIB</span>
-                          )}
-                        </span>
+
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>
+                            <span style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, color: quest.kind === 'main' ? S.amber : S.muted, letterSpacing: '.1em' }}>
+                              {questKindLabel[quest.kind]}
+                            </span>
+                            <span style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, color: S.gold }}>+{quest.xp} XP</span>
+                          </div>
+                          <div style={{ marginTop: 5, fontSize: 14.5, lineHeight: 1.45, color: done ? S.muted : S.ink, textDecoration: done ? 'line-through' : 'none' }}>
+                            {quest.title}
+                          </div>
+                        </div>
                       </div>
                     )
                   })}
@@ -348,38 +317,27 @@ export default function ChecklistPage() {
               </section>
             )
           })}
-
-          {editMode && (
-            <section style={{ marginTop: 26 }}>
-              <div style={{ fontFamily: '"Space Grotesk", sans-serif', fontWeight: 600, fontSize: 16, marginBottom: 10 }}>Tambah Item</div>
-              <div style={{ background: S.panel, border: `1px solid ${S.line}`, borderRadius: 18, padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <input value={newLabel} onChange={e => setNewLabel(e.target.value)} onKeyDown={e => e.key === 'Enter' && addItem()} placeholder="Nama checklist baru..." style={inputStyle} />
-                <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <select value={newCategory} onChange={e => setNewCategory(e.target.value as Category)} style={selectStyle}>
-                    {CATEGORY_ORDER.map(c => <option key={c} value={c}>{CATEGORY_LABEL[c]}</option>)}
-                  </select>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: '"IBM Plex Mono", monospace', fontSize: 11, color: S.muted }}>
-                    <input type="checkbox" checked={newAnchor} onChange={e => setNewAnchor(e.target.checked)} />
-                    Jangkar wajib
-                  </label>
-                  <button onClick={addItem} disabled={!newLabel.trim()} style={{ marginLeft: 'auto', background: S.amber, border: 'none', borderRadius: 10, padding: '9px 18px', fontFamily: '"IBM Plex Mono", monospace', fontSize: 12, fontWeight: 600, color: S.bg, cursor: 'pointer', opacity: newLabel.trim() ? 1 : 0.5 }}>
-                    ADD
-                  </button>
-                </div>
-              </div>
-            </section>
-          )}
         </main>
 
-        <footer style={{ marginTop: 30, textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center' }}>
-          <button onClick={resetDay} style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 11, letterSpacing: '.08em', color: S.muted, background: 'none', border: `1px solid ${S.line}`, borderRadius: 99, padding: '8px 16px', cursor: 'pointer' }}>
-            RESET HARI INI
-          </button>
-          <Link href="/" style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 11, color: S.muted, textDecoration: 'none' }}>
-            ← GANTI USER
+        <footer style={{ padding: '32px 0 10px', textAlign: 'center' }}>
+          <div style={{ color: S.muted, fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, lineHeight: 1.6 }}>
+            QUEST AUTHORING IS SYSTEM-OWNED<br />
+            manual edit dipindahkan dari daily execution flow
+          </div>
+          <Link href="/" style={{ display: 'inline-block', marginTop: 16, color: S.muted, textDecoration: 'none', fontFamily: '"IBM Plex Mono", monospace', fontSize: 10 }}>
+            ← SWITCH PLAYER
           </Link>
         </footer>
       </div>
+    </div>
+  )
+}
+
+function Stat({ value, label }: { value: string; label: string }) {
+  return (
+    <div style={{ background: S.panel, border: `1px solid ${S.line}`, borderRadius: 14, padding: '12px 10px' }}>
+      <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 20, fontWeight: 700, color: S.gold }}>{value}</div>
+      <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, color: S.muted, letterSpacing: '.1em', marginTop: 3 }}>{label}</div>
     </div>
   )
 }
