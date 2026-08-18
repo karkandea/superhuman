@@ -15,6 +15,7 @@
     "lib/player-knowledge-service.ts",
     "lib/player-understanding.ts",
     "lib/quest-system.ts",
+    "lib/materiality.ts",
     "lib/ai/contracts.ts",
     "lib/ai/orchestrator.ts",
     "lib/ai/chatgpt-consumer-provider.ts",
