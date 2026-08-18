@@ -109,6 +109,14 @@ export default function LifeVaultPage() {
     return () => { cancelled = true }
   }, [loadEntries, router, username])
 
+  useEffect(() => {
+    if (!playerId) return
+    const timer = window.setInterval(() => {
+      void loadEntries(playerId).catch(() => {})
+    }, 4000)
+    return () => window.clearInterval(timer)
+  }, [loadEntries, playerId])
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!playerId || !foundationReady || saving) return
@@ -130,7 +138,7 @@ export default function LifeVaultPage() {
       )
       setText('')
       setTitle('')
-      setMessage('Saved to Player Knowledge. Processing stays separate from the raw entry.')
+      setMessage('Saved. System analysis was queued automatically; status below updates while the AI worker processes it.')
       await loadEntries(playerId)
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to save knowledge'
@@ -153,7 +161,7 @@ export default function LifeVaultPage() {
             <p className="text-xs font-semibold tracking-[0.24em] text-[#f6b24b]">PLAYER KNOWLEDGE</p>
             <h1 className="mt-2 text-2xl font-semibold">Life Vault</h1>
             <p className="mt-2 max-w-xl text-sm leading-6 text-[#8a94a3]">
-              Raw life context lives here first. AI understanding and signals are derived separately and must keep provenance back to these entries.
+              Raw life context enters here. Every new entry automatically queues System analysis; derived understanding keeps provenance back to this evidence.
             </p>
           </div>
           <Link href={`/${encodeURIComponent(username)}`} className="text-sm text-[#ffd488] hover:underline">Daily Quest</Link>
@@ -161,7 +169,7 @@ export default function LifeVaultPage() {
 
         {!foundationReady && (
           <section className="rounded-xl border border-[#4a3a21] bg-[#17140f] p-4 text-sm leading-6 text-[#d7bd8c]">
-            Life Vault code is staged, but the database foundation is intentionally not active until Auth + owner RLS passes production verification.
+            Life Vault database foundation is unavailable. Raw knowledge will not be accepted until the secure owner-scoped storage is reachable again.
           </section>
         )}
 
@@ -185,7 +193,7 @@ export default function LifeVaultPage() {
           </label>
 
           <div className="flex items-center justify-between gap-3">
-            <span className="text-xs text-[#697381]">Raw input is stored as evidence; it is not treated as an AI conclusion.</span>
+            <span className="text-xs text-[#697381]">Raw input is evidence, not an AI conclusion. Analysis is triggered automatically after save.</span>
             <button type="submit" disabled={!foundationReady || saving || !text.trim()} className="rounded-lg bg-[#f6b24b] px-4 py-2 text-sm font-semibold text-[#15120c] disabled:cursor-not-allowed disabled:opacity-40">
               {saving ? 'Saving…' : 'Save update'}
             </button>
@@ -197,14 +205,15 @@ export default function LifeVaultPage() {
         <section className="space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold tracking-wide">RECENT RAW KNOWLEDGE</h2>
-            <span className="text-xs text-[#697381]">Latest 25</span>
+            <span className="text-xs text-[#697381]">Live status · latest 25</span>
           </div>
           {entries.length === 0 ? (
             <div className="rounded-xl border border-dashed border-[#2c3440] p-6 text-sm text-[#697381]">No knowledge entries yet.</div>
           ) : entries.map((entry) => (
             <article key={entry.id} className="rounded-xl border border-[#232a35] bg-[#10141b] p-4">
               <div className="flex flex-wrap items-center gap-2 text-xs text-[#7e8795]">
-                <span className="text-[#ffd488]">{entry.entry_type}</span><span>•</span><span>{entry.processing_status}</span><span>•</span>
+                <span className="text-[#ffd488]">{entry.entry_type}</span><span>•</span>
+                <span className={entry.processing_status === 'processed' ? 'text-[#f6b24b]' : ''}>{entry.processing_status}</span><span>•</span>
                 <time>{new Date(entry.occurred_at ?? entry.created_at).toLocaleString('id-ID')}</time>
               </div>
               <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-[#d8d7d2]">{entry.raw_text}</p>
