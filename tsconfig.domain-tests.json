@@ -17,6 +17,7 @@
     "lib/quest-system.ts",
     "lib/ai/contracts.ts",
     "lib/ai/orchestrator.ts",
+    "lib/ai/chatgpt-consumer-provider.ts",
     "lib/context-retrieval.ts"
   ]
 }
