@@ -9,9 +9,10 @@ import {
   getAiInferenceJob,
   getAiInferenceJobForDate,
   requestDailyQuestGeneration,
+  type AiInferenceJob,
   type AiInferenceJobStatus,
 } from '@/lib/ai/inference-job-service'
-import { legacyItemToQuest, questKindLabel } from '@/lib/quest-system'
+import { questKindLabel } from '@/lib/quest-system'
 
 const S = {
   bg: '#0c0f14', panel: '#13171f', panel2: '#10141b', line: '#232a35',
@@ -20,10 +21,7 @@ const S = {
 
 interface Item {
   id: string
-  label: string
-  category: Category
   anchor: boolean
-  sort_order: number
 }
 
 interface GeneratedQuest {
@@ -58,13 +56,12 @@ function computeStreak(logs: { date: string; checked_ids: string[] }[], anchorId
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
-export default function ChecklistPage() {
+export default function DailyQuestPage() {
   const params = useParams()
   const router = useRouter()
   const username = decodeURIComponent(params.username as string)
 
   const [userId, setUserId] = useState<string | null>(null)
-  const [items, setItems] = useState<Item[]>([])
   const [generatedQuests, setGeneratedQuests] = useState<GeneratedQuest[]>([])
   const [checked, setChecked] = useState<string[]>([])
   const [streak, setStreak] = useState(0)
@@ -72,20 +69,18 @@ export default function ChecklistPage() {
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved'>('idle')
   const [filter, setFilter] = useState<'semua' | Category>('semua')
   const [generationStatus, setGenerationStatus] = useState<AiInferenceJobStatus | 'idle'>('idle')
-  const [generationError, setGenerationError] = useState<string | null>(null)
+  const [generationErrorCode, setGenerationErrorCode] = useState<string | null>(null)
+  const [generationErrorMessage, setGenerationErrorMessage] = useState<string | null>(null)
 
   const checkedRef = useRef<string[]>([])
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const watchedJobRef = useRef<string | null>(null)
 
   useEffect(() => {
     checkedRef.current = checked
   }, [checked])
 
-  const legacyQuests = useMemo(() => items.map(legacyItemToQuest), [items])
-  const quests = useMemo(() => generatedQuests.length > 0 ? generatedQuests : legacyQuests, [generatedQuests, legacyQuests])
-  const usingGeneratedQuests = generatedQuests.length > 0
-  const anchorIds = useMemo(() => items.filter(item => item.anchor).map(item => item.id), [items])
+  const quests = generatedQuests
+  const questReady = quests.length > 0
   const total = quests.length
   const completed = checked.length
   const pct = total ? Math.round((completed / total) * 100) : 0
@@ -93,28 +88,21 @@ export default function ChecklistPage() {
   const xpTotal = quests.reduce((sum, q) => sum + q.xp, 0)
   const mainQuests = quests.filter(q => q.kind === 'main')
   const mainDone = mainQuests.filter(q => checked.includes(q.id)).length
-  const systemMessage = mainDone === mainQuests.length && mainQuests.length > 0
-    ? 'Main Quest complete. Hari ini sudah aman — lanjutkan side quest kalau energi masih ada.'
-    : mainQuests.length > 0
-      ? `${mainQuests.length - mainDone} Main Quest masih aktif. Sistem menyarankan selesaikan ini sebelum mengejar bonus.`
-      : usingGeneratedQuests
-        ? 'Quest batch hari ini aktif. Sistem akan memakai hasil eksekusinya sebagai signal untuk progression berikutnya.'
-        : generationStatus === 'running'
-          ? 'System sedang menganalisis Player Knowledge dan menyusun progression.'
-          : generationStatus === 'queued'
-            ? 'System sudah menjadwalkan progression hari ini dan sedang menunggu AI worker.'
-            : generationStatus === 'blocked_auth'
-              ? 'AI worker perlu menyambungkan ulang sesi ChatGPT sebelum reasoning bisa lanjut.'
-              : 'System otomatis memicu AI dari Life Vault update dan daily checkpoint. Legacy checklist hanya fallback sementara.'
 
-  const refreshStreak = useCallback(async (uid: string, anchors: string[]) => {
+  const needsContext = !questReady && generationStatus === 'failed' && generationErrorCode === 'insufficient_context'
+  const generationBusy = generationStatus === 'queued' || generationStatus === 'running'
+  const systemPaused = !questReady && generationStatus === 'blocked_auth'
+  const generationFailed = !questReady && generationStatus === 'failed' && !needsContext
+  const emptyAfterSuccess = !questReady && generationStatus === 'succeeded'
+
+  const refreshStreak = useCallback(async (uid: string, anchorIds: string[]) => {
     const from60 = toDateStr(new Date(Date.now() - 60 * 864e5))
     const { data } = await supabase
       .from('daily_logs')
       .select('date, checked_ids')
       .eq('user_id', uid)
       .gte('date', from60)
-    setStreak(computeStreak(data ?? [], anchors))
+    setStreak(computeStreak(data ?? [], anchorIds))
   }, [])
 
   const loadGeneratedQuests = useCallback(async (uid: string) => {
@@ -130,12 +118,16 @@ export default function ChecklistPage() {
 
     const rows = (data ?? []) as GeneratedQuest[]
     setGeneratedQuests(rows)
-    if (rows.length > 0) {
-      const completedIds = rows.filter(row => row.status === 'completed').map(row => row.id)
-      checkedRef.current = completedIds
-      setChecked(completedIds)
-    }
+    const completedIds = rows.filter(row => row.status === 'completed').map(row => row.id)
+    checkedRef.current = completedIds
+    setChecked(completedIds)
     return rows.length
+  }, [])
+
+  const applyJobState = useCallback((job: AiInferenceJob) => {
+    setGenerationStatus(job.status)
+    setGenerationErrorCode(job.errorCode ?? null)
+    setGenerationErrorMessage(job.errorMessage ?? null)
   }, [])
 
   const watchGenerationJob = useCallback(async (jobId: string, uid: string) => {
@@ -146,64 +138,58 @@ export default function ChecklistPage() {
       for (let index = 0; index < 120; index += 1) {
         if (index > 0) await delay(1500)
         const current = await getAiInferenceJob(supabase, jobId)
-        if (!current) throw new Error('System inference job disappeared')
+        if (!current) throw new Error('System progression state disappeared')
 
-        setGenerationStatus(current.status)
+        applyJobState(current)
 
         if (current.status === 'succeeded') {
           const count = await loadGeneratedQuests(uid)
           if (count === 0) {
-            setGenerationError('System selesai memproses context, tapi belum ada quest yang bisa dipersist untuk hari ini.')
+            setGenerationErrorCode('empty_result')
+            setGenerationErrorMessage('No Daily Quest was persisted for today.')
           } else {
-            setGenerationError(null)
+            setGenerationErrorCode(null)
+            setGenerationErrorMessage(null)
           }
           return
         }
 
-        if (current.status === 'failed' || current.status === 'blocked_auth') {
-          setGenerationError(current.errorMessage ?? (current.status === 'blocked_auth'
-            ? 'ChatGPT worker session perlu login ulang.'
-            : 'AI progression gagal diproses.'))
-          return
-        }
+        if (current.status === 'failed' || current.status === 'blocked_auth') return
       }
 
-      setGenerationError('System job masih queued terlalu lama. AI worker belum mengambil job ini; manual retry tidak akan membuat duplicate quest.')
+      setGenerationErrorCode('processing_timeout')
+      setGenerationErrorMessage('System progression is taking longer than expected.')
     } catch (error) {
       setGenerationStatus('failed')
-      setGenerationError(error instanceof Error ? error.message : 'System gagal memantau AI progression.')
+      setGenerationErrorCode('monitor_failed')
+      setGenerationErrorMessage(error instanceof Error ? error.message : 'System failed to monitor progression.')
     } finally {
       if (watchedJobRef.current === jobId) watchedJobRef.current = null
     }
-  }, [loadGeneratedQuests])
+  }, [applyJobState, loadGeneratedQuests])
 
   const syncAutomaticGeneration = useCallback(async (uid: string) => {
     const job = await getAiInferenceJobForDate(supabase, uid, todayStr())
     if (!job) {
       setGenerationStatus('idle')
+      setGenerationErrorCode(null)
+      setGenerationErrorMessage(null)
       return
     }
 
-    setGenerationStatus(job.status)
+    applyJobState(job)
 
     if (job.status === 'succeeded') {
-      await loadGeneratedQuests(uid)
+      const count = await loadGeneratedQuests(uid)
+      if (count === 0) setGenerationErrorCode('empty_result')
       return
     }
 
-    if (job.status === 'failed' || job.status === 'blocked_auth') {
-      setGenerationError(job.errorMessage ?? (job.status === 'blocked_auth'
-        ? 'ChatGPT worker session perlu login ulang.'
-        : 'AI progression gagal diproses.'))
-      return
-    }
-
+    if (job.status === 'failed' || job.status === 'blocked_auth') return
     void watchGenerationJob(job.id, uid)
-  }, [loadGeneratedQuests, watchGenerationJob])
+  }, [applyJobState, loadGeneratedQuests, watchGenerationJob])
 
   useEffect(() => {
-    let channel: ReturnType<typeof supabase.channel> | null = null
-
     async function init() {
       const { data: user } = await supabase.from('users').select('id').eq('name', username).single()
       if (!user) {
@@ -215,137 +201,80 @@ export default function ChecklistPage() {
 
       const { data: itemRows } = await supabase
         .from('checklist_items')
-        .select('id,label,category,anchor,sort_order')
+        .select('id,anchor')
         .eq('user_id', user.id)
         .eq('is_deleted', false)
-        .order('sort_order', { ascending: true })
 
-      const activeItems = itemRows ?? []
-      setItems(activeItems)
+      const anchorIds = ((itemRows ?? []) as Item[]).filter(item => item.anchor).map(item => item.id)
 
       const generatedCount = await loadGeneratedQuests(user.id)
-      const today = todayStr()
+      if (generatedCount === 0) await syncAutomaticGeneration(user.id)
 
-      if (generatedCount === 0) {
-        const { data: log } = await supabase
-          .from('daily_logs')
-          .select('checked_ids')
-          .eq('user_id', user.id)
-          .eq('date', today)
-          .single()
-
-        setChecked(log?.checked_ids ?? [])
-        await syncAutomaticGeneration(user.id)
-
-        channel = supabase
-          .channel(`logs:${user.id}:${today}`)
-          .on('postgres_changes',
-            { event: '*', schema: 'public', table: 'daily_logs', filter: `user_id=eq.${user.id}` },
-            payload => {
-              const row = payload.new as { date: string; checked_ids: string[] }
-              if (row?.date !== todayStr()) return
-              const incoming = row.checked_ids ?? []
-              const same = incoming.length === checkedRef.current.length && incoming.every(id => checkedRef.current.includes(id))
-              if (!same) setChecked(incoming)
-            }
-          )
-          .subscribe()
-      }
-
-      await refreshStreak(user.id, activeItems.filter(item => item.anchor).map(item => item.id))
+      await refreshStreak(user.id, anchorIds)
       setLoading(false)
     }
 
-    void init().catch(() => {
-      setGenerationError('System gagal memuat player state.')
+    void init().catch(error => {
+      setGenerationStatus('failed')
+      setGenerationErrorCode('player_state_load_failed')
+      setGenerationErrorMessage(error instanceof Error ? error.message : 'System failed to load player state.')
       setLoading(false)
     })
-    return () => { if (channel) supabase.removeChannel(channel) }
   }, [username, router, refreshStreak, loadGeneratedQuests, syncAutomaticGeneration])
 
-  const persist = useCallback((next: string[]) => {
-    if (saveTimer.current) clearTimeout(saveTimer.current)
+  const toggle = useCallback((id: string) => {
+    if (!questReady) return
+
+    const before = checkedRef.current
+    const willComplete = !before.includes(id)
+    const next = willComplete ? [...before, id] : before.filter(value => value !== id)
+    checkedRef.current = next
+    setChecked(next)
     setStatus('saving')
 
-    saveTimer.current = setTimeout(async () => {
-      if (!userId) return
-      const { error } = await supabase.from('daily_logs').upsert(
-        {
-          user_id: userId,
-          date: todayStr(),
-          checked_ids: next,
-          item_count: total,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'user_id,date' }
-      )
-
+    void supabase.rpc('set_daily_quest_completion', {
+      p_quest_id: id,
+      p_completed: willComplete,
+    }).then(({ error }) => {
       if (error) {
+        checkedRef.current = before
+        setChecked(before)
         setStatus('idle')
         return
       }
 
+      setGeneratedQuests(current => current.map(quest => quest.id === id
+        ? { ...quest, status: willComplete ? 'completed' : 'pending' }
+        : quest
+      ))
       setStatus('saved')
-      await refreshStreak(userId, anchorIds)
       setTimeout(() => setStatus('idle'), 1400)
-    }, 450)
-  }, [userId, total, refreshStreak, anchorIds])
-
-  const toggle = useCallback((id: string) => {
-    if (usingGeneratedQuests) {
-      const before = checkedRef.current
-      const willComplete = !before.includes(id)
-      const next = willComplete ? [...before, id] : before.filter(value => value !== id)
-      checkedRef.current = next
-      setChecked(next)
-      setStatus('saving')
-
-      void supabase.rpc('set_daily_quest_completion', {
-        p_quest_id: id,
-        p_completed: willComplete,
-      }).then(({ error }) => {
-        if (error) {
-          checkedRef.current = before
-          setChecked(before)
-          setStatus('idle')
-          return
-        }
-        setGeneratedQuests(current => current.map(quest => quest.id === id
-          ? { ...quest, status: willComplete ? 'completed' : 'pending' }
-          : quest
-        ))
-        setStatus('saved')
-        setTimeout(() => setStatus('idle'), 1400)
-      })
-      return
-    }
-
-    setChecked(prev => {
-      const next = prev.includes(id) ? prev.filter(value => value !== id) : [...prev, id]
-      persist(next)
-      return next
     })
-  }, [persist, usingGeneratedQuests])
+  }, [questReady])
 
-  const generateToday = useCallback(async () => {
-    if (!userId || generationStatus === 'queued' || generationStatus === 'running') return
-    setGenerationError(null)
+  const retryGeneration = useCallback(async () => {
+    if (!userId || generationBusy) return
+    setGenerationErrorCode(null)
+    setGenerationErrorMessage(null)
 
     try {
       const job = await requestDailyQuestGeneration(supabase, todayStr())
-      setGenerationStatus(job.status)
+      applyJobState(job)
 
       if (job.status === 'succeeded') {
         await loadGeneratedQuests(userId)
         return
       }
 
-      await watchGenerationJob(job.id, userId)
+      if (job.status !== 'failed' && job.status !== 'blocked_auth') {
+        await watchGenerationJob(job.id, userId)
+      }
     } catch (error) {
       setGenerationStatus('failed')
-      setGenerationError(error instanceof Error ? error.message : 'Generation gagal dijalankan.')
+      setGenerationErrorCode('manual_retry_failed')
+      setGenerationErrorMessage(error instanceof Error ? error.message : 'System retry failed.')
     }
-  }, [generationStatus, loadGeneratedQuests, userId, watchGenerationJob])
+  }, [applyJobState, generationBusy, loadGeneratedQuests, userId, watchGenerationJob])
 
   if (loading) {
     return (
@@ -356,14 +285,11 @@ export default function ChecklistPage() {
   }
 
   const visibleCategories = filter === 'semua' ? CATEGORY_ORDER : [filter]
-  const generationBusy = generationStatus === 'queued' || generationStatus === 'running'
-  const manualButtonLabel = generationStatus === 'queued'
-    ? 'WAITING FOR AI WORKER...'
-    : generationStatus === 'running'
-      ? 'CHATGPT REASONING...'
-      : generationStatus === 'failed' || generationStatus === 'blocked_auth'
-        ? 'RETRY AI JOB'
-        : 'RUN NOW (FALLBACK)'
+  const systemMessage = mainDone === mainQuests.length && mainQuests.length > 0
+    ? 'Main Quest complete. Hari ini sudah aman — lanjutkan side quest kalau energi masih ada.'
+    : mainQuests.length > 0
+      ? `${mainQuests.length - mainDone} Main Quest masih aktif. Selesaikan ini sebelum mengejar bonus.`
+      : 'Quest hari ini aktif. Hasil eksekusinya akan dipakai System untuk progression berikutnya.'
 
   return (
     <div style={{ minHeight: '100dvh', background: S.bg, color: S.ink, fontFamily: '"IBM Plex Sans", sans-serif', paddingBottom: 72 }}>
@@ -394,163 +320,235 @@ export default function ChecklistPage() {
               Daily Quest
             </h1>
             <p style={{ color: S.muted, fontSize: 13, lineHeight: 1.55, margin: '10px 0 0', maxWidth: 500 }}>
-              {usingGeneratedQuests
-                ? 'Quest hari ini dipersist dari bounded Player Knowledge reasoning. Refresh tidak akan mengganti quest batch yang sama.'
-                : 'System otomatis memproses Life Vault update dan daily checkpoint. User tidak perlu membuat checklist atau menekan generate untuk memicu AI.'}
+              {questReady
+                ? 'System sudah menentukan fokus hari ini berdasarkan konteks yang relevan. Quest ini tidak akan berubah hanya karena halaman direfresh.'
+                : 'Daily Quest dibuat otomatis dari apa yang System pahami tentang hidup, tujuan, dan hambatan lo.'}
             </p>
           </div>
 
-          {!usingGeneratedQuests && (
-            <div style={{ marginTop: 18, background: S.panel, border: `1px solid ${S.line}`, borderRadius: 14, padding: 14 }}>
-              <button
-                type="button"
-                onClick={generateToday}
-                disabled={generationBusy}
-                style={{
-                  width: '100%', border: 'none', borderRadius: 10, padding: '12px 16px',
-                  background: generationBusy ? '#3a3328' : S.amber,
-                  color: generationBusy ? S.muted : S.bg,
-                  fontFamily: '"IBM Plex Mono", monospace', fontWeight: 700, fontSize: 11,
-                  letterSpacing: '.08em', cursor: generationBusy ? 'default' : 'pointer',
-                }}
-              >
-                {manualButtonLabel}
-              </button>
-              {generationError && (
-                <div style={{ color: S.red, fontSize: 11, lineHeight: 1.45, marginTop: 10 }}>{generationError}</div>
-              )}
-              <div style={{ color: S.muted, fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, lineHeight: 1.5, marginTop: 10 }}>
-                AUTO: Life Vault event + daily 04:00 checkpoint → AI worker → validation → Supabase. Button di atas hanya retry/fallback.
-              </div>
-            </div>
+          {!questReady && (
+            <SystemEmptyState
+              username={username}
+              generationStatus={generationStatus}
+              needsContext={needsContext}
+              generationFailed={generationFailed || emptyAfterSuccess}
+              systemPaused={systemPaused}
+              onRetry={retryGeneration}
+            />
           )}
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10, marginTop: 22 }}>
-            <Stat value={`${pct}%`} label="PROGRESS" />
-            <Stat value={`${xpEarned}/${xpTotal}`} label="XP" />
-            <Stat value={`${streak}`} label="STREAK" />
-          </div>
+          {questReady && (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10, marginTop: 22 }}>
+                <Stat value={`${pct}%`} label="PROGRESS" />
+                <Stat value={`${xpEarned}/${xpTotal}`} label="XP" />
+                <Stat value={`${streak}`} label="STREAK" />
+              </div>
 
-          <div style={{ marginTop: 12, height: 6, background: '#1c222c', borderRadius: 99, overflow: 'hidden' }}>
-            <div style={{ width: `${pct}%`, height: '100%', background: `linear-gradient(90deg,${S.amber},${S.gold})`, transition: 'width 400ms ease' }} />
-          </div>
+              <div style={{ marginTop: 12, height: 6, background: '#1c222c', borderRadius: 99, overflow: 'hidden' }}>
+                <div style={{ width: `${pct}%`, height: '100%', background: `linear-gradient(90deg,${S.amber},${S.gold})`, transition: 'width 400ms ease' }} />
+              </div>
 
-          <div style={{ marginTop: 14, background: S.panel2, border: `1px solid ${S.line}`, borderRadius: 14, padding: '13px 14px' }}>
-            <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.amber, fontSize: 9, letterSpacing: '.12em' }}>SYSTEM ASSESSMENT · {usingGeneratedQuests ? 'AI BATCH' : 'LEGACY FALLBACK'}</div>
-            <div style={{ color: S.ink, fontSize: 12.5, lineHeight: 1.5, marginTop: 6 }}>{systemMessage}</div>
-          </div>
+              <div style={{ marginTop: 14, background: S.panel2, border: `1px solid ${S.line}`, borderRadius: 14, padding: '13px 14px' }}>
+                <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.amber, fontSize: 9, letterSpacing: '.12em' }}>SYSTEM ASSESSMENT</div>
+                <div style={{ color: S.ink, fontSize: 12.5, lineHeight: 1.5, marginTop: 6 }}>{systemMessage}</div>
+              </div>
 
-          <div style={{ height: 14, marginTop: 8, fontFamily: '"IBM Plex Mono", monospace', fontSize: 10, color: status === 'saved' ? S.amber : S.muted, opacity: status === 'idle' ? 0 : 1 }}>
-            {status === 'saving' ? 'SYNCING...' : status === 'saved' ? '✓ QUEST STATE SAVED' : ''}
-          </div>
+              <div style={{ height: 14, marginTop: 8, fontFamily: '"IBM Plex Mono", monospace', fontSize: 10, color: status === 'saved' ? S.amber : S.muted, opacity: status === 'idle' ? 0 : 1 }}>
+                {status === 'saving' ? 'SYNCING...' : status === 'saved' ? '✓ QUEST STATE SAVED' : ''}
+              </div>
+            </>
+          )}
         </header>
 
-        <div style={{ display: 'flex', gap: 8, overflowX: 'auto', padding: '2px 0 14px' }}>
-          {(['semua', ...CATEGORY_ORDER] as const).map(category => (
-            <button
-              key={category}
-              onClick={() => setFilter(category)}
-              style={{
-                flexShrink: 0,
-                border: filter === category ? 'none' : `1px solid ${S.line}`,
-                background: filter === category ? S.amber : 'transparent',
-                color: filter === category ? S.bg : S.muted,
-                borderRadius: 99,
-                padding: '8px 13px',
-                fontFamily: '"IBM Plex Mono", monospace',
-                fontSize: 10,
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-            >
-              {category === 'semua' ? 'SEMUA' : CATEGORY_LABEL[category].toUpperCase()}
-            </button>
-          ))}
-        </div>
+        {questReady && (
+          <>
+            <div style={{ display: 'flex', gap: 8, overflowX: 'auto', padding: '2px 0 14px' }}>
+              {(['semua', ...CATEGORY_ORDER] as const).map(category => (
+                <button
+                  key={category}
+                  onClick={() => setFilter(category)}
+                  style={{
+                    flexShrink: 0,
+                    border: filter === category ? 'none' : `1px solid ${S.line}`,
+                    background: filter === category ? S.amber : 'transparent',
+                    color: filter === category ? S.bg : S.muted,
+                    borderRadius: 99,
+                    padding: '8px 13px',
+                    fontFamily: '"IBM Plex Mono", monospace',
+                    fontSize: 10,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {category === 'semua' ? 'SEMUA' : CATEGORY_LABEL[category].toUpperCase()}
+                </button>
+              ))}
+            </div>
 
-        <main>
-          {visibleCategories.map(category => {
-            const categoryQuests = quests.filter(quest => quest.category === category)
-            if (categoryQuests.length === 0) return null
+            <main>
+              {visibleCategories.map(category => {
+                const categoryQuests = quests.filter(quest => quest.category === category)
+                if (categoryQuests.length === 0) return null
 
-            return (
-              <section key={category} style={{ marginTop: 16 }}>
-                <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 10, color: S.muted, letterSpacing: '.12em', margin: '0 2px 8px' }}>
-                  {CATEGORY_LABEL[category].toUpperCase()}
-                </div>
-                <div style={{ background: S.panel, border: `1px solid ${S.line}`, borderRadius: 18, overflow: 'hidden' }}>
-                  {categoryQuests.map((quest, index) => {
-                    const done = checked.includes(quest.id)
-                    return (
-                      <div
-                        key={quest.id}
-                        onClick={() => toggle(quest.id)}
-                        role="checkbox"
-                        aria-checked={done}
-                        tabIndex={0}
-                        onKeyDown={event => {
-                          if (event.key === 'Enter' || event.key === ' ') {
-                            event.preventDefault()
-                            toggle(quest.id)
-                          }
-                        }}
-                        style={{
-                          display: 'flex',
-                          gap: 13,
-                          padding: '15px 16px',
-                          borderTop: index === 0 ? 'none' : `1px solid ${S.line}`,
-                          cursor: 'pointer',
-                          background: done ? 'rgba(246,178,75,.035)' : 'transparent',
-                        }}
-                      >
-                        <span style={{
-                          width: 22,
-                          height: 22,
-                          flexShrink: 0,
-                          borderRadius: 7,
-                          border: done ? 'none' : '1.5px solid #39414e',
-                          display: 'grid',
-                          placeItems: 'center',
-                          background: done ? `linear-gradient(135deg,${S.amber},${S.gold})` : 'transparent',
-                          boxShadow: done ? '0 0 14px rgba(246,178,75,.4)' : 'none',
-                          marginTop: 2,
-                        }}>
-                          {done ? '✓' : ''}
-                        </span>
-
-                        <div style={{ minWidth: 0, flex: 1 }}>
-                          <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>
-                            <span style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, color: quest.kind === 'main' ? S.amber : S.muted, letterSpacing: '.1em' }}>
-                              {questKindLabel[quest.kind]}
+                return (
+                  <section key={category} style={{ marginTop: 16 }}>
+                    <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 10, color: S.muted, letterSpacing: '.12em', margin: '0 2px 8px' }}>
+                      {CATEGORY_LABEL[category].toUpperCase()}
+                    </div>
+                    <div style={{ background: S.panel, border: `1px solid ${S.line}`, borderRadius: 18, overflow: 'hidden' }}>
+                      {categoryQuests.map((quest, index) => {
+                        const done = checked.includes(quest.id)
+                        return (
+                          <div
+                            key={quest.id}
+                            onClick={() => toggle(quest.id)}
+                            role="checkbox"
+                            aria-checked={done}
+                            tabIndex={0}
+                            onKeyDown={event => {
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault()
+                                toggle(quest.id)
+                              }
+                            }}
+                            style={{
+                              display: 'flex', gap: 13, padding: '15px 16px',
+                              borderTop: index === 0 ? 'none' : `1px solid ${S.line}`,
+                              cursor: 'pointer', background: done ? 'rgba(246,178,75,.035)' : 'transparent',
+                            }}
+                          >
+                            <span style={{
+                              width: 22, height: 22, flexShrink: 0, borderRadius: 7,
+                              border: done ? 'none' : '1.5px solid #39414e', display: 'grid', placeItems: 'center',
+                              background: done ? `linear-gradient(135deg,${S.amber},${S.gold})` : 'transparent',
+                              boxShadow: done ? '0 0 14px rgba(246,178,75,.4)' : 'none', marginTop: 2,
+                            }}>
+                              {done ? '✓' : ''}
                             </span>
-                            <span style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, color: S.gold }}>+{quest.xp} XP</span>
+
+                            <div style={{ minWidth: 0, flex: 1 }}>
+                              <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>
+                                <span style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, color: quest.kind === 'main' ? S.amber : S.muted, letterSpacing: '.1em' }}>
+                                  {questKindLabel[quest.kind]}
+                                </span>
+                                <span style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, color: S.gold }}>+{quest.xp} XP</span>
+                              </div>
+                              <div style={{ marginTop: 5, fontSize: 14.5, lineHeight: 1.45, color: done ? S.muted : S.ink, textDecoration: done ? 'line-through' : 'none' }}>
+                                {quest.title}
+                              </div>
+                              {quest.rationale && (
+                                <div style={{ marginTop: 6, color: S.muted, fontSize: 11, lineHeight: 1.45 }}>{quest.rationale}</div>
+                              )}
+                            </div>
                           </div>
-                          <div style={{ marginTop: 5, fontSize: 14.5, lineHeight: 1.45, color: done ? S.muted : S.ink, textDecoration: done ? 'line-through' : 'none' }}>
-                            {quest.title}
-                          </div>
-                          {usingGeneratedQuests && 'rationale' in quest && quest.rationale && (
-                            <div style={{ marginTop: 6, color: S.muted, fontSize: 11, lineHeight: 1.45 }}>{quest.rationale}</div>
-                          )}
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              </section>
-            )
-          })}
-        </main>
+                        )
+                      })}
+                    </div>
+                  </section>
+                )
+              })}
+            </main>
+          </>
+        )}
 
         <footer style={{ padding: '32px 0 10px', textAlign: 'center' }}>
           <div style={{ color: S.muted, fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, lineHeight: 1.6 }}>
             QUEST AUTHORING IS SYSTEM-OWNED<br />
-            {usingGeneratedQuests ? 'persisted AI quest batch is canonical for today' : 'legacy checklist is fallback until AI batch exists'}
+            {questReady ? 'today’s quest batch is persistent' : 'add life context and let the System decide what matters next'}
           </div>
           <Link href="/" style={{ display: 'inline-block', marginTop: 16, color: S.muted, textDecoration: 'none', fontFamily: '"IBM Plex Mono", monospace', fontSize: 10 }}>
             ← SWITCH PLAYER
           </Link>
+          {generationErrorMessage && process.env.NODE_ENV !== 'production' && (
+            <div style={{ marginTop: 12, color: S.red, fontFamily: '"IBM Plex Mono", monospace', fontSize: 9 }}>
+              DEBUG · {generationErrorCode ?? 'unknown'} · {generationErrorMessage}
+            </div>
+          )}
         </footer>
       </div>
+    </div>
+  )
+}
+
+function SystemEmptyState({
+  username,
+  generationStatus,
+  needsContext,
+  generationFailed,
+  systemPaused,
+  onRetry,
+}: {
+  username: string
+  generationStatus: AiInferenceJobStatus | 'idle'
+  needsContext: boolean
+  generationFailed: boolean
+  systemPaused: boolean
+  onRetry: () => void
+}) {
+  const queued = generationStatus === 'queued'
+  const running = generationStatus === 'running'
+
+  let eyebrow = 'PLAYER CONTEXT REQUIRED'
+  let title = 'SYSTEM NEEDS TO KNOW YOU FIRST'
+  let body = 'Ceritain apa yang sedang lo kejar, masalah yang lagi lo hadapi, atau perubahan penting yang baru terjadi. System akan memakai konteks itu untuk menentukan quest yang relevan.'
+
+  if (queued) {
+    eyebrow = 'UPDATE RECEIVED'
+    title = 'SYSTEM IS PREPARING YOUR PROGRESSION'
+    body = 'Konteks lo sudah masuk. System akan memprosesnya dan Daily Quest akan muncul otomatis setelah progression siap.'
+  } else if (running) {
+    eyebrow = 'UNDERSTANDING PLAYER'
+    title = 'SYSTEM IS ANALYZING YOUR CONTEXT'
+    body = 'System sedang menghubungkan update terbaru dengan tujuan, hambatan, dan progression lo. Daily Quest akan muncul otomatis setelah selesai.'
+  } else if (systemPaused) {
+    eyebrow = 'SYSTEM TEMPORARILY PAUSED'
+    title = 'YOUR CONTEXT IS SAFE'
+    body = 'System belum bisa melanjutkan reasoning saat ini. Update lo tetap tersimpan dan tidak perlu dimasukkan ulang.'
+  } else if (generationFailed) {
+    eyebrow = 'SYSTEM COULD NOT FINISH'
+    title = 'YOUR CONTEXT IS STILL SAFE'
+    body = 'System belum berhasil menyusun Daily Quest. Lo bisa coba lagi sekarang, atau tambahkan konteks baru kalau ada hal penting yang belum diketahui System.'
+  } else if (needsContext) {
+    eyebrow = 'PLAYER CONTEXT REQUIRED'
+  }
+
+  return (
+    <div style={{ marginTop: 20, background: S.panel, border: `1px solid ${S.line}`, borderRadius: 18, padding: '18px 16px' }}>
+      <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, color: S.amber, letterSpacing: '.14em' }}>{eyebrow}</div>
+      <div style={{ marginTop: 8, fontFamily: '"Space Grotesk", sans-serif', fontSize: 19, fontWeight: 700, lineHeight: 1.2 }}>{title}</div>
+      <div style={{ marginTop: 9, color: S.muted, fontSize: 12.5, lineHeight: 1.6 }}>{body}</div>
+
+      {!queued && !running && !systemPaused && !generationFailed && (
+        <Link
+          href={`/${encodeURIComponent(username)}/vault`}
+          style={{
+            display: 'block', marginTop: 16, borderRadius: 10, padding: '12px 16px', textAlign: 'center',
+            background: S.amber, color: S.bg, textDecoration: 'none', fontFamily: '"IBM Plex Mono", monospace',
+            fontWeight: 700, fontSize: 11, letterSpacing: '.08em',
+          }}
+        >
+          ADD TO LIFE VAULT →
+        </Link>
+      )}
+
+      {generationFailed && (
+        <div style={{ display: 'grid', gap: 8, marginTop: 16 }}>
+          <button
+            type="button"
+            onClick={onRetry}
+            style={{
+              border: 'none', borderRadius: 10, padding: '12px 16px', background: S.amber, color: S.bg,
+              fontFamily: '"IBM Plex Mono", monospace', fontWeight: 700, fontSize: 11, letterSpacing: '.08em', cursor: 'pointer',
+            }}
+          >
+            TRY AGAIN
+          </button>
+          <Link href={`/${encodeURIComponent(username)}/vault`} style={{ color: S.gold, textAlign: 'center', textDecoration: 'none', fontSize: 11 }}>
+            Add more context instead
+          </Link>
+        </div>
+      )}
     </div>
   )
 }
