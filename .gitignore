@@ -2,6 +2,7 @@
 
 # dependencies
 /node_modules
+/workers/**/node_modules/
 /.pnp
 .pnp.*
 .yarn/*
@@ -12,6 +13,7 @@
 
 # testing
 /coverage
+/.domain-test-dist
 
 # next.js
 /.next/
@@ -19,6 +21,10 @@
 
 # production
 /build
+
+# browser worker credentials/session state
+/.chatgpt-profile/
+/workers/**/.chatgpt-profile/
 
 # misc
 .DS_Store

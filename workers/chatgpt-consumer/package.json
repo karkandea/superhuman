@@ -1,0 +1,16 @@
+{
+  "name": "superhuman-chatgpt-consumer-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "install-browser": "playwright install chromium",
+    "login": "node --import tsx worker.mjs --login",
+    "start": "node --import tsx worker.mjs",
+    "once": "node --import tsx worker.mjs --once"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.108.2",
+    "playwright": "^1.55.0",
+    "tsx": "^4.20.0"
+  }
+}

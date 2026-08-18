@@ -51,8 +51,10 @@ export default function DayDetailPage() {
   const anchorsDone  = anchorItems.filter(i => checked.includes(i.id)).length
   const allAnchors   = anchorItems.length > 0 && anchorsDone === anchorItems.length
 
-  const today     = toDateStr(new Date())
-  const yesterday = toDateStr(new Date(Date.now() - 864e5))
+  const today = toDateStr(new Date())
+  const yesterdayDate = new Date()
+  yesterdayDate.setDate(yesterdayDate.getDate() - 1)
+  const yesterday = toDateStr(yesterdayDate)
   const [y, m, dd] = date.split('-').map(Number)
   const dObj = new Date(y, m - 1, dd)
   const niceDate = dObj.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })

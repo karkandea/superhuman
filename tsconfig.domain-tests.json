@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "rootDir": ".",
+    "outDir": ".domain-test-dist"
+  },
+  "include": [
+    "lib/checklist-data.ts",
+    "lib/player-knowledge.ts",
+    "lib/player-knowledge-service.ts",
+    "lib/player-understanding.ts",
+    "lib/quest-system.ts",
+    "lib/ai/contracts.ts",
+    "lib/ai/orchestrator.ts",
+    "lib/ai/chatgpt-consumer-provider.ts",
+    "lib/context-retrieval.ts"
+  ]
+}
