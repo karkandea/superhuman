@@ -1,20 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ENV_FILE="${SUPERHUMAN_ENV_FILE:-/etc/superhuman-ai/consumer-worker.env}"
 DISPLAY_NUMBER="${SUPERHUMAN_DISPLAY_NUMBER:-99}"
 DISPLAY=":$DISPLAY_NUMBER"
 
-if [[ ! -f "$ENV_FILE" ]]; then
-  echo "Worker env not found: $ENV_FILE" >&2
-  exit 1
-fi
-
-set -a
-# shellcheck disable=SC1090
-source "$ENV_FILE"
-set +a
-
+# systemd injects the root-only EnvironmentFile before dropping privileges to
+# superhuman-ai. Do not source /etc/superhuman-ai/consumer-worker.env here: the
+# service account intentionally cannot read that secret file directly.
 : "${CHATGPT_BROWSER_PROFILE_DIR:?CHATGPT_BROWSER_PROFILE_DIR missing}"
 : "${CHATGPT_CHROME_BIN:?CHATGPT_CHROME_BIN missing}"
 : "${CHATGPT_CDP_PORT:?CHATGPT_CDP_PORT missing}"
@@ -28,6 +20,9 @@ trap cleanup EXIT INT TERM
 
 mkdir -p "$CHATGPT_BROWSER_PROFILE_DIR"
 chmod 700 "$CHATGPT_BROWSER_PROFILE_DIR"
+
+# Clear stale X server state from an interrupted login helper/service restart.
+rm -f "/tmp/.X${DISPLAY_NUMBER}-lock" 2>/dev/null || true
 
 Xvfb "$DISPLAY" -screen 0 1440x900x24 -nolisten tcp &
 XVFB_PID=$!
