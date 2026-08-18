@@ -80,7 +80,7 @@ test('understanding delta allows a no-op without rewriting the Player Brief', as
   assert.equal(result.persistence.playerBriefChanged, false)
   assert.equal(persisted.context.playerBrief.version, 37)
   assert.equal(request.context.playerBrief.version, 37)
-  assert.match(request.instructions, /conversation history is not memory/i)
+  assert.match(request.instructions, /do not treat conversation history as memory/i)
   assert.match(request.instructions, /actions: \[\]/)
 })
 
