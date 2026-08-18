@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(10);
+select plan(12);
 
 insert into auth.users (id,email) values ('99999999-9999-4999-8999-999999999999','materiality@example.invalid');
 insert into public.users (id,name,timezone) values ('99999999-9999-4999-8999-999999999999','__materiality__','Asia/Jakarta');
