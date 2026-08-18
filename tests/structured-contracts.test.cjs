@@ -7,6 +7,17 @@ const {
   generateDailyQuests,
 } = require('../.domain-test-dist/lib/ai/orchestrator.js')
 
+function playerBrief() {
+  return {
+    id: 'brief-1', version: 1, schemaVersion: 'player-brief.v1', reason: 'test',
+    createdAt: '2026-08-18T11:00:00.000Z', generatedAt: '2026-08-18T11:00:00.000Z',
+    player: { id: 'p1', name: 'Player', timezone: 'Asia/Jakarta' },
+    activeUnderstandingIds: [], highlights: [],
+    sections: { goals: [], obstacles: [], opportunities: [], constraints: [], preferences: [], relationships: [], events: [], priorities: [] },
+    activeSignals: [], counts: { activeUnderstanding: 0, activeSignals: 0 },
+  }
+}
+
 function understandingContext() {
   return {
     playerId: 'p1',
@@ -24,6 +35,7 @@ function dailyQuestContext() {
     playerId: 'p1',
     purpose: 'daily_quest',
     generatedAt: '2026-08-18T11:00:00.000Z',
+    playerBrief: playerBrief(),
     knowledgeEntries: [],
     signals: [{
       id: 's1',
@@ -114,6 +126,7 @@ test('daily quest request exposes validator-compatible category, kind, and diffi
 
   await generateDailyQuests(deps, { playerId: 'p1', date: '2026-08-18' })
 
+  assert.equal(request.context.playerBrief.version, 1)
   assert.deepEqual(request.responseContract.items.category, ['pagi', 'siang', 'malam', 'sepanjang_hari'])
   assert.deepEqual(request.responseContract.items.kind, ['main', 'side', 'maintenance', 'bonus'])
   assert.deepEqual(request.responseContract.items.difficulty, ['easy', 'medium', 'hard'])
