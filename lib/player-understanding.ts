@@ -18,6 +18,7 @@ export interface DerivedUnderstandingCandidate {
   summary: string
   details: Record<string, unknown>
   confidence: number
+  importance: number
   sourceKnowledgeEntryIds: string[]
   evidenceExcerpt?: string
 }
@@ -41,6 +42,13 @@ export interface PlayerSignal {
   sourceUnderstandingId?: string
 }
 
+export interface RecentQuestResult {
+  questId: string
+  outcome: 'completed' | 'partial' | 'skipped' | 'failed'
+  note?: string
+  recordedAt: string
+}
+
 export interface RetrievedPlayerContext {
   playerId: string
   purpose: 'understanding' | 'daily_quest'
@@ -53,6 +61,7 @@ export interface RetrievedPlayerContext {
     occurredAt?: string
   }>
   signals: PlayerSignal[]
+  recentQuestResults: RecentQuestResult[]
   retrieval: {
     strategy: string
     limit: number
@@ -91,6 +100,11 @@ export function validateUnderstandingCandidates(value: unknown): DerivedUndersta
       throw new Error(`Understanding candidate ${index} confidence must be between 0 and 1`)
     }
 
+    const importance = candidate.importance
+    if (!Number.isInteger(importance) || Number(importance) < 1 || Number(importance) > 5) {
+      throw new Error(`Understanding candidate ${index} importance must be an integer from 1 to 5`)
+    }
+
     const details = candidate.details === undefined ? {} : candidate.details
     if (!isRecord(details)) throw new Error(`Understanding candidate ${index} details must be an object`)
 
@@ -104,6 +118,7 @@ export function validateUnderstandingCandidates(value: unknown): DerivedUndersta
       summary,
       details,
       confidence,
+      importance: Number(importance),
       sourceKnowledgeEntryIds: assertStringArray(candidate.sourceKnowledgeEntryIds, `candidate ${index} sourceKnowledgeEntryIds`),
       ...(evidenceExcerpt?.trim() ? { evidenceExcerpt: evidenceExcerpt.trim() } : {}),
     }

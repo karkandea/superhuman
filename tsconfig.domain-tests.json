@@ -16,6 +16,7 @@
     "lib/player-understanding.ts",
     "lib/quest-system.ts",
     "lib/ai/contracts.ts",
-    "lib/ai/orchestrator.ts"
+    "lib/ai/orchestrator.ts",
+    "lib/context-retrieval.ts"
   ]
 }

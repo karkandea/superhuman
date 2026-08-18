@@ -97,7 +97,7 @@ export async function derivePlayerUnderstanding(
     context,
     responseContract: {
       type: 'array',
-      required: ['type', 'summary', 'confidence', 'sourceKnowledgeEntryIds'],
+      required: ['type', 'summary', 'confidence', 'importance', 'sourceKnowledgeEntryIds'],
     },
   })
 
