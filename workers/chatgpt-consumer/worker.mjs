@@ -1,4 +1,3 @@
-/* eslint-disable */
 import { chromium } from 'playwright'
 import { createClient } from '@supabase/supabase-js'
 import { randomUUID } from 'node:crypto'

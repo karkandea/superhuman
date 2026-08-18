@@ -8,6 +8,18 @@ Runtime flow:
 
 `GENERATE TODAY'S QUEST -> Supabase inference job -> trusted browser worker -> chatgpt.com -> correlated structured response -> Superhuman validators -> atomic persistence -> Daily Quest UI`
 
+## Rollout status
+
+The provider, worker, queue migration, UI wiring, and tests are implemented on `agent/ai-quest-system`.
+
+`supabase/sql/add_consumer_chatgpt_inference.sql` is intentionally **staged only** in this implementation slice. It has not been applied to production, so the current production app/database are not silently switched to consumer-browser inference by this branch work.
+
+A real ChatGPT consumer-session E2E also requires the player's persistent browser profile on the worker host. Repository/build validation cannot fabricate that authenticated session.
+
+The consumer website is an external UI dependency rather than a stable provider API. DOM or authentication-flow changes can require selector/transport maintenance; those changes stay isolated inside the browser transport instead of leaking into the Superhuman domain model.
+
+Repository validation for this slice covers correlated payload parsing, prompt-injection boundaries, existing provenance validation, UI compilation, and the queue pgTAP specification. It does not claim a live consumer-session browser run until the real player profile is available on the worker host.
+
 ## Why this is a worker, not browser automation inside Next.js
 
 The ChatGPT session is a privileged credential boundary. It must not be exposed to the browser-facing Superhuman app or stored in Supabase. A dedicated worker owns a persistent browser profile outside the repository and claims jobs through service-role-only RPCs.

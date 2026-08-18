@@ -21,12 +21,18 @@ The worker uses a dedicated Chromium profile directory, defaulting to:
 
 The directory is created with owner-only permissions. Do not put it inside the repository, sync it to cloud storage, or copy cookies into environment variables.
 
-One-time setup:
+The worker imports Superhuman domain code from the repository root. Install the main app dependencies once at repo root, then install the worker-specific Playwright dependencies:
 
 ```bash
+npm install
 cd workers/chatgpt-consumer
 npm install
 npm run install-browser
+```
+
+One-time ChatGPT session setup:
+
+```bash
 SUPABASE_URL=... SUPABASE_SECRET_KEY=... npm run login
 ```
 
