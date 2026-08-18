@@ -43,6 +43,16 @@ stop_remote_desktop() {
   pkill -u "$SERVICE_USER" -f -- "websockify.*$NOVNC_PORT" >/dev/null 2>&1 || true
 }
 
+verify_session() {
+  runuser -u "$SERVICE_USER" -- env \
+    HOME="$SERVICE_HOME" \
+    CHATGPT_BROWSER_PROFILE_DIR="$CHATGPT_BROWSER_PROFILE_DIR" \
+    CHATGPT_CDP_PORT="$CHATGPT_CDP_PORT" \
+    CHATGPT_CDP_URL="$CHATGPT_CDP_URL" \
+    CHATGPT_HEADLESS=false \
+    bash -lc "cd '$WORKER_DIR' && npm run login"
+}
+
 cleanup() {
   stop_remote_desktop
 }
@@ -57,13 +67,20 @@ chown -R "$SERVICE_USER:$SERVICE_USER" "$STATE_DIR"
 chmod 700 "$STATE_DIR" "$LOG_DIR" "$CHATGPT_BROWSER_PROFILE_DIR"
 
 stop_remote_desktop
-runuser -u "$SERVICE_USER" -- env HOME="$SERVICE_HOME" bash -lc \
-  "exec x11vnc -display '$DISPLAY' -localhost -forever -shared -nopw -rfbport '$VNC_PORT' >>'$LOG_DIR/x11vnc.log' 2>&1" &
-runuser -u "$SERVICE_USER" -- env HOME="$SERVICE_HOME" bash -lc \
-  "exec websockify --web=/usr/share/novnc '127.0.0.1:$NOVNC_PORT' '127.0.0.1:$VNC_PORT' >>'$LOG_DIR/novnc.log' 2>&1" &
-sleep 1
 
-cat <<EOF_LOGIN
+echo "Checking the persisted VPS ChatGPT session first..."
+if verify_session; then
+  echo "Existing ChatGPT session is still valid; noVNC login is not needed."
+else
+  echo "Existing session is not usable yet; opening temporary private noVNC for login."
+
+  runuser -u "$SERVICE_USER" -- env HOME="$SERVICE_HOME" bash -lc \
+    "exec x11vnc -display '$DISPLAY' -localhost -forever -shared -nopw -rfbport '$VNC_PORT' >>'$LOG_DIR/x11vnc.log' 2>&1" &
+  runuser -u "$SERVICE_USER" -- env HOME="$SERVICE_HOME" bash -lc \
+    "exec websockify --web=/usr/share/novnc '127.0.0.1:$NOVNC_PORT' '127.0.0.1:$VNC_PORT' >>'$LOG_DIR/novnc.log' 2>&1" &
+  sleep 1
+
+  cat <<EOF_LOGIN
 
 Persistent Chrome is running on the VPS inside Xvfb.
 noVNC is temporarily bound ONLY to VPS localhost; port $NOVNC_PORT is not exposed publicly.
@@ -80,16 +97,10 @@ Log into chatgpt.com inside that remote Chrome until the normal ChatGPT composer
 Then return to THIS VPS terminal and press Enter.
 EOF_LOGIN
 
-IFS= read -r
-
-echo "Verifying the persistent VPS ChatGPT session through local CDP..."
-runuser -u "$SERVICE_USER" -- env \
-  HOME="$SERVICE_HOME" \
-  CHATGPT_BROWSER_PROFILE_DIR="$CHATGPT_BROWSER_PROFILE_DIR" \
-  CHATGPT_CDP_PORT="$CHATGPT_CDP_PORT" \
-  CHATGPT_CDP_URL="$CHATGPT_CDP_URL" \
-  CHATGPT_HEADLESS=false \
-  bash -lc "cd '$WORKER_DIR' && npm run login"
+  IFS= read -r
+  echo "Verifying the persistent VPS ChatGPT session through local CDP..."
+  verify_session
+fi
 
 echo "ChatGPT session verified. Closing noVNC while keeping Chrome/Xvfb alive..."
 stop_remote_desktop
