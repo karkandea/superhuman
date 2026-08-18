@@ -12,6 +12,18 @@ function authRedirectUrl() {
   return configured ? configured.replace(/\/+$/, '') : PRODUCTION_SITE_URL
 }
 
+function authErrorMessage(error: { status?: number; code?: string }) {
+  if (error.status === 429 || error.code === 'over_email_send_rate_limit') {
+    return 'Terlalu cepat minta magic link baru. Tunggu beberapa detik lalu coba lagi.'
+  }
+
+  if (error.code === 'otp_disabled') {
+    return 'Email ini belum dikenali sebagai player yang terdaftar.'
+  }
+
+  return 'Login belum bisa diproses. Coba lagi.'
+}
+
 const S = {
   bg: '#0c0f14', panel: '#13171f', line: '#232a35',
   ink: '#ECEAE3', muted: '#7e8795', amber: '#f6b24b', red: '#e5687a',
@@ -84,7 +96,7 @@ export default function HomePage() {
     setSending(false)
 
     if (signInError) {
-      setError('Login belum bisa diproses. Pastikan email ini sudah terdaftar sebagai player.')
+      setError(authErrorMessage(signInError))
       return
     }
 
