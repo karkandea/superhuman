@@ -83,19 +83,23 @@ if ! id "$SERVICE_USER" >/dev/null 2>&1; then
 fi
 SERVICE_HOME="$(getent passwd "$SERVICE_USER" | cut -d: -f6)"
 
-mkdir -p "$REPO_DIR" "$CONFIG_DIR" "$PROFILE_DIR" "$LOG_DIR"
+mkdir -p "$CONFIG_DIR" "$PROFILE_DIR" "$LOG_DIR"
 chown -R "$SERVICE_USER:$SERVICE_USER" "$STATE_DIR"
 chmod 700 "$STATE_DIR" "$PROFILE_DIR" "$LOG_DIR"
 chmod 700 "$CONFIG_DIR"
 
+# The repository is owned by the unprivileged worker account. Always run Git as
+# that same account so reruns do not trip Git's dubious-ownership protection and
+# we never need a root-global safe.directory exception.
 if [[ -d "$REPO_DIR/.git" ]]; then
-  git -C "$REPO_DIR" fetch --depth=1 origin main
-  git -C "$REPO_DIR" reset --hard origin/main
+  chown -R "$SERVICE_USER:$SERVICE_USER" "$REPO_DIR"
+  runuser -u "$SERVICE_USER" -- env HOME="$SERVICE_HOME" git -C "$REPO_DIR" fetch --depth=1 origin main
+  runuser -u "$SERVICE_USER" -- env HOME="$SERVICE_HOME" git -C "$REPO_DIR" reset --hard origin/main
 else
   rm -rf "$REPO_DIR"
-  git clone --depth=1 --branch main "$REPO_URL" "$REPO_DIR"
+  install -d -o "$SERVICE_USER" -g "$SERVICE_USER" "$REPO_DIR"
+  runuser -u "$SERVICE_USER" -- env HOME="$SERVICE_HOME" git clone --depth=1 --branch main "$REPO_URL" "$REPO_DIR"
 fi
-chown -R "$SERVICE_USER:$SERVICE_USER" "$REPO_DIR"
 
 # The root lockfile was produced on macOS and currently contains optional/native
 # dependency metadata that npm ci rejects on Linux. Runtime installation follows
