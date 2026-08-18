@@ -97,8 +97,12 @@ else
 fi
 chown -R "$SERVICE_USER:$SERVICE_USER" "$REPO_DIR"
 
-runuser -u "$SERVICE_USER" -- env HOME="$SERVICE_HOME" bash -lc "cd '$REPO_DIR' && npm ci"
-runuser -u "$SERVICE_USER" -- env HOME="$SERVICE_HOME" bash -lc "cd '$WORKER_DIR' && npm install"
+# The root lockfile was produced on macOS and currently contains optional/native
+# dependency metadata that npm ci rejects on Linux. Runtime installation follows
+# package.json without rewriting the repository lockfile; the lockfile can be
+# repaired separately without blocking the 24/7 worker rollout.
+runuser -u "$SERVICE_USER" -- env HOME="$SERVICE_HOME" bash -lc "cd '$REPO_DIR' && npm install --package-lock=false --no-audit --no-fund"
+runuser -u "$SERVICE_USER" -- env HOME="$SERVICE_HOME" bash -lc "cd '$WORKER_DIR' && npm install --package-lock=false --no-audit --no-fund"
 
 normalize_key() {
   printf '%s' "$1" | tr -d '\r\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
