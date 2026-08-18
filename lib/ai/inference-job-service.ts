@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-export type AiInferenceJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'blocked_auth'
+export type AiInferenceJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'blocked_auth' | 'paused_rate_limit'
 
 export interface AiInferenceJob {
   id: string
