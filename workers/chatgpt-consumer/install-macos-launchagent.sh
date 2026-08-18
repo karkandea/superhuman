@@ -18,6 +18,8 @@ LABEL="com.dualangka.superhuman-ai-worker"
 NODE_BIN="$(command -v node || true)"
 NPM_BIN="$(command -v npm || true)"
 CHROME_BIN="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+CDP_PORT="9222"
+CDP_URL="http://127.0.0.1:$CDP_PORT"
 
 if [[ ! -x "$CHROME_BIN" ]]; then
   CHROME_BIN="$HOME/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
@@ -63,7 +65,9 @@ cat > "$ENV_FILE" <<EOF
 SUPABASE_URL=$SUPABASE_URL
 SUPABASE_SECRET_KEY=$SUPABASE_SECRET_KEY
 CHATGPT_BROWSER_PROFILE_DIR=$PROFILE_DIR
-CHATGPT_BROWSER_CHANNEL=chrome
+CHATGPT_CHROME_BIN=$CHROME_BIN
+CHATGPT_CDP_PORT=$CDP_PORT
+CHATGPT_CDP_URL=$CDP_URL
 CHATGPT_HEADLESS=true
 SUPERHUMAN_WORKER_ID=superhuman-mac-$(id -u)
 EOF
@@ -73,8 +77,11 @@ unset SUPABASE_SECRET_KEY
 printf "\nOpening Google Chrome normally for one-time ChatGPT login...\n"
 printf "This Chrome instance uses only the dedicated Superhuman profile:\n%s\n\n" "$PROFILE_DIR"
 printf "Sign in to ChatGPT completely. When you can see the normal ChatGPT composer, return to this terminal and press Enter.\n"
+printf "Do not close this dedicated Chrome window yet; the worker will verify the SAME live session.\n\n"
 
 "$CHROME_BIN" \
+  --remote-debugging-port="$CDP_PORT" \
+  --remote-debugging-address=127.0.0.1 \
   --user-data-dir="$PROFILE_DIR" \
   --no-first-run \
   --no-default-browser-check \
@@ -82,11 +89,7 @@ printf "Sign in to ChatGPT completely. When you can see the normal ChatGPT compo
 
 IFS= read -r
 
-# Ensure the dedicated manual Chrome instance releases the profile before Playwright verifies it.
-pkill -f "$PROFILE_DIR" >/dev/null 2>&1 || true
-sleep 2
-
-printf "Verifying the saved ChatGPT session with the worker...\n\n"
+printf "Verifying the live ChatGPT session through Chrome CDP...\n\n"
 set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
@@ -134,6 +137,7 @@ launchctl bootstrap "gui/$(id -u)" "$PLIST"
 launchctl kickstart -k "gui/$(id -u)/$LABEL"
 
 printf "\nSuperhuman AI worker installed and started.\n"
+printf "Keep the dedicated Chrome window open for this first run. If it is later closed/rebooted, the worker will relaunch the same profile headlessly.\n"
 printf "Status: launchctl print gui/%s/%s\n" "$(id -u)" "$LABEL"
 printf "Logs: %s\n" "$LOG_DIR"
 printf "Worker env: %s (mode 600, outside repo)\n" "$ENV_FILE"
