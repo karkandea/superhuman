@@ -5,7 +5,12 @@ import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { CATEGORY_LABEL, CATEGORY_ORDER, Category, todayStr, toDateStr } from '@/lib/checklist-data'
-import { getAiInferenceJob, requestDailyQuestGeneration, type AiInferenceJobStatus } from '@/lib/ai/inference-job-service'
+import {
+  getAiInferenceJob,
+  getAiInferenceJobForDate,
+  requestDailyQuestGeneration,
+  type AiInferenceJobStatus,
+} from '@/lib/ai/inference-job-service'
 import { legacyItemToQuest, questKindLabel } from '@/lib/quest-system'
 
 const S = {
@@ -71,6 +76,7 @@ export default function ChecklistPage() {
 
   const checkedRef = useRef<string[]>([])
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const watchedJobRef = useRef<string | null>(null)
 
   useEffect(() => {
     checkedRef.current = checked
@@ -93,7 +99,13 @@ export default function ChecklistPage() {
       ? `${mainQuests.length - mainDone} Main Quest masih aktif. Sistem menyarankan selesaikan ini sebelum mengejar bonus.`
       : usingGeneratedQuests
         ? 'Quest batch hari ini aktif. Sistem akan memakai hasil eksekusinya sebagai signal untuk progression berikutnya.'
-        : 'Belum ada AI quest untuk hari ini. Generate setelah Life Vault berisi konteks yang relevan.'
+        : generationStatus === 'running'
+          ? 'System sedang menganalisis Player Knowledge dan menyusun progression.'
+          : generationStatus === 'queued'
+            ? 'System sudah menjadwalkan progression hari ini dan sedang menunggu AI worker.'
+            : generationStatus === 'blocked_auth'
+              ? 'AI worker perlu menyambungkan ulang sesi ChatGPT sebelum reasoning bisa lanjut.'
+              : 'System otomatis memicu AI dari Life Vault update dan daily checkpoint. Legacy checklist hanya fallback sementara.'
 
   const refreshStreak = useCallback(async (uid: string, anchors: string[]) => {
     const from60 = toDateStr(new Date(Date.now() - 60 * 864e5))
@@ -125,6 +137,69 @@ export default function ChecklistPage() {
     }
     return rows.length
   }, [])
+
+  const watchGenerationJob = useCallback(async (jobId: string, uid: string) => {
+    if (watchedJobRef.current === jobId) return
+    watchedJobRef.current = jobId
+
+    try {
+      for (let index = 0; index < 120; index += 1) {
+        if (index > 0) await delay(1500)
+        const current = await getAiInferenceJob(supabase, jobId)
+        if (!current) throw new Error('System inference job disappeared')
+
+        setGenerationStatus(current.status)
+
+        if (current.status === 'succeeded') {
+          const count = await loadGeneratedQuests(uid)
+          if (count === 0) {
+            setGenerationError('System selesai memproses context, tapi belum ada quest yang bisa dipersist untuk hari ini.')
+          } else {
+            setGenerationError(null)
+          }
+          return
+        }
+
+        if (current.status === 'failed' || current.status === 'blocked_auth') {
+          setGenerationError(current.errorMessage ?? (current.status === 'blocked_auth'
+            ? 'ChatGPT worker session perlu login ulang.'
+            : 'AI progression gagal diproses.'))
+          return
+        }
+      }
+
+      setGenerationError('System job masih queued terlalu lama. AI worker belum mengambil job ini; manual retry tidak akan membuat duplicate quest.')
+    } catch (error) {
+      setGenerationStatus('failed')
+      setGenerationError(error instanceof Error ? error.message : 'System gagal memantau AI progression.')
+    } finally {
+      if (watchedJobRef.current === jobId) watchedJobRef.current = null
+    }
+  }, [loadGeneratedQuests])
+
+  const syncAutomaticGeneration = useCallback(async (uid: string) => {
+    const job = await getAiInferenceJobForDate(supabase, uid, todayStr())
+    if (!job) {
+      setGenerationStatus('idle')
+      return
+    }
+
+    setGenerationStatus(job.status)
+
+    if (job.status === 'succeeded') {
+      await loadGeneratedQuests(uid)
+      return
+    }
+
+    if (job.status === 'failed' || job.status === 'blocked_auth') {
+      setGenerationError(job.errorMessage ?? (job.status === 'blocked_auth'
+        ? 'ChatGPT worker session perlu login ulang.'
+        : 'AI progression gagal diproses.'))
+      return
+    }
+
+    void watchGenerationJob(job.id, uid)
+  }, [loadGeneratedQuests, watchGenerationJob])
 
   useEffect(() => {
     let channel: ReturnType<typeof supabase.channel> | null = null
@@ -160,6 +235,7 @@ export default function ChecklistPage() {
           .single()
 
         setChecked(log?.checked_ids ?? [])
+        await syncAutomaticGeneration(user.id)
 
         channel = supabase
           .channel(`logs:${user.id}:${today}`)
@@ -185,7 +261,7 @@ export default function ChecklistPage() {
       setLoading(false)
     })
     return () => { if (channel) supabase.removeChannel(channel) }
-  }, [username, router, refreshStreak, loadGeneratedQuests])
+  }, [username, router, refreshStreak, loadGeneratedQuests, syncAutomaticGeneration])
 
   const persist = useCallback((next: string[]) => {
     if (saveTimer.current) clearTimeout(saveTimer.current)
@@ -264,31 +340,12 @@ export default function ChecklistPage() {
         return
       }
 
-      for (let index = 0; index < 120; index += 1) {
-        await delay(1500)
-        const current = await getAiInferenceJob(supabase, job.id)
-        if (!current) throw new Error('Generation job disappeared')
-        setGenerationStatus(current.status)
-
-        if (current.status === 'succeeded') {
-          const count = await loadGeneratedQuests(userId)
-          if (count === 0) throw new Error('Generation completed without persisted quests')
-          return
-        }
-        if (current.status === 'failed' || current.status === 'blocked_auth') {
-          setGenerationError(current.errorMessage ?? (current.status === 'blocked_auth'
-            ? 'ChatGPT worker session perlu login ulang.'
-            : 'AI generation gagal.'))
-          return
-        }
-      }
-
-      setGenerationError('Generation masih berjalan terlalu lama. Job tetap aman di queue; refresh halaman untuk cek lagi.')
+      await watchGenerationJob(job.id, userId)
     } catch (error) {
       setGenerationStatus('failed')
       setGenerationError(error instanceof Error ? error.message : 'Generation gagal dijalankan.')
     }
-  }, [generationStatus, loadGeneratedQuests, userId])
+  }, [generationStatus, loadGeneratedQuests, userId, watchGenerationJob])
 
   if (loading) {
     return (
@@ -300,6 +357,13 @@ export default function ChecklistPage() {
 
   const visibleCategories = filter === 'semua' ? CATEGORY_ORDER : [filter]
   const generationBusy = generationStatus === 'queued' || generationStatus === 'running'
+  const manualButtonLabel = generationStatus === 'queued'
+    ? 'WAITING FOR AI WORKER...'
+    : generationStatus === 'running'
+      ? 'CHATGPT REASONING...'
+      : generationStatus === 'failed' || generationStatus === 'blocked_auth'
+        ? 'RETRY AI JOB'
+        : 'RUN NOW (FALLBACK)'
 
   return (
     <div style={{ minHeight: '100dvh', background: S.bg, color: S.ink, fontFamily: '"IBM Plex Sans", sans-serif', paddingBottom: 72 }}>
@@ -312,9 +376,14 @@ export default function ChecklistPage() {
                 PLAYER · {username.toUpperCase()}
               </div>
             </div>
-            <Link href={`/${encodeURIComponent(username)}/history`} style={{ color: S.muted, fontFamily: '"IBM Plex Mono", monospace', fontSize: 10, textDecoration: 'none', letterSpacing: '.08em' }}>
-              HISTORY →
-            </Link>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+              <Link href={`/${encodeURIComponent(username)}/vault`} style={{ color: S.gold, fontFamily: '"IBM Plex Mono", monospace', fontSize: 10, textDecoration: 'none', letterSpacing: '.08em' }}>
+                LIFE VAULT →
+              </Link>
+              <Link href={`/${encodeURIComponent(username)}/history`} style={{ color: S.muted, fontFamily: '"IBM Plex Mono", monospace', fontSize: 10, textDecoration: 'none', letterSpacing: '.08em' }}>
+                HISTORY →
+              </Link>
+            </div>
           </div>
 
           <div style={{ marginTop: 26 }}>
@@ -327,7 +396,7 @@ export default function ChecklistPage() {
             <p style={{ color: S.muted, fontSize: 13, lineHeight: 1.55, margin: '10px 0 0', maxWidth: 500 }}>
               {usingGeneratedQuests
                 ? 'Quest hari ini dipersist dari bounded Player Knowledge reasoning. Refresh tidak akan mengganti quest batch yang sama.'
-                : 'Belum ada generated quest hari ini. Sistem bisa memproses bounded Life Vault context lalu menyimpan Daily Quest secara otomatis.'}
+                : 'System otomatis memproses Life Vault update dan daily checkpoint. User tidak perlu membuat checklist atau menekan generate untuk memicu AI.'}
             </p>
           </div>
 
@@ -345,13 +414,13 @@ export default function ChecklistPage() {
                   letterSpacing: '.08em', cursor: generationBusy ? 'default' : 'pointer',
                 }}
               >
-                {generationStatus === 'queued' ? 'AI JOB QUEUED...' : generationStatus === 'running' ? 'CHATGPT REASONING...' : 'GENERATE TODAY\'S QUEST'}
+                {manualButtonLabel}
               </button>
               {generationError && (
                 <div style={{ color: S.red, fontSize: 11, lineHeight: 1.45, marginTop: 10 }}>{generationError}</div>
               )}
               <div style={{ color: S.muted, fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, lineHeight: 1.5, marginTop: 10 }}>
-                bounded context → ChatGPT consumer worker → schema validation → Supabase persistence
+                AUTO: Life Vault event + daily 04:00 checkpoint → AI worker → validation → Supabase. Button di atas hanya retry/fallback.
               </div>
             </div>
           )}
