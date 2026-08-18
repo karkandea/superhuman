@@ -87,7 +87,7 @@ export default function LifeVaultPage() {
 
     const rows = (data ?? []) as VaultEntry[]
     const knowledgeIds = rows.map((entry) => entry.id)
-    let assessmentByKnowledge = new Map<string, { id: string; disposition: VaultEntry['materiality_disposition'] }>()
+    const assessmentByKnowledge = new Map<string, { id: string; disposition: VaultEntry['materiality_disposition'] }>()
     let interruptByAssessment = new Map<string, VaultEntry['interrupt_status']>()
 
     if (knowledgeIds.length > 0) {
