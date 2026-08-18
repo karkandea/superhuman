@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-export type AiInferenceJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'blocked_auth' | 'paused_rate_limit'
+export type AiInferenceJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'blocked_auth'
 
 export interface AiInferenceJob {
   id: string
@@ -17,16 +17,19 @@ export interface AiInferenceJob {
 }
 
 function mapJob(row: Record<string, unknown>): AiInferenceJob {
+  const providerCircuitPaused = row.status === 'paused_rate_limit'
   return {
     id: String(row.id),
     userId: String(row.user_id),
     operation: 'progression_cycle',
     targetDate: String(row.target_date),
-    status: row.status as AiInferenceJobStatus,
+    status: providerCircuitPaused ? 'failed' : row.status as AiInferenceJobStatus,
     attemptCount: Number(row.attempt_count ?? 0),
     maxAttempts: Number(row.max_attempts ?? 3),
-    ...(row.error_code ? { errorCode: String(row.error_code) } : {}),
-    ...(row.error_message ? { errorMessage: String(row.error_message) } : {}),
+    ...(providerCircuitPaused
+      ? { errorCode: 'provider_rate_limited', errorMessage: String(row.error_message || 'Reasoning provider is temporarily paused. Your context is safe.') }
+      : row.error_code ? { errorCode: String(row.error_code) } : {}),
+    ...(!providerCircuitPaused && row.error_message ? { errorMessage: String(row.error_message) } : {}),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   }
