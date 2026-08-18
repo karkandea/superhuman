@@ -87,25 +87,31 @@ export default function LifeVaultPage() {
 
     const rows = (data ?? []) as VaultEntry[]
     const knowledgeIds = rows.map((entry) => entry.id)
+    const visibleKnowledgeIds = new Set(knowledgeIds)
     const assessmentByKnowledge = new Map<string, { id: string; disposition: VaultEntry['materiality_disposition'] }>()
     let interruptByAssessment = new Map<string, VaultEntry['interrupt_status']>()
 
     if (knowledgeIds.length > 0) {
       const { data: assessments, error: assessmentError } = await supabase
         .from('materiality_assessments')
-        .select('id,knowledge_entry_id,disposition,created_at')
+        .select('id,knowledge_entry_id,knowledge_entry_ids,disposition,created_at')
         .eq('user_id', id)
-        .in('knowledge_entry_id', knowledgeIds)
+        .overlaps('knowledge_entry_ids', knowledgeIds)
         .order('created_at', { ascending: false })
       if (assessmentError) throw assessmentError
 
       for (const assessment of assessments ?? []) {
-        if (!assessmentByKnowledge.has(assessment.knowledge_entry_id)) {
-          assessmentByKnowledge.set(assessment.knowledge_entry_id, { id: assessment.id, disposition: assessment.disposition })
+        const members = Array.isArray(assessment.knowledge_entry_ids) && assessment.knowledge_entry_ids.length > 0
+          ? assessment.knowledge_entry_ids
+          : [assessment.knowledge_entry_id]
+        for (const knowledgeId of members) {
+          if (visibleKnowledgeIds.has(knowledgeId) && !assessmentByKnowledge.has(knowledgeId)) {
+            assessmentByKnowledge.set(knowledgeId, { id: assessment.id, disposition: assessment.disposition })
+          }
         }
       }
 
-      const assessmentIds = [...assessmentByKnowledge.values()].map((assessment) => assessment.id)
+      const assessmentIds = [...new Set([...assessmentByKnowledge.values()].map((assessment) => assessment.id))]
       if (assessmentIds.length > 0) {
         const { data: interrupts, error: interruptError } = await supabase
           .from('quest_interrupts')
@@ -192,7 +198,7 @@ export default function LifeVaultPage() {
       )
       setText('')
       setTitle('')
-      setMessage('Saved. System processing has started — you can leave this page.')
+      setMessage('Saved. System will group nearby updates before processing — you can leave this page.')
       await loadEntries(playerId)
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to save knowledge'
@@ -252,7 +258,7 @@ export default function LifeVaultPage() {
             </label>
 
             <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap' }}>
-              <div style={{ color: S.muted2, fontSize: 11, lineHeight: 1.5, maxWidth: 430 }}>Save once. System will understand the update, then decide whether it changes today or only future progression.</div>
+              <div style={{ color: S.muted2, fontSize: 11, lineHeight: 1.5, maxWidth: 430 }}>Nearby updates are grouped into one activity period. System understands the batch first, then makes one decision about whether today should change.</div>
               <button type="submit" disabled={!foundationReady || saving || !text.trim()} style={{ minWidth: 138, height: 42, border: 'none', borderRadius: 10, padding: '0 16px', background: !foundationReady || saving || !text.trim() ? '#3a3328' : S.amber, color: !foundationReady || saving || !text.trim() ? S.muted : S.bg, fontFamily: '"IBM Plex Mono", monospace', fontWeight: 700, fontSize: 10, letterSpacing: '.08em', cursor: !foundationReady || saving || !text.trim() ? 'default' : 'pointer' }}>
                 {saving ? 'SAVING...' : 'SAVE TO VAULT'}
               </button>
