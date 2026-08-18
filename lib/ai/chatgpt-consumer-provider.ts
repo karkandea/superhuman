@@ -158,6 +158,7 @@ export function buildConsumerChatPrompt(request: StructuredModelRequest, correla
     '- Preserve provenance IDs exactly as supplied.',
     '- When RESPONSE_CONTRACT requires an ID from a named context collection, copy an id verbatim from that exact collection. Never invent an ID and never substitute an ID from another collection.',
     '- sourceSignalIds may only use CONTEXT_DATA.signals[*].id. sourceKnowledgeEntryIds may only use CONTEXT_DATA.knowledgeEntries[*].id. affectedQuestIds and targetQuestId may only use CONTEXT_DATA.activeQuests[*].id when those fields are requested.',
+    '- targetUnderstandingId may only use an id present in CONTEXT_DATA.playerBrief.activeUnderstandingIds when that field is requested.',
     '- Before returning, verify every provenance ID exists in the required CONTEXT_DATA collection. If the contract requires a non-empty provenance array, do not fabricate a value.',
     '',
     `REQUEST_ID: ${correlationId}`,

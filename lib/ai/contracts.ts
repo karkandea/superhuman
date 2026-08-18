@@ -1,7 +1,7 @@
 import type { MaterialityContext } from '../materiality'
 import type { RetrievedPlayerContext } from '../player-understanding'
 
-export type AiOperation = 'derive_understanding' | 'generate_daily_quests' | 'assess_materiality' | 'generate_system_interrupt'
+export type AiOperation = 'derive_understanding' | 'derive_understanding_delta' | 'generate_daily_quests' | 'assess_materiality' | 'generate_system_interrupt'
 export type AiRequestContext = RetrievedPlayerContext | MaterialityContext
 
 export interface StructuredModelRequest {

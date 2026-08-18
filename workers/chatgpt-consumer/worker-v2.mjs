@@ -1,11 +1,11 @@
 import { createClient } from '@supabase/supabase-js'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { hostname } from 'node:os'
 
 import { ChatGptConsumerWebProvider } from '../../lib/ai/chatgpt-consumer-provider.ts'
 import { BoundedPlayerContextRetriever } from '../../lib/context-retrieval.ts'
 import {
-  derivePlayerUnderstanding,
+  derivePlayerUnderstandingDelta,
   generateDailyQuests,
   generateSystemInterrupt,
 } from '../../lib/ai/orchestrator.ts'
@@ -35,6 +35,7 @@ const KNOWLEDGE_BATCH_BUDGET_BYTES = Number(process.env.SUPERHUMAN_KNOWLEDGE_BAT
 const MATERIALITY_RAW_BUDGET_BYTES = Number(process.env.SUPERHUMAN_MATERIALITY_RAW_BUDGET_BYTES || 24 * 1024)
 const KNOWLEDGE_SCAN_LIMIT = Number(process.env.SUPERHUMAN_KNOWLEDGE_SCAN_LIMIT || 200)
 const AI_STAGE_PAUSE_MS = Number(process.env.SUPERHUMAN_AI_STAGE_PAUSE_MS || 5000)
+const UNDERSTANDING_DELTA_VERSION = 'understanding-delta.v1'
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
 
@@ -52,6 +53,14 @@ function normalizeRpcRow(data) {
   if (Array.isArray(data)) return data[0] || null
   if (!data || typeof data !== 'object' || !data.id) return null
   return data
+}
+
+function understandingDeltaBatchKey(knowledgeEntryIds) {
+  const ids = [...new Set(knowledgeEntryIds)].sort()
+  const digest = createHash('sha256')
+    .update(`${UNDERSTANDING_DELTA_VERSION}\n${ids.join('\n')}`)
+    .digest('hex')
+  return `${UNDERSTANDING_DELTA_VERSION}:${digest}`
 }
 
 function createSupabase() {
@@ -192,8 +201,11 @@ function classifyError(error) {
   if (/evidence-backed player signals|No player knowledge was retrieved|At least one knowledge entry/.test(message)) {
     return new WorkerError('insufficient_context', message, false)
   }
-  if (/correlation mismatch|operation mismatch|schema version mismatch|malformed JSON|parseable JSON|sourceSignalIds|sourceKnowledgeEntryIds|outside retrieved context|Materiality|materiality|System Interrupt|Interrupt action|interrupt plan|affectedQuestIds|urgency|recommendedAction/.test(message)) {
+  if (/correlation mismatch|operation mismatch|schema version mismatch|malformed JSON|parseable JSON|sourceSignalIds|sourceKnowledgeEntryIds|targetUnderstandingId|outside retrieved context|outside current Player Brief|Understanding delta|Materiality|materiality|System Interrupt|Interrupt action|interrupt plan|affectedQuestIds|urgency|recommendedAction/.test(message)) {
     return new WorkerError('model_output_invalid', message, true)
+  }
+  if (/Player Brief is missing|Player brief changed before understanding delta persistence/.test(message)) {
+    return new WorkerError('stale_player_brief', message, true)
   }
   if (/backlog did not drain|same knowledge batch repeated/.test(message)) {
     return new WorkerError('backlog_not_drained', message, true)
@@ -255,7 +267,10 @@ async function processJob(client, job) {
     const cutoff = job.window_cutoff_at || new Date().toISOString()
     const questsBefore = await dailyQuestRepository.findForDate(job.user_id, job.target_date)
     const hadDailyPlan = questsBefore.length > 0
-    let derivedCount = 0
+    let understandingDeltaActionCount = 0
+    let playerBriefChangedCount = 0
+    let noOpUnderstandingBatchCount = 0
+    let latestPlayerBriefVersion = null
     let processedKnowledgeCount = 0
     let knowledgeBatchCount = 0
     let knowledgeBytes = 0
@@ -273,17 +288,22 @@ async function processJob(client, job) {
       if (signature === lastBatchSignature) throw new Error('same knowledge batch repeated; backlog did not drain')
       lastBatchSignature = signature
 
-      const derived = await derivePlayerUnderstanding({
+      const delta = await derivePlayerUnderstandingDelta({
         provider,
         contextRetriever,
         repository: understandingRepository,
       }, {
         playerId: job.user_id,
         knowledgeEntryIds: batch.ids,
+        date: job.target_date,
+        batchKey: understandingDeltaBatchKey(batch.ids),
         limit: batch.ids.length,
       })
 
-      derivedCount += derived.length
+      understandingDeltaActionCount += delta.persistence.actionCount
+      if (delta.persistence.playerBriefChanged) playerBriefChangedCount += 1
+      if (delta.persistence.actionCount === 0) noOpUnderstandingBatchCount += 1
+      latestPlayerBriefVersion = delta.persistence.playerBriefVersion
       processedKnowledgeCount += batch.ids.length
       knowledgeBatchCount += 1
       knowledgeBytes += batch.estimatedBytes
@@ -350,7 +370,11 @@ async function processJob(client, job) {
 
     const refs = provider.consumeConversationRefs()
     await completeJob(client, job, 'succeeded', refs, {
-      derivedUnderstandingCount: derivedCount,
+      derivedUnderstandingCount: understandingDeltaActionCount,
+      understandingDeltaActionCount,
+      playerBriefChangedCount,
+      noOpUnderstandingBatchCount,
+      latestPlayerBriefVersion,
       processedKnowledgeCount,
       knowledgeBatchCount,
       knowledgeBytes,
@@ -366,7 +390,7 @@ async function processJob(client, job) {
       windowCutoffAt: cutoff,
     })
 
-    console.log(`[job ${job.id}] succeeded: ${processedKnowledgeCount} knowledge in ${knowledgeBatchCount} batches; ${generated.quests.length} quests (${generated.source}); materiality=${materialityCount} over ${materialityBatchEntryCount} entries; interrupts=${appliedInterruptCount} applied/${suggestedInterruptCount} suggested`)
+    console.log(`[job ${job.id}] succeeded: ${processedKnowledgeCount} knowledge in ${knowledgeBatchCount} batches; deltaActions=${understandingDeltaActionCount}; brief=v${latestPlayerBriefVersion ?? 'unchanged'}; ${generated.quests.length} quests (${generated.source}); materiality=${materialityCount} over ${materialityBatchEntryCount} entries; interrupts=${appliedInterruptCount} applied/${suggestedInterruptCount} suggested`)
   } catch (rawError) {
     const error = classifyError(rawError)
     const refs = provider.consumeConversationRefs()
@@ -407,7 +431,7 @@ async function main() {
   const once = process.argv.includes('--once')
   console.log(`Superhuman ChatGPT consumer worker online as ${WORKER_ID}`)
   console.log(browserRuntimeSummary())
-  console.log(`Activity batching: knowledgeBudget=${KNOWLEDGE_BATCH_BUDGET_BYTES}B; materialityRawBudget=${MATERIALITY_RAW_BUDGET_BYTES}B; stagePause=${AI_STAGE_PAUSE_MS}ms`)
+  console.log(`Activity batching: knowledgeBudget=${KNOWLEDGE_BATCH_BUDGET_BYTES}B; materialityRawBudget=${MATERIALITY_RAW_BUDGET_BYTES}B; stagePause=${AI_STAGE_PAUSE_MS}ms; memory=${UNDERSTANDING_DELTA_VERSION}`)
 
   do {
     const job = await claimJob(client)

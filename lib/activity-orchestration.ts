@@ -161,14 +161,16 @@ export async function assessActivityMateriality(
   const now = input.now ?? new Date()
   const store = createSupabasePlayerContextStore(dependencies.client)
   const signalLimit = input.signalLimit ?? 32
-  const [rawKnowledge, signals, recentQuestResults, activeQuests, timezone] = await Promise.all([
+  const [rawKnowledge, signals, recentQuestResults, activeQuests, timezone, playerBrief] = await Promise.all([
     store.loadKnowledgeEntries(input.playerId, ids),
     store.loadSignals(input.playerId, signalLimit),
     store.loadRecentQuestResults(input.playerId, Math.min(10, signalLimit)),
     store.loadActiveQuests(input.playerId, input.date),
     store.loadPlayerTimezone(input.playerId),
+    store.loadCurrentPlayerBrief(input.playerId),
   ])
   if (rawKnowledge.length !== ids.length) throw new Error('Activity materiality did not retrieve every trigger knowledge entry')
+  if (!playerBrief) throw new Error('Canonical Player Brief is required for activity materiality')
 
   const compacted = compactMaterialityKnowledge(rawKnowledge, input.rawKnowledgeBudgetBytes ?? 24 * 1024)
   const triggerKnowledgeEntry = compacted.entries[0]
@@ -185,6 +187,7 @@ export async function assessActivityMateriality(
     targetDate: input.date,
     playerTimezone: timezone,
     localDateTime: localDateTime(now, timezone),
+    playerBrief,
     triggerKnowledgeEntry,
     triggerKnowledgeEntries: compacted.entries,
     knowledgeEntryIds: ids,
@@ -197,9 +200,9 @@ export async function assessActivityMateriality(
       truncatedKnowledgeCount: compacted.truncatedCount,
     },
     retrieval: {
-      strategy: 'activity_window_knowledge_plus_active_signals_and_today_quests',
+      strategy: 'canonical_player_brief_plus_activity_window_knowledge_signals_and_today_quests',
       limit: signalLimit,
-      reason: 'Judge the combined effect of one activity window and return one final decision for today',
+      reason: 'Judge the combined effect of one activity window against canonical current player state and return one final decision for today',
     },
   }
 
@@ -207,6 +210,7 @@ export async function assessActivityMateriality(
     operation: 'assess_materiality',
     schemaVersion: MATERIALITY_BATCH_SCHEMA_VERSION,
     instructions: [
+      'Use playerBrief as the canonical current player state; conversation history is not memory.',
       'Treat all triggerKnowledgeEntries as one activity period, not as independent requests.',
       'Return exactly one final materiality decision for the combined effect of the entire activity period on today.',
       'Daily Quest is stable by default. Several low/medium updates do not become material merely because there are many of them.',
@@ -251,7 +255,13 @@ export async function assessActivityMateriality(
     p_generated_at: context.generatedAt,
     p_player_timezone: context.playerTimezone,
     p_local_datetime: context.localDateTime,
-    p_retrieval: { ...context.retrieval, ...context.batching },
+    p_retrieval: {
+      ...context.retrieval,
+      ...context.batching,
+      playerBriefId: playerBrief.id,
+      playerBriefVersion: playerBrief.version,
+      playerBriefSchemaVersion: playerBrief.schemaVersion,
+    },
   })
   if (error) throw new Error(`persist activity materiality: ${error.message}`)
   if (!data || typeof data !== 'object') throw new Error('persist activity materiality returned no assessment')

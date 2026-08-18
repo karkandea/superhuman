@@ -7,6 +7,17 @@ const {
   generateSystemInterrupt,
 } = require('../.domain-test-dist/lib/ai/orchestrator.js')
 
+function playerBrief() {
+  return {
+    id: 'brief-1', version: 1, schemaVersion: 'player-brief.v1', reason: 'test',
+    createdAt: '2026-08-18T10:00:00Z', generatedAt: '2026-08-18T10:00:00Z',
+    player: { id: 'p1', name: 'Player', timezone: 'Asia/Jakarta' },
+    activeUnderstandingIds: ['u1'], highlights: [],
+    sections: { goals: [], obstacles: [], opportunities: [], constraints: [], preferences: [], relationships: [], events: [], priorities: [] },
+    activeSignals: [], counts: { activeUnderstanding: 1, activeSignals: 1 },
+  }
+}
+
 test('completed plan can still receive an additive emergency interrupt without targeting history', async () => {
   const context = {
     playerId: 'p1',
@@ -15,6 +26,7 @@ test('completed plan can still receive an additive emergency interrupt without t
     targetDate: '2026-08-18',
     playerTimezone: 'Asia/Jakarta',
     localDateTime: '2026-08-18T17:00:00',
+    playerBrief: playerBrief(),
     triggerKnowledgeEntry: { id: 'k1', type: 'life_update', text: 'Emergency baru terjadi.' },
     signals: [{ id: 's1', userId: 'p1', type: 'event', summary: 'Emergency now', importance: 5, confidence: 0.98, observedAt: '2026-08-18T10:00:00Z' }],
     recentQuestResults: [{ id: 'r1', questId: 'q-completed', outcome: 'completed', recordedAt: '2026-08-18T09:00:00Z' }],
@@ -48,6 +60,7 @@ test('completed plan can still receive an additive emergency interrupt without t
       id: 'test',
       async invokeStructured(request) {
         assert.equal(request.operation, 'assess_materiality')
+        assert.equal(request.context.playerBrief.version, 1)
         assert.deepEqual(request.context.activeQuests, [])
         return {
           providerId: 'test', modelId: 'test',
@@ -73,6 +86,7 @@ test('completed plan can still receive an additive emergency interrupt without t
       id: 'test',
       async invokeStructured(request) {
         assert.equal(request.operation, 'generate_system_interrupt')
+        assert.equal(request.context.playerBrief.id, 'brief-1')
         return {
           providerId: 'test', modelId: 'test',
           output: {

@@ -1,5 +1,5 @@
 import type { ActiveQuestContext, MaterialityAssessmentDecision, MaterialityContext } from './materiality'
-import type { RetrievedPlayerContext, PlayerSignal, RecentQuestResult } from './player-understanding'
+import type { PlayerBriefSnapshot, RetrievedPlayerContext, PlayerSignal, RecentQuestResult } from './player-understanding'
 
 export interface ContextKnowledgeEntry {
   id: string
@@ -14,6 +14,7 @@ export interface PlayerContextStore {
   loadRecentQuestResults(playerId: string, limit: number): Promise<RecentQuestResult[]>
   loadActiveQuests(playerId: string, date: string): Promise<ActiveQuestContext[]>
   loadPlayerTimezone(playerId: string): Promise<string>
+  loadCurrentPlayerBrief(playerId: string): Promise<PlayerBriefSnapshot | null>
 }
 
 function localDateTime(now: Date, timezone: string): string {
@@ -25,6 +26,11 @@ function localDateTime(now: Date, timezone: string): string {
   return formatter.format(now).replace(' ', 'T')
 }
 
+function requireBrief(brief: PlayerBriefSnapshot | null): PlayerBriefSnapshot {
+  if (!brief) throw new Error('Canonical Player Brief is missing')
+  return brief
+}
+
 export class BoundedPlayerContextRetriever {
   constructor(private readonly store: PlayerContextStore) {}
 
@@ -34,22 +40,57 @@ export class BoundedPlayerContextRetriever {
     limit: number
   }): Promise<RetrievedPlayerContext> {
     const ids = [...new Set(input.knowledgeEntryIds)].slice(0, Math.max(1, input.limit))
-    const [knowledgeEntries, signals] = await Promise.all([
+    const [knowledgeEntries, signals, playerBrief] = await Promise.all([
       this.store.loadKnowledgeEntries(input.playerId, ids),
       this.store.loadSignals(input.playerId, Math.min(8, input.limit)),
+      this.store.loadCurrentPlayerBrief(input.playerId),
     ])
 
     return {
       playerId: input.playerId,
       purpose: 'understanding',
       generatedAt: new Date().toISOString(),
+      playerBrief: requireBrief(playerBrief),
       knowledgeEntries,
       signals,
       recentQuestResults: [],
+      activeQuests: [],
       retrieval: {
-        strategy: 'explicit_knowledge_plus_recent_signals',
+        strategy: 'canonical_player_brief_plus_explicit_knowledge_and_recent_signals',
         limit: input.limit,
-        reason: 'Process selected raw knowledge without scanning the full Life Vault',
+        reason: 'Process selected raw knowledge against canonical current player state without scanning the full Life Vault',
+      },
+    }
+  }
+
+  async retrieveForUnderstandingDelta(input: {
+    playerId: string
+    knowledgeEntryIds: string[]
+    date: string
+    limit: number
+  }): Promise<RetrievedPlayerContext> {
+    const ids = [...new Set(input.knowledgeEntryIds)].slice(0, Math.max(1, input.limit))
+    const [knowledgeEntries, signals, recentQuestResults, activeQuests, playerBrief] = await Promise.all([
+      this.store.loadKnowledgeEntries(input.playerId, ids),
+      this.store.loadSignals(input.playerId, Math.min(12, Math.max(8, input.limit))),
+      this.store.loadRecentQuestResults(input.playerId, Math.min(8, Math.max(1, input.limit))),
+      this.store.loadActiveQuests(input.playerId, input.date),
+      this.store.loadCurrentPlayerBrief(input.playerId),
+    ])
+
+    return {
+      playerId: input.playerId,
+      purpose: 'understanding',
+      generatedAt: new Date().toISOString(),
+      playerBrief: requireBrief(playerBrief),
+      knowledgeEntries,
+      signals,
+      recentQuestResults,
+      activeQuests,
+      retrieval: {
+        strategy: 'canonical_player_brief_plus_activity_batch_and_recent_execution_context',
+        limit: input.limit,
+        reason: 'Derive only the state delta from new evidence while anchoring the fresh AI session to the latest canonical Player Brief',
       },
     }
   }
@@ -59,22 +100,25 @@ export class BoundedPlayerContextRetriever {
     date: string
     limit: number
   }): Promise<RetrievedPlayerContext> {
-    const [signals, recentQuestResults] = await Promise.all([
+    const [signals, recentQuestResults, playerBrief] = await Promise.all([
       this.store.loadSignals(input.playerId, input.limit),
       this.store.loadRecentQuestResults(input.playerId, Math.min(10, input.limit)),
+      this.store.loadCurrentPlayerBrief(input.playerId),
     ])
 
     return {
       playerId: input.playerId,
       purpose: 'daily_quest',
       generatedAt: new Date().toISOString(),
+      playerBrief: requireBrief(playerBrief),
       knowledgeEntries: [],
       signals,
       recentQuestResults,
+      activeQuests: [],
       retrieval: {
-        strategy: 'active_signals_plus_recent_quest_results',
+        strategy: 'canonical_player_brief_plus_active_signals_and_recent_quest_results',
         limit: input.limit,
-        reason: `Generate ${input.date} quests from derived context, not the full raw Vault`,
+        reason: `Generate ${input.date} quests from canonical player state and derived context, never the full raw Vault`,
       },
     }
   }
@@ -87,12 +131,13 @@ export class BoundedPlayerContextRetriever {
     now?: Date
   }): Promise<MaterialityContext> {
     const now = input.now ?? new Date()
-    const [knowledgeEntries, signals, recentQuestResults, activeQuests, timezone] = await Promise.all([
+    const [knowledgeEntries, signals, recentQuestResults, activeQuests, timezone, playerBrief] = await Promise.all([
       this.store.loadKnowledgeEntries(input.playerId, [input.knowledgeEntryId]),
       this.store.loadSignals(input.playerId, input.limit),
       this.store.loadRecentQuestResults(input.playerId, Math.min(8, input.limit)),
       this.store.loadActiveQuests(input.playerId, input.date),
       this.store.loadPlayerTimezone(input.playerId),
+      this.store.loadCurrentPlayerBrief(input.playerId),
     ])
     const triggerKnowledgeEntry = knowledgeEntries[0]
     if (!triggerKnowledgeEntry) throw new Error('Materiality trigger knowledge was not retrieved')
@@ -104,14 +149,15 @@ export class BoundedPlayerContextRetriever {
       targetDate: input.date,
       playerTimezone: timezone,
       localDateTime: localDateTime(now, timezone),
+      playerBrief: requireBrief(playerBrief),
       triggerKnowledgeEntry,
       signals,
       recentQuestResults,
       activeQuests,
       retrieval: {
-        strategy: 'trigger_knowledge_plus_active_signals_and_today_quests',
+        strategy: 'canonical_player_brief_plus_trigger_knowledge_active_signals_and_today_quests',
         limit: input.limit,
-        reason: 'Judge whether one newly understood update materially changes today without regenerating the whole day',
+        reason: 'Judge whether newly understood evidence materially changes today while anchored to canonical current player state',
       },
     }
   }
@@ -131,8 +177,8 @@ export class BoundedPlayerContextRetriever {
       materialityAssessment: input.assessment,
       retrieval: {
         ...context.retrieval,
-        strategy: 'material_assessment_plus_current_quests',
-        reason: 'Plan the smallest explicit quest revision required by the persisted material update',
+        strategy: 'canonical_player_brief_plus_material_assessment_and_current_quests',
+        reason: 'Plan the smallest explicit quest revision from the latest canonical player state',
       },
     }
   }

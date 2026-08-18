@@ -1,5 +1,5 @@
 import type { Category } from './checklist-data'
-import type { PlayerSignal, RecentQuestResult } from './player-understanding'
+import type { PlayerBriefSnapshot, PlayerSignal, RecentQuestResult } from './player-understanding'
 import type { QuestDifficulty, QuestKind, QuestPriority, QuestStatus } from './quest-system'
 
 export const MATERIALITY_LEVELS = ['low', 'medium', 'high', 'critical'] as const
@@ -35,6 +35,7 @@ export interface MaterialityContext {
   targetDate: string
   playerTimezone: string
   localDateTime: string
+  playerBrief?: PlayerBriefSnapshot
   triggerKnowledgeEntry: {
     id: string
     type: string
