@@ -43,9 +43,12 @@ export default function SystemInterruptFeed({
 
   useEffect(() => {
     if (!playerId) return
-    void refresh()
+    const first = window.setTimeout(() => { void refresh() }, 0)
     const timer = window.setInterval(() => { void refresh() }, 4000)
-    return () => window.clearInterval(timer)
+    return () => {
+      window.clearTimeout(first)
+      window.clearInterval(timer)
+    }
   }, [playerId, refresh])
 
   const apply = useCallback(async (interruptId: string) => {
@@ -81,19 +84,13 @@ export default function SystemInterruptFeed({
       <div style={{ marginTop: 8, color: S.ink, fontFamily: '"Space Grotesk", sans-serif', fontWeight: 700, fontSize: 17, lineHeight: 1.25 }}>
         {latest.summary}
       </div>
-      <div style={{ marginTop: 8, color: S.muted, fontSize: 12, lineHeight: 1.55 }}>
-        {latest.assessment.reason}
-      </div>
+      <div style={{ marginTop: 8, color: S.muted, fontSize: 12, lineHeight: 1.55 }}>{latest.assessment.reason}</div>
 
       {latest.actions.length > 0 && (
         <div style={{ display: 'grid', gap: 7, marginTop: 13 }}>
           {latest.actions.map((action) => (
-            <div key={action.id} style={{
-              border: `1px solid ${S.line}`, borderRadius: 10, background: '#0f1319', padding: '9px 10px',
-            }}>
-              <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.gold, fontSize: 9, letterSpacing: '.08em' }}>
-                {actionLabel(action)}
-              </div>
+            <div key={action.id} style={{ border: `1px solid ${S.line}`, borderRadius: 10, background: '#0f1319', padding: '9px 10px' }}>
+              <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.gold, fontSize: 9, letterSpacing: '.08em' }}>{actionLabel(action)}</div>
               <div style={{ marginTop: 4, color: S.muted, fontSize: 10.5, lineHeight: 1.45 }}>{action.reason}</div>
             </div>
           ))}
