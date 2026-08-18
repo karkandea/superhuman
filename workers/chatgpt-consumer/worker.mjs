@@ -58,7 +58,7 @@ async function firstVisible(page, selectors) {
   return null
 }
 
-async function waitForComposer(page, deadline) {
+async function waitForComposer(page, deadline, { interactiveLogin = false } = {}) {
   const selectors = [
     '#prompt-textarea',
     'textarea[placeholder*="Message"]',
@@ -72,16 +72,28 @@ async function waitForComposer(page, deadline) {
 
     const body = (await page.locator('body').innerText().catch(() => '')).toLowerCase()
     const url = page.url().toLowerCase()
-    if (url.includes('/auth/login') || /log in|sign up/.test(body)) {
+    const authRequired = url.includes('/auth/login') || /log in|sign up/.test(body)
+    const browserChallenge = /verify you are human|checking your browser|security check/.test(body)
+
+    if (authRequired && !interactiveLogin) {
       throw new WorkerError('browser_auth_required', 'ChatGPT browser session is not authenticated', false)
     }
-    if (/verify you are human|checking your browser|security check/.test(body)) {
+    if (browserChallenge && !interactiveLogin) {
       throw new WorkerError('browser_challenge', 'ChatGPT browser challenge blocked the worker', true)
     }
-    await sleep(500)
+
+    // During one-time headed setup, login and browser challenges are expected.
+    // Keep the browser open so the player can complete them interactively.
+    await sleep(interactiveLogin ? 1000 : 500)
   }
 
-  throw new WorkerError('composer_not_found', 'ChatGPT prompt composer was not found', true)
+  throw new WorkerError(
+    'composer_not_found',
+    interactiveLogin
+      ? 'ChatGPT login setup timed out before the prompt composer became available'
+      : 'ChatGPT prompt composer was not found',
+    true,
+  )
 }
 
 async function waitForAssistantResponse(page, previousCount, deadline) {
@@ -179,7 +191,7 @@ async function loginMode() {
   process.stdout.write(`Open browser profile: ${PROFILE_DIR}\nComplete ChatGPT login once. The process exits automatically when the composer is available.\n`)
 
   try {
-    await waitForComposer(page, Date.now() + 10 * 60_000)
+    await waitForComposer(page, Date.now() + 15 * 60_000, { interactiveLogin: true })
     process.stdout.write('ChatGPT session detected. Browser profile is ready for headless worker use.\n')
   } finally {
     await context.close()
