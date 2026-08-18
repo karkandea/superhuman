@@ -7,7 +7,8 @@ if [[ "$EUID" -ne 0 ]]; then
 fi
 
 SERVICE_USER="${SUPERHUMAN_SERVICE_USER:-superhuman-ai}"
-SERVICE_NAME="superhuman-ai-worker.service"
+WORKER_SERVICE="superhuman-ai-worker.service"
+BROWSER_SERVICE="superhuman-chatgpt-browser.service"
 REPO_DIR="${SUPERHUMAN_REPO_DIR:-/opt/superhuman}"
 WORKER_DIR="$REPO_DIR/workers/chatgpt-consumer"
 ENV_FILE="/etc/superhuman-ai/consumer-worker.env"
@@ -34,50 +35,44 @@ source "$ENV_FILE"
 set +a
 
 : "${CHATGPT_BROWSER_PROFILE_DIR:?CHATGPT_BROWSER_PROFILE_DIR missing}"
-: "${CHATGPT_CHROME_BIN:?CHATGPT_CHROME_BIN missing}"
 : "${CHATGPT_CDP_PORT:?CHATGPT_CDP_PORT missing}"
 : "${CHATGPT_CDP_URL:?CHATGPT_CDP_URL missing}"
 
-kill_runtime_processes() {
-  pkill -u "$SERVICE_USER" -f -- "--user-data-dir=$CHATGPT_BROWSER_PROFILE_DIR" >/dev/null 2>&1 || true
-  pkill -u "$SERVICE_USER" -f -- "Xvfb :$DISPLAY_NUMBER" >/dev/null 2>&1 || true
+stop_remote_desktop() {
   pkill -u "$SERVICE_USER" -f -- "x11vnc.*$VNC_PORT" >/dev/null 2>&1 || true
   pkill -u "$SERVICE_USER" -f -- "websockify.*$NOVNC_PORT" >/dev/null 2>&1 || true
 }
 
 cleanup() {
-  kill_runtime_processes
+  stop_remote_desktop
 }
 trap cleanup EXIT INT TERM
 
-systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
-kill_runtime_processes
-sleep 1
+systemctl stop "$WORKER_SERVICE" >/dev/null 2>&1 || true
+systemctl enable --now "$BROWSER_SERVICE"
+sleep 3
 
-mkdir -p "$LOG_DIR" "$CHATGPT_BROWSER_PROFILE_DIR"
+mkdir -p "$LOG_DIR"
 chown -R "$SERVICE_USER:$SERVICE_USER" "$STATE_DIR"
 chmod 700 "$STATE_DIR" "$LOG_DIR" "$CHATGPT_BROWSER_PROFILE_DIR"
 
-runuser -u "$SERVICE_USER" -- env HOME="$SERVICE_HOME" bash -lc \
-  "exec Xvfb '$DISPLAY' -screen 0 1440x900x24 -nolisten tcp >>'$LOG_DIR/xvfb.log' 2>&1" &
-sleep 1
+stop_remote_desktop
 runuser -u "$SERVICE_USER" -- env HOME="$SERVICE_HOME" bash -lc \
   "exec x11vnc -display '$DISPLAY' -localhost -forever -shared -nopw -rfbport '$VNC_PORT' >>'$LOG_DIR/x11vnc.log' 2>&1" &
 runuser -u "$SERVICE_USER" -- env HOME="$SERVICE_HOME" bash -lc \
   "exec websockify --web=/usr/share/novnc '127.0.0.1:$NOVNC_PORT' '127.0.0.1:$VNC_PORT' >>'$LOG_DIR/novnc.log' 2>&1" &
-runuser -u "$SERVICE_USER" -- env HOME="$SERVICE_HOME" DISPLAY="$DISPLAY" bash -lc \
-  "exec '$CHATGPT_CHROME_BIN' --remote-debugging-port='$CHATGPT_CDP_PORT' --remote-debugging-address=127.0.0.1 --user-data-dir='$CHATGPT_BROWSER_PROFILE_DIR' --no-first-run --no-default-browser-check 'https://chatgpt.com/' >>'$LOG_DIR/chrome-login.log' 2>&1" &
+sleep 1
 
 cat <<EOF_LOGIN
 
-Dedicated Chrome is now running privately on the VPS.
-noVNC is bound ONLY to VPS localhost; port $NOVNC_PORT is not exposed to the internet.
+Persistent Chrome is running on the VPS inside Xvfb.
+noVNC is temporarily bound ONLY to VPS localhost; port $NOVNC_PORT is not exposed publicly.
 
 On your Mac, open a SECOND terminal and run:
 
   ssh -N -L $NOVNC_PORT:127.0.0.1:$NOVNC_PORT root@103.175.207.127
 
-Then open this in your normal Mac browser:
+Then open in your normal Mac browser:
 
   http://127.0.0.1:$NOVNC_PORT/vnc.html?autoconnect=1&resize=remote
 
@@ -87,47 +82,40 @@ EOF_LOGIN
 
 IFS= read -r
 
-echo "Verifying the live ChatGPT session through local CDP..."
+echo "Verifying the persistent VPS ChatGPT session through local CDP..."
 runuser -u "$SERVICE_USER" -- env \
   HOME="$SERVICE_HOME" \
   CHATGPT_BROWSER_PROFILE_DIR="$CHATGPT_BROWSER_PROFILE_DIR" \
-  CHATGPT_CHROME_BIN="$CHATGPT_CHROME_BIN" \
   CHATGPT_CDP_PORT="$CHATGPT_CDP_PORT" \
   CHATGPT_CDP_URL="$CHATGPT_CDP_URL" \
   CHATGPT_HEADLESS=false \
   bash -lc "cd '$WORKER_DIR' && npm run login"
 
-echo "Visual session verified. Closing the temporary remote desktop..."
-kill_runtime_processes
-sleep 3
+echo "ChatGPT session verified. Closing noVNC while keeping Chrome/Xvfb alive..."
+stop_remote_desktop
 
-echo "Verifying the same saved ChatGPT profile headlessly..."
-runuser -u "$SERVICE_USER" -- env \
-  HOME="$SERVICE_HOME" \
-  CHATGPT_BROWSER_PROFILE_DIR="$CHATGPT_BROWSER_PROFILE_DIR" \
-  CHATGPT_CHROME_BIN="$CHATGPT_CHROME_BIN" \
-  CHATGPT_CDP_PORT="$CHATGPT_CDP_PORT" \
-  CHATGPT_CDP_URL="$CHATGPT_CDP_URL" \
-  CHATGPT_HEADLESS=true \
-  bash -lc "cd '$WORKER_DIR' && npm run login"
-
-echo "Headless ChatGPT session verified. Starting persistent worker..."
-systemctl enable --now "$SERVICE_NAME"
+echo "Starting persistent AI worker..."
+systemctl enable --now "$WORKER_SERVICE"
 sleep 2
-systemctl --no-pager --full status "$SERVICE_NAME" | sed -n '1,24p'
+
+systemctl --no-pager --full status "$BROWSER_SERVICE" | sed -n '1,18p'
+systemctl --no-pager --full status "$WORKER_SERVICE" | sed -n '1,22p'
 
 trap - EXIT INT TERM
 
 cat <<EOF_DONE
 
-Superhuman AI worker is now managed by systemd on the VPS.
-It survives SSH disconnects and VPS reboots.
+Superhuman VPS AI runtime is active.
+- Chrome remains headful inside private Xvfb 24/7.
+- noVNC is OFF except during login/re-login.
+- AI worker attaches to Chrome through localhost CDP.
+- Both services restart automatically after crashes/reboots.
 
 Status:
-  systemctl status $SERVICE_NAME
+  systemctl status $BROWSER_SERVICE $WORKER_SERVICE
 
-Live logs:
-  journalctl -u $SERVICE_NAME -f
+Logs:
+  journalctl -u $BROWSER_SERVICE -u $WORKER_SERVICE -f
 
 Re-login after blocked_auth:
   bash $WORKER_DIR/login-vps-root.sh
