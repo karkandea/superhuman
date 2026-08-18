@@ -13,6 +13,17 @@ const {
 } = require('../.domain-test-dist/lib/ai/orchestrator.js')
 const { BoundedPlayerContextRetriever } = require('../.domain-test-dist/lib/context-retrieval.js')
 
+function playerBrief() {
+  return {
+    id: 'brief-1', version: 1, schemaVersion: 'player-brief.v1', reason: 'test',
+    createdAt: '2026-08-18T10:00:00Z', generatedAt: '2026-08-18T10:00:00Z',
+    player: { id: 'p1', name: 'Player', timezone: 'Asia/Jakarta' },
+    activeUnderstandingIds: [], highlights: [],
+    sections: { goals: [], obstacles: [], opportunities: [], constraints: [], preferences: [], relationships: [], events: [], priorities: [] },
+    activeSignals: [], counts: { activeUnderstanding: 0, activeSignals: 1 },
+  }
+}
+
 function assessment(overrides = {}) {
   return {
     isMaterial: false,
@@ -211,13 +222,14 @@ test('Scenario F — completed quest cannot be retroactively targeted', () => {
   }, new Set(['q-active']), new Set(['s1'])), /active quest/)
 })
 
-test('materiality context uses bounded trigger knowledge and player local time', async () => {
+test('materiality context uses bounded trigger knowledge, canonical Player Brief, and player local time', async () => {
   const retriever = new BoundedPlayerContextRetriever({
     async loadKnowledgeEntries(_playerId, ids) { return ids.map(id => ({ id, type: 'life_update', text: 'Interview moved to 16:00 today.' })) },
     async loadSignals() { return [{ id: 's1', userId: 'p1', type: 'event', summary: 'Interview today', importance: 5, confidence: 0.95, observedAt: '2026-08-18T09:00:00Z' }] },
     async loadRecentQuestResults() { return [] },
     async loadActiveQuests() { return [{ id: 'q1', title: 'Portfolio', category: 'siang', kind: 'main', difficulty: 'medium', priority: 1, xp: 100, rationale: 'existing', status: 'pending', source: 'ai' }] },
     async loadPlayerTimezone() { return 'Asia/Jakarta' },
+    async loadCurrentPlayerBrief() { return playerBrief() },
   })
 
   const context = await retriever.retrieveForMateriality({
@@ -226,6 +238,7 @@ test('materiality context uses bounded trigger knowledge and player local time',
   })
   assert.equal(context.playerTimezone, 'Asia/Jakarta')
   assert.equal(context.localDateTime, '2026-08-18T17:00:00')
+  assert.equal(context.playerBrief.id, 'brief-1')
   assert.equal(context.triggerKnowledgeEntry.id, 'k1')
   assert.deepEqual(context.activeQuests.map(q => q.id), ['q1'])
 })
