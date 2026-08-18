@@ -1,4 +1,5 @@
--- First-class, versioned player memory + understanding delta persistence.
+-- First-class, versioned Player Brief + granular understanding delta persistence.
+-- Chat sessions are disposable; Supabase is the permanent player memory.
 -- Backward-compatible with existing understanding/signals/quests.
 
 alter table public.derived_understanding
@@ -83,7 +84,8 @@ alter table public.context_snapshots
 alter table public.context_snapshots
   add constraint context_snapshots_player_brief_owner_fkey
   foreign key (player_brief_id, user_id)
-  references public.player_briefs(id, user_id) on delete set null;
+  references public.player_briefs(id, user_id)
+  on delete set null (player_brief_id);
 
 create table if not exists public.understanding_delta_batches (
   id uuid primary key default gen_random_uuid(),
@@ -105,7 +107,8 @@ create table if not exists public.understanding_delta_batches (
     references public.player_briefs(id, user_id) on delete restrict,
   constraint understanding_delta_snapshot_owner_fkey
     foreign key (context_snapshot_id, user_id)
-    references public.context_snapshots(id, user_id) on delete set null
+    references public.context_snapshots(id, user_id)
+    on delete set null (context_snapshot_id)
 );
 
 create table if not exists public.understanding_transitions (
@@ -153,10 +156,8 @@ with player as (
   where type_rank <= 6
 ), highlights as (
   select *
-  from public.derived_understanding u
-  where u.user_id = p_user_id
-    and u.status = 'active'
-  order by u.importance desc, u.last_observed_at desc, u.id
+  from selected_understanding
+  order by importance desc, last_observed_at desc, id
   limit 6
 ), selected_signals as (
   select s.*
@@ -176,8 +177,7 @@ select jsonb_build_object(
   ),
   'activeUnderstandingIds', coalesce((
     select jsonb_agg(u.id order by u.importance desc, u.last_observed_at desc, u.id)
-    from public.derived_understanding u
-    where u.user_id = p_user_id and u.status = 'active'
+    from selected_understanding u
   ), '[]'::jsonb),
   'highlights', coalesce((
     select jsonb_agg(jsonb_build_object(
@@ -216,7 +216,9 @@ select jsonb_build_object(
   ), '[]'::jsonb),
   'counts', jsonb_build_object(
     'activeUnderstanding', (select count(*) from public.derived_understanding u where u.user_id=p_user_id and u.status='active'),
-    'activeSignals', (select count(*) from public.player_signals s where s.user_id=p_user_id and (s.expires_at is null or s.expires_at >= now()))
+    'briefUnderstanding', (select count(*) from selected_understanding),
+    'activeSignals', (select count(*) from public.player_signals s where s.user_id=p_user_id and (s.expires_at is null or s.expires_at >= now())),
+    'briefSignals', (select count(*) from selected_signals)
   )
 )
 from player;
@@ -298,6 +300,41 @@ drop trigger if exists users_create_initial_player_brief on public.users;
 create trigger users_create_initial_player_brief
 after insert on public.users
 for each row execute function public.create_initial_player_brief();
+
+create or replace function public.attach_player_brief_to_context_snapshot()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $function$
+declare
+  v_brief_id uuid;
+begin
+  if new.player_brief_id is not null then return new; end if;
+  if coalesce(new.retrieval_metadata->>'playerBriefId','')='' then return new; end if;
+
+  begin
+    v_brief_id := (new.retrieval_metadata->>'playerBriefId')::uuid;
+  exception when invalid_text_representation then
+    raise exception 'Context snapshot Player Brief id is invalid';
+  end;
+
+  if not exists(
+    select 1 from public.player_briefs b
+    where b.id=v_brief_id and b.user_id=new.user_id
+  ) then
+    raise exception 'Context snapshot Player Brief is missing or cross-player';
+  end if;
+
+  new.player_brief_id := v_brief_id;
+  return new;
+end;
+$function$;
+
+drop trigger if exists context_snapshots_attach_player_brief on public.context_snapshots;
+create trigger context_snapshots_attach_player_brief
+before insert or update of retrieval_metadata,player_brief_id on public.context_snapshots
+for each row execute function public.attach_player_brief_to_context_snapshot();
 
 create or replace function public.persist_understanding_delta(
   p_user_id uuid,
@@ -436,6 +473,12 @@ begin
       where id=v_target_id and user_id=p_user_id and status='active'
       for update;
       if not found then raise exception 'Understanding delta target is not an active understanding'; end if;
+      if not exists(
+        select 1 from public.player_brief_understanding_sources src
+        where src.user_id=p_user_id and src.player_brief_id=p_player_brief_id and src.understanding_id=v_target_id
+      ) then
+        raise exception 'Understanding delta target is outside the current Player Brief';
+      end if;
     end if;
 
     if v_action_name='resolve' then
@@ -443,7 +486,7 @@ begin
       set status='resolved',last_observed_at=p_generated_at,updated_at=now(),model_request_id=p_request_id
       where id=v_target_id and user_id=p_user_id;
       update public.player_signals
-      set expires_at=coalesce(expires_at,p_generated_at)
+      set expires_at=p_generated_at
       where user_id=p_user_id and source_understanding_id=v_target_id and (expires_at is null or expires_at>p_generated_at);
       insert into public.understanding_sources(user_id,understanding_id,knowledge_entry_id,relation_type,evidence_excerpt)
       select p_user_id,v_target_id,value::text::uuid,'updates',nullif(btrim(v_action->>'evidenceExcerpt'),'')
@@ -463,12 +506,26 @@ begin
     if (v_action->>'confidence')::numeric < 0 or (v_action->>'confidence')::numeric > 1 then raise exception 'Understanding delta confidence must be between 0 and 1'; end if;
     if (v_action->>'importance')::integer not between 1 and 5 then raise exception 'Understanding delta importance must be between 1 and 5'; end if;
 
+    if v_action_name='update' and v_action->>'type'<>v_target.understanding_type then
+      raise exception 'Understanding update must preserve the existing understanding type';
+    end if;
+
+    if v_action_name='create' and exists(
+      select 1 from public.derived_understanding existing
+      where existing.user_id=p_user_id
+        and existing.status='active'
+        and existing.understanding_type=v_action->>'type'
+        and lower(btrim(existing.summary))=lower(btrim(v_action->>'summary'))
+    ) then
+      raise exception 'Understanding create duplicates an active understanding';
+    end if;
+
     if v_action_name in ('update','supersede') then
       update public.derived_understanding
       set status='superseded',last_observed_at=p_generated_at,updated_at=now(),model_request_id=p_request_id
       where id=v_target_id and user_id=p_user_id;
       update public.player_signals
-      set expires_at=coalesce(expires_at,p_generated_at)
+      set expires_at=p_generated_at
       where user_id=p_user_id and source_understanding_id=v_target_id and (expires_at is null or expires_at>p_generated_at);
     end if;
 
@@ -575,8 +632,10 @@ grant select,insert,update,delete on public.player_brief_signal_sources to servi
 grant select,insert,update,delete on public.understanding_delta_batches to service_role;
 grant select,insert,update,delete on public.understanding_transitions to service_role;
 
+revoke all on function public.build_player_brief_json(uuid) from public,anon,authenticated;
 revoke all on function public.refresh_player_brief_internal(uuid,text) from public,anon,authenticated;
 revoke all on function public.create_initial_player_brief() from public,anon,authenticated;
+revoke all on function public.attach_player_brief_to_context_snapshot() from public,anon,authenticated;
 revoke all on function public.persist_understanding_delta(uuid,jsonb,uuid[],uuid[],uuid[],uuid[],uuid,text,text,text,text,text,timestamptz,jsonb) from public,anon,authenticated;
 grant execute on function public.persist_understanding_delta(uuid,jsonb,uuid[],uuid[],uuid[],uuid[],uuid,text,text,text,text,text,timestamptz,jsonb) to service_role;
 
