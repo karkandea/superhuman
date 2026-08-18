@@ -256,16 +256,15 @@ export async function assessKnowledgeMateriality(
     now: input.now,
   })
   if (context.playerId !== input.playerId) throw new Error('Materiality context belongs to another player')
-  if (context.activeQuests.length === 0) throw new Error('Materiality assessment requires at least one active Daily Quest')
 
   const response = await provider.invokeStructured({
     operation: 'assess_materiality',
     schemaVersion: MATERIALITY_SCHEMA_VERSION,
     instructions: [
-      'Decide whether this newly understood update is important AND time-sensitive enough to change today’s active quests.',
+      'Decide whether this newly understood update is important AND time-sensitive enough to change today’s plan.',
       'Daily Quest is stable by default. Ordinary journaling, background context, mild mood changes, and long-term insights should usually be non-material.',
       'Material changes include same-day deadline/schedule shifts, emergencies, major health or relationship events, expiring opportunities, or facts that make an active quest unsafe or irrelevant.',
-      'Use the supplied player timezone/localDateTime, current signals, recent quest results, and active quests. Never target completed/history quests.',
+      'Use the supplied player timezone/localDateTime, current signals, recent quest results, and active quests. activeQuests may be empty when the existing plan is already completed; in that case an urgent update may still justify recommendedAction=add, but no completed/history quest may be targeted.',
       'sourceSignalIds should contain only signals that materially support the decision; it may be empty when the trigger update alone is sufficient.',
     ].join(' '),
     context,
@@ -329,7 +328,6 @@ export async function generateSystemInterrupt(
     limit: input.limit ?? 24,
     now: input.now,
   })
-  if (context.activeQuests.length === 0) throw new Error('System Interrupt has no active quest to compare')
 
   const response = await provider.invokeStructured({
     operation: 'generate_system_interrupt',
@@ -337,7 +335,7 @@ export async function generateSystemInterrupt(
     instructions: [
       'Create the smallest explicit revision needed because of the persisted material update. Do not regenerate the entire day.',
       'Supported actions are add, replace, defer, cancel, reprioritize. Prefer defer over cancel when the quest remains valid later.',
-      'Never target completed or historical quests; only target ids present in activeQuests.',
+      'Never target completed or historical quests; only target ids present in activeQuests. If activeQuests is empty, the only valid mutation is add.',
       'For add/replace, create one evidence-backed quest and cite sourceSignalIds. For a priority shift, combine actions when needed (for example defer one quest + add interview preparation).',
       'Keep the plan concise and directly tied to the materiality reason.',
     ].join(' '),
