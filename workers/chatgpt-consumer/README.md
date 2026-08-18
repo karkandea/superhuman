@@ -1,6 +1,6 @@
 # ChatGPT Consumer Browser Worker
 
-This worker lets Superhuman use the player's authenticated `chatgpt.com` consumer session as an `AiProvider` without an OpenAI API key.
+This worker lets Superhuman use an authenticated `chatgpt.com` consumer session as an `AiProvider` without an OpenAI API key.
 
 ## Trust boundary
 
@@ -15,30 +15,74 @@ This worker lets Superhuman use the player's authenticated `chatgpt.com` consume
 
 ## Session handling
 
-The worker uses a dedicated Chromium profile directory, defaulting to:
+The worker uses a dedicated Chrome profile directory, defaulting to:
 
 `~/.superhuman/chatgpt-profile`
 
-The directory is created with owner-only permissions. Do not put it inside the repository, sync it to cloud storage, or copy cookies into environment variables.
+The directory is owner-only. Do not put it inside the repository, sync it to cloud storage, or copy cookies into environment variables.
 
-The worker imports Superhuman domain code from the repository root. Install the main app dependencies once at repo root, then install the worker-specific Playwright dependencies:
+The worker imports Superhuman domain code from the repository root. Install the main app dependencies once at repo root and the worker dependencies under this directory.
 
-```bash
-npm install
-cd workers/chatgpt-consumer
-npm install
-npm run install-browser
-```
+## macOS workstation runtime
 
-One-time ChatGPT session setup:
+For development or temporary production processing on a Mac:
 
 ```bash
-SUPABASE_URL=... SUPABASE_SECRET_KEY=... npm run login
+bash workers/chatgpt-consumer/install-macos-launchagent.sh
 ```
 
-Complete ChatGPT login in the opened browser once. After the composer is detected, the process exits and normal inference can run headlessly.
+The installer validates the Supabase backend key, opens a dedicated normal Chrome profile for one-time ChatGPT login, verifies that session over local CDP, and installs a LaunchAgent.
 
-Normal worker:
+This runtime is not independently 24/7: processing stops when the Mac is powered off, asleep, offline, or loses the ChatGPT session.
+
+## Linux VPS 24/7 runtime
+
+Target runtime: Debian/Ubuntu Linux with systemd, a non-root SSH user with sudo, Node.js 20+, and an x86_64 host for automatic Google Chrome installation.
+
+From a Superhuman checkout on the VPS:
+
+```bash
+bash workers/chatgpt-consumer/install-linux-systemd.sh
+```
+
+The installer:
+
+- validates the backend key against the canonical Superhuman Supabase project
+- installs the virtual-display/noVNC dependencies when needed
+- installs Google Chrome on supported x86_64 Debian/Ubuntu hosts when missing
+- stores secrets in `~/.config/superhuman/consumer-worker.env` with mode 600
+- stores the dedicated browser profile in `~/.superhuman/chatgpt-profile`
+- installs `superhuman-ai-worker.service` with automatic restart
+- intentionally leaves the service stopped until ChatGPT login is verified
+
+Then run the one-time VPS login helper:
+
+```bash
+bash workers/chatgpt-consumer/login-linux-novnc.sh
+```
+
+The helper starts Chrome in an Xvfb virtual display and exposes noVNC only on VPS localhost. From the operator Mac, create an SSH tunnel exactly as printed by the helper, then open the local noVNC URL and log into ChatGPT normally.
+
+After the normal composer is visible, return to the VPS terminal and press Enter. The helper performs two checks:
+
+1. verifies the live visual Chrome session over local CDP
+2. closes the temporary visual stack and verifies the same saved profile headlessly
+
+Only after both checks pass does it enable and start `superhuman-ai-worker.service`.
+
+Service operations:
+
+```bash
+sudo systemctl status superhuman-ai-worker.service
+sudo journalctl -u superhuman-ai-worker.service -f
+sudo systemctl restart superhuman-ai-worker.service
+```
+
+If ChatGPT later expires or the worker reports `blocked_auth`, rerun `login-linux-novnc.sh`. The systemd service itself is designed to survive SSH disconnects, worker crashes, and VPS reboots.
+
+## Normal worker invocation
+
+For manual debugging:
 
 ```bash
 SUPABASE_URL=... \
@@ -47,15 +91,16 @@ CHATGPT_HEADLESS=true \
 npm start
 ```
 
-Use an OS/service secret manager for `SUPABASE_SECRET_KEY`; never commit it or prefix it with `NEXT_PUBLIC_`.
+Use an OS/service secret manager or the installer-owned env file for `SUPABASE_SECRET_KEY`; never commit it or prefix it with `NEXT_PUBLIC_`.
 
 ## Failure behavior
 
 - expired/not-authenticated ChatGPT session -> job becomes `blocked_auth`
 - browser challenge/loading/timeout -> retry with lease + backoff
 - malformed/correlation-mismatched model output -> retry; nothing is persisted
+- insufficient player knowledge/signals -> no random quest is generated
 - exhausted retry budget -> `failed`
 - duplicate generation -> existing `(user_id, quest_date)` quest batch is returned; no duplicate quest batch is created
 - worker crash -> lease expiry makes the job claimable again
 
-Run `npm run login` again after a `blocked_auth` status, then press `GENERATE TODAY'S QUEST` again. Normal generation itself requires no ChatGPT UI interaction.
+The production queue is shared across players. A single worker can process jobs for multiple users sequentially; scale-out can add more workers later because claiming uses database leases rather than player-specific local state.
