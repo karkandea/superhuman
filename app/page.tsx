@@ -5,6 +5,15 @@ import type { FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 
+const PRODUCTION_SITE_URL = 'https://superhuman.dualangka.com'
+
+function authRedirectUrl() {
+  const configured = process.env.NEXT_PUBLIC_SITE_URL?.trim()
+  if (configured) return configured.replace(/\/+$/, '')
+  if (process.env.NODE_ENV === 'production') return PRODUCTION_SITE_URL
+  return window.location.origin
+}
+
 const S = {
   bg: '#0c0f14', panel: '#13171f', line: '#232a35',
   ink: '#ECEAE3', muted: '#7e8795', amber: '#f6b24b', red: '#e5687a',
@@ -70,7 +79,7 @@ export default function HomePage() {
       email: normalizedEmail,
       options: {
         shouldCreateUser: false,
-        emailRedirectTo: window.location.origin,
+        emailRedirectTo: authRedirectUrl(),
       },
     })
 
