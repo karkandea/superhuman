@@ -17,9 +17,19 @@ PLIST="$HOME/Library/LaunchAgents/com.dualangka.superhuman-ai-worker.plist"
 LABEL="com.dualangka.superhuman-ai-worker"
 NODE_BIN="$(command -v node || true)"
 NPM_BIN="$(command -v npm || true)"
+CHROME_BIN="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+
+if [[ ! -x "$CHROME_BIN" ]]; then
+  CHROME_BIN="$HOME/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+fi
 
 if [[ -z "$NODE_BIN" || -z "$NPM_BIN" ]]; then
   echo "Node.js and npm are required." >&2
+  exit 1
+fi
+
+if [[ ! -x "$CHROME_BIN" ]]; then
+  echo "Google Chrome is required for the one-time ChatGPT sign-in." >&2
   exit 1
 fi
 
@@ -30,7 +40,6 @@ cd "$REPO_ROOT"
 "$NPM_BIN" install
 cd "$SCRIPT_DIR"
 "$NPM_BIN" install
-"$NPM_BIN" run install-browser
 
 SUPABASE_URL="https://ispfhvdelglwvixaspza.supabase.co"
 if [[ -f "$ENV_FILE" ]]; then
@@ -54,14 +63,30 @@ cat > "$ENV_FILE" <<EOF
 SUPABASE_URL=$SUPABASE_URL
 SUPABASE_SECRET_KEY=$SUPABASE_SECRET_KEY
 CHATGPT_BROWSER_PROFILE_DIR=$PROFILE_DIR
+CHATGPT_BROWSER_CHANNEL=chrome
 CHATGPT_HEADLESS=true
-AI_WORKER_ID=superhuman-mac-$(id -u)
+SUPERHUMAN_WORKER_ID=superhuman-mac-$(id -u)
 EOF
 chmod 600 "$ENV_FILE"
 unset SUPABASE_SECRET_KEY
 
-printf "\nOpening the dedicated ChatGPT browser profile for one-time login...\n"
-printf "Complete ChatGPT login in that browser. The setup exits automatically when the composer is detected.\n\n"
+printf "\nOpening Google Chrome normally for one-time ChatGPT login...\n"
+printf "This Chrome instance uses only the dedicated Superhuman profile:\n%s\n\n" "$PROFILE_DIR"
+printf "Sign in to ChatGPT completely. When you can see the normal ChatGPT composer, return to this terminal and press Enter.\n"
+
+"$CHROME_BIN" \
+  --user-data-dir="$PROFILE_DIR" \
+  --no-first-run \
+  --no-default-browser-check \
+  "https://chatgpt.com/" >/dev/null 2>&1 &
+
+IFS= read -r
+
+# Ensure the dedicated manual Chrome instance releases the profile before Playwright verifies it.
+pkill -f "$PROFILE_DIR" >/dev/null 2>&1 || true
+sleep 2
+
+printf "Verifying the saved ChatGPT session with the worker...\n\n"
 set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
