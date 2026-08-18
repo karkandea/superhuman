@@ -16,11 +16,12 @@ import {
 } from '../../lib/supabase/progression-store.ts'
 
 const CHATGPT_URL = 'https://chatgpt.com/'
-const WORKER_ID = process.env.SUPERHUMAN_WORKER_ID || `${hostname()}:${process.pid}:${randomUUID().slice(0, 8)}`
+const WORKER_ID = process.env.SUPERHUMAN_WORKER_ID || process.env.AI_WORKER_ID || `${hostname()}:${process.pid}:${randomUUID().slice(0, 8)}`
 const POLL_MS = Number(process.env.SUPERHUMAN_WORKER_POLL_MS || 2500)
 const LEASE_SECONDS = Number(process.env.SUPERHUMAN_WORKER_LEASE_SECONDS || 300)
 const GENERATION_TIMEOUT_MS = Number(process.env.CHATGPT_GENERATION_TIMEOUT_MS || 180000)
 const PROFILE_DIR = process.env.CHATGPT_BROWSER_PROFILE_DIR || path.join(os.homedir(), '.superhuman', 'chatgpt-profile')
+const BROWSER_CHANNEL = process.env.CHATGPT_BROWSER_CHANNEL || undefined
 const HEADLESS = process.env.CHATGPT_HEADLESS !== 'false'
 const MAX_PENDING_KNOWLEDGE = Number(process.env.SUPERHUMAN_PENDING_KNOWLEDGE_LIMIT || 12)
 
@@ -48,6 +49,15 @@ function serviceKey() {
 function normalizeRpcRow(data) {
   if (Array.isArray(data)) return data[0] || null
   return data && typeof data === 'object' ? data : null
+}
+
+function persistentBrowserOptions(headless) {
+  return {
+    headless,
+    viewport: { width: 1365, height: 900 },
+    locale: 'en-US',
+    ...(BROWSER_CHANNEL ? { channel: BROWSER_CHANNEL } : {}),
+  }
 }
 
 async function firstVisible(page, selectors) {
@@ -82,8 +92,6 @@ async function waitForComposer(page, deadline, { interactiveLogin = false } = {}
       throw new WorkerError('browser_challenge', 'ChatGPT browser challenge blocked the worker', true)
     }
 
-    // During one-time headed setup, login and browser challenges are expected.
-    // Keep the browser open so the player can complete them interactively.
     await sleep(interactiveLogin ? 1000 : 500)
   }
 
@@ -140,11 +148,7 @@ class PlaywrightChatGptTransport {
     await fs.mkdir(PROFILE_DIR, { recursive: true, mode: 0o700 })
     await fs.chmod(PROFILE_DIR, 0o700).catch(() => {})
 
-    const context = await chromium.launchPersistentContext(PROFILE_DIR, {
-      headless: HEADLESS,
-      viewport: { width: 1365, height: 900 },
-      locale: 'en-US',
-    })
+    const context = await chromium.launchPersistentContext(PROFILE_DIR, persistentBrowserOptions(HEADLESS))
 
     try {
       const page = context.pages()[0] || await context.newPage()
@@ -181,17 +185,14 @@ class PlaywrightChatGptTransport {
 
 async function loginMode() {
   await fs.mkdir(PROFILE_DIR, { recursive: true, mode: 0o700 })
-  const context = await chromium.launchPersistentContext(PROFILE_DIR, {
-    headless: false,
-    viewport: { width: 1365, height: 900 },
-  })
+  const context = await chromium.launchPersistentContext(PROFILE_DIR, persistentBrowserOptions(false))
 
   const page = context.pages()[0] || await context.newPage()
   await page.goto(CHATGPT_URL, { waitUntil: 'domcontentloaded' })
-  process.stdout.write(`Open browser profile: ${PROFILE_DIR}\nComplete ChatGPT login once. The process exits automatically when the composer is available.\n`)
+  process.stdout.write(`Open browser profile: ${PROFILE_DIR}\nVerifying the previously authenticated ChatGPT session.\n`)
 
   try {
-    await waitForComposer(page, Date.now() + 15 * 60_000, { interactiveLogin: true })
+    await waitForComposer(page, Date.now() + 60_000)
     process.stdout.write('ChatGPT session detected. Browser profile is ready for headless worker use.\n')
   } finally {
     await context.close()
@@ -362,7 +363,7 @@ async function main() {
   const client = createSupabase()
   const once = process.argv.includes('--once')
   console.log(`Superhuman ChatGPT consumer worker online as ${WORKER_ID}`)
-  console.log(`ChatGPT profile: ${PROFILE_DIR}; headless=${HEADLESS}`)
+  console.log(`ChatGPT profile: ${PROFILE_DIR}; channel=${BROWSER_CHANNEL || 'chromium'}; headless=${HEADLESS}`)
 
   do {
     const job = await claimJob(client)
