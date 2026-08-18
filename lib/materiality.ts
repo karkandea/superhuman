@@ -1,5 +1,5 @@
 import type { Category } from './checklist-data'
-import type { PlayerSignal, RecentQuestResult } from './player-understanding'
+import type { PlayerBriefSnapshot, PlayerSignal, RecentQuestResult } from './player-understanding'
 import type { QuestDifficulty, QuestKind, QuestPriority, QuestStatus } from './quest-system'
 
 export const MATERIALITY_LEVELS = ['low', 'medium', 'high', 'critical'] as const
@@ -35,6 +35,7 @@ export interface MaterialityContext {
   targetDate: string
   playerTimezone: string
   localDateTime: string
+  playerBrief?: PlayerBriefSnapshot
   triggerKnowledgeEntry: {
     id: string
     type: string
@@ -150,26 +151,21 @@ export function validateMaterialityAssessment(
   allowedSignalIds: ReadonlySet<string>,
 ): MaterialityAssessmentDecision {
   if (!isRecord(value)) throw new Error('Materiality assessment must be an object')
-  if (typeof value.isMaterial !== 'boolean') throw new Error('Materiality isMaterial must be boolean')
-  if (!MATERIALITY_LEVELS.includes(value.level as MaterialityLevel)) throw new Error('Materiality level is invalid')
-  if (typeof value.confidence !== 'number' || !Number.isFinite(value.confidence) || value.confidence < 0 || value.confidence > 1) throw new Error('Materiality confidence must be between 0 and 1')
+  if (typeof value.isMaterial !== 'boolean') throw new Error('Materiality assessment isMaterial must be boolean')
+  if (!MATERIALITY_LEVELS.includes(value.level as MaterialityLevel)) throw new Error('Materiality assessment level is invalid')
+  if (typeof value.confidence !== 'number' || !Number.isFinite(value.confidence) || value.confidence < 0 || value.confidence > 1) throw new Error('Materiality assessment confidence must be between 0 and 1')
   const reason = typeof value.reason === 'string' ? value.reason.trim() : ''
-  if (!reason) throw new Error('Materiality reason is required')
-  if (!MATERIALITY_ACTIONS.includes(value.recommendedAction as MaterialityRecommendedAction)) throw new Error('Materiality recommendedAction is invalid')
-  if (!MATERIALITY_URGENCY.includes(value.urgency as MaterialityUrgency)) throw new Error('Materiality urgency is invalid')
+  if (!reason) throw new Error('Materiality assessment reason is required')
+  const affectedQuestIds = uniqueIds(value.affectedQuestIds, 'Materiality assessment affectedQuestIds', true)
+  if (affectedQuestIds.some((id) => !allowedQuestIds.has(id))) throw new Error('Materiality assessment references quest outside active context')
+  const sourceSignalIds = uniqueIds(value.sourceSignalIds, 'Materiality assessment sourceSignalIds', true)
+  if (sourceSignalIds.some((id) => !allowedSignalIds.has(id))) throw new Error('Materiality assessment references signal outside retrieved context')
+  if (!MATERIALITY_ACTIONS.includes(value.recommendedAction as MaterialityRecommendedAction)) throw new Error('Materiality assessment recommendedAction is invalid')
+  if (!MATERIALITY_URGENCY.includes(value.urgency as MaterialityUrgency)) throw new Error('Materiality assessment urgency is invalid')
 
-  const affectedQuestIds = uniqueIds(value.affectedQuestIds, 'affectedQuestIds', true)
-  if (affectedQuestIds.some((id) => !allowedQuestIds.has(id))) throw new Error('Materiality references a quest outside active context')
-  const sourceSignalIds = uniqueIds(value.sourceSignalIds, 'sourceSignalIds', true)
-  if (sourceSignalIds.some((id) => !allowedSignalIds.has(id))) throw new Error('Materiality references a signal outside retrieved context')
-
-  if (!value.isMaterial) {
-    if (value.recommendedAction !== 'none') throw new Error('Non-material assessment must recommend none')
-    if (value.urgency !== 'none') throw new Error('Non-material assessment must have no urgency')
-  } else {
-    if (value.recommendedAction === 'none') throw new Error('Material assessment must recommend an action')
-    if (value.urgency === 'none') throw new Error('Material assessment must be time-sensitive')
-  }
+  if (!value.isMaterial && value.recommendedAction !== 'none') throw new Error('Non-material assessment must recommend no action')
+  if (value.recommendedAction === 'none' && affectedQuestIds.length > 0) throw new Error('No-action assessment must not target quests')
+  if (value.recommendedAction !== 'none' && value.recommendedAction !== 'add' && affectedQuestIds.length === 0) throw new Error('Quest-changing assessment must identify affected quests')
 
   return {
     isMaterial: value.isMaterial,
@@ -184,7 +180,7 @@ export function validateMaterialityAssessment(
 }
 
 export function materialityDisposition(decision: MaterialityAssessmentDecision): MaterialityDisposition {
-  if (!decision.isMaterial || decision.confidence < 0.65 || decision.urgency === 'none') return 'no_change'
+  if (!decision.isMaterial || decision.recommendedAction === 'none') return 'no_change'
   if ((decision.level === 'high' || decision.level === 'critical') && decision.confidence >= 0.85 && (decision.urgency === 'today' || decision.urgency === 'immediate')) {
     return 'auto_interrupt'
   }
@@ -193,42 +189,43 @@ export function materialityDisposition(decision: MaterialityAssessmentDecision):
 
 export function validateQuestInterruptPlan(
   value: unknown,
-  activeQuestIds: ReadonlySet<string>,
+  allowedQuestIds: ReadonlySet<string>,
   allowedSignalIds: ReadonlySet<string>,
 ): QuestInterruptPlan {
-  if (!isRecord(value)) throw new Error('System Interrupt output must be an object')
+  if (!isRecord(value)) throw new Error('Interrupt plan must be an object')
   const summary = typeof value.summary === 'string' ? value.summary.trim() : ''
-  if (!summary) throw new Error('System Interrupt summary is required')
-  if (!Array.isArray(value.actions) || value.actions.length === 0) throw new Error('System Interrupt requires at least one action')
-  if (value.actions.length > 6) throw new Error('System Interrupt may contain at most six actions')
+  if (!summary) throw new Error('Interrupt plan summary is required')
+  if (!Array.isArray(value.actions) || value.actions.length === 0) throw new Error('Interrupt plan requires at least one action')
 
-  const targeted = new Set<string>()
-  const actions = value.actions.map((raw, index) => {
-    if (!isRecord(raw)) throw new Error(`Interrupt action ${index} must be an object`)
-    if (!INTERRUPT_ACTIONS.includes(raw.action as QuestInterruptActionType)) throw new Error(`Interrupt action ${index} has invalid action`)
-    const action = raw.action as QuestInterruptActionType
-    const reason = typeof raw.reason === 'string' ? raw.reason.trim() : ''
-    if (!reason) throw new Error(`Interrupt action ${index} requires reason`)
+  const actions = value.actions.map((rawAction, index) => {
+    if (!isRecord(rawAction)) throw new Error(`Interrupt action ${index} must be an object`)
+    if (!INTERRUPT_ACTIONS.includes(rawAction.action as QuestInterruptActionType)) throw new Error(`Interrupt action ${index} type is invalid`)
+    const action = rawAction.action as QuestInterruptActionType
+    const reason = typeof rawAction.reason === 'string' ? rawAction.reason.trim() : ''
+    if (!reason) throw new Error(`Interrupt action ${index} reason is required`)
 
-    const targetQuestId = typeof raw.targetQuestId === 'string' && raw.targetQuestId.trim() ? raw.targetQuestId.trim() : undefined
-    if (action === 'add') {
-      if (targetQuestId) throw new Error('Add action must not target an existing quest')
-      return { action, reason, quest: questCandidate(raw.quest, index, allowedSignalIds) }
+    let targetQuestId: string | undefined
+    if (action !== 'add') {
+      targetQuestId = typeof rawAction.targetQuestId === 'string' ? rawAction.targetQuestId.trim() : ''
+      if (!targetQuestId || !allowedQuestIds.has(targetQuestId)) throw new Error(`Interrupt action ${index} target quest is invalid`)
     }
 
-    if (!targetQuestId || !activeQuestIds.has(targetQuestId)) throw new Error(`Interrupt action ${index} must target an active quest`)
-    if (targeted.has(targetQuestId)) throw new Error('A quest may only be targeted once in an interrupt plan')
-    targeted.add(targetQuestId)
-
-    if (action === 'replace') {
-      return { action, targetQuestId, reason, quest: questCandidate(raw.quest, index, allowedSignalIds) }
-    }
+    let newPriority: QuestPriority | undefined
     if (action === 'reprioritize') {
-      if (!Number.isInteger(raw.newPriority) || Number(raw.newPriority) < 1 || Number(raw.newPriority) > 5) throw new Error(`Interrupt action ${index} newPriority is invalid`)
-      return { action, targetQuestId, reason, newPriority: Number(raw.newPriority) as QuestPriority }
+      if (!Number.isInteger(rawAction.newPriority) || Number(rawAction.newPriority) < 1 || Number(rawAction.newPriority) > 5) throw new Error(`Interrupt action ${index} newPriority is invalid`)
+      newPriority = Number(rawAction.newPriority) as QuestPriority
     }
-    if (raw.quest !== undefined || raw.newPriority !== undefined) throw new Error(`${action} action cannot create or reprioritize a quest`)
-    return { action, targetQuestId, reason }
+
+    let quest: InterruptQuestCandidate | undefined
+    if (action === 'add' || action === 'replace') quest = questCandidate(rawAction.quest, index, allowedSignalIds)
+
+    return {
+      action,
+      ...(targetQuestId ? { targetQuestId } : {}),
+      ...(newPriority ? { newPriority } : {}),
+      ...(quest ? { quest } : {}),
+      reason,
+    }
   })
 
   return { summary, actions }
