@@ -37,50 +37,109 @@ function asObject(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>
 }
 
-function parseJsonObject(text: string): unknown {
-  const trimmed = text.trim()
-  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)
-  const firstCandidate = (fenced?.[1] ?? trimmed).trim()
+function balancedJsonObjects(text: string): string[] {
+  const objects: string[] = []
+  let depth = 0
+  let start = -1
+  let inString = false
+  let escaped = false
 
-  try {
-    return JSON.parse(firstCandidate)
-  } catch {
-    const start = firstCandidate.indexOf('{')
-    const end = firstCandidate.lastIndexOf('}')
-    if (start < 0 || end <= start) {
-      throw new Error('Consumer ChatGPT response did not contain parseable JSON')
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index]
+
+    if (inString) {
+      if (escaped) escaped = false
+      else if (char === '\\') escaped = true
+      else if (char === '"') inString = false
+      continue
     }
-    try {
-      return JSON.parse(firstCandidate.slice(start, end + 1))
-    } catch {
-      throw new Error('Consumer ChatGPT response contained malformed JSON')
+
+    if (char === '"') {
+      inString = true
+      continue
+    }
+
+    if (char === '{') {
+      if (depth === 0) start = index
+      depth += 1
+      continue
+    }
+
+    if (char === '}' && depth > 0) {
+      depth -= 1
+      if (depth === 0 && start >= 0) {
+        objects.push(text.slice(start, index + 1))
+        start = -1
+      }
     }
   }
+
+  return objects
+}
+
+function parseJsonCandidates(text: string): unknown[] {
+  const candidates = new Set<string>()
+  const trimmed = text.trim()
+  if (trimmed) candidates.add(trimmed)
+
+  for (const match of text.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)) {
+    const candidate = match[1]?.trim()
+    if (candidate) candidates.add(candidate)
+  }
+
+  for (const candidate of balancedJsonObjects(text)) candidates.add(candidate)
+
+  const parsed: unknown[] = []
+  for (const candidate of candidates) {
+    try {
+      parsed.push(JSON.parse(candidate))
+    } catch {
+      // Keep scanning; consumer ChatGPT can wrap the valid envelope in prose or emit extra examples.
+    }
+  }
+  return parsed
 }
 
 export function parseConsumerChatEnvelope(
   text: string,
   expected: { requestId: string; operation: string; schemaVersion: string },
 ): ConsumerEnvelope {
-  const envelope = asObject(parseJsonObject(text))
-  const requestId = String(envelope.requestId ?? '')
-  const operation = String(envelope.operation ?? '')
-  const schemaVersion = String(envelope.schemaVersion ?? '')
-
-  if (requestId !== expected.requestId) {
-    throw new Error('Consumer ChatGPT response correlation mismatch')
-  }
-  if (operation !== expected.operation) {
-    throw new Error('Consumer ChatGPT response operation mismatch')
-  }
-  if (schemaVersion !== expected.schemaVersion) {
-    throw new Error('Consumer ChatGPT response schema version mismatch')
-  }
-  if (!Object.prototype.hasOwnProperty.call(envelope, 'payload')) {
-    throw new Error('Consumer ChatGPT response payload is missing')
+  const parsedCandidates = parseJsonCandidates(text)
+  if (parsedCandidates.length === 0) {
+    throw new Error('Consumer ChatGPT response did not contain parseable JSON')
   }
 
-  return { requestId, operation, schemaVersion, payload: envelope.payload }
+  let sawEnvelopeShape = false
+  let sawRequestId = false
+  let sawOperation = false
+
+  for (const parsed of parsedCandidates) {
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue
+    const envelope = asObject(parsed)
+    if (!('requestId' in envelope) || !('operation' in envelope) || !('schemaVersion' in envelope)) continue
+    sawEnvelopeShape = true
+
+    const requestId = String(envelope.requestId ?? '')
+    if (requestId !== expected.requestId) continue
+    sawRequestId = true
+
+    const operation = String(envelope.operation ?? '')
+    if (operation !== expected.operation) continue
+    sawOperation = true
+
+    const schemaVersion = String(envelope.schemaVersion ?? '')
+    if (schemaVersion !== expected.schemaVersion) continue
+    if (!Object.prototype.hasOwnProperty.call(envelope, 'payload')) {
+      throw new Error('Consumer ChatGPT response payload is missing')
+    }
+
+    return { requestId, operation, schemaVersion, payload: envelope.payload }
+  }
+
+  if (!sawEnvelopeShape) throw new Error('Consumer ChatGPT response did not contain a structured envelope')
+  if (!sawRequestId) throw new Error('Consumer ChatGPT response correlation mismatch')
+  if (!sawOperation) throw new Error('Consumer ChatGPT response operation mismatch')
+  throw new Error('Consumer ChatGPT response schema version mismatch')
 }
 
 export function buildConsumerChatPrompt(request: StructuredModelRequest, correlationId: string): string {
