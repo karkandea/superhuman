@@ -1,8 +1,9 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
+import SystemInterruptFeed from './system-interrupt-feed'
 import { supabase } from '@/lib/supabase'
 import { CATEGORY_LABEL, CATEGORY_ORDER, Category, todayStr, toDateStr } from '@/lib/checklist-data'
 import {
@@ -34,7 +35,10 @@ interface GeneratedQuest {
   xp: number
   rationale: string
   source: 'ai' | 'system' | 'legacy'
-  status: 'pending' | 'completed' | 'partial' | 'skipped' | 'failed'
+  status: 'pending' | 'completed' | 'partial' | 'skipped' | 'failed' | 'deferred' | 'cancelled' | 'replaced'
+  interrupt_id: string | null
+  interrupt_reason: string | null
+  revision: number
 }
 
 function computeStreak(logs: { date: string; checked_ids: string[] }[], anchorIds: string[]) {
@@ -62,7 +66,7 @@ export default function DailyQuestPage() {
   const username = decodeURIComponent(params.username as string)
 
   const [userId, setUserId] = useState<string | null>(null)
-  const [generatedQuests, setGeneratedQuests] = useState<GeneratedQuest[]>([])
+  const [allQuests, setAllQuests] = useState<GeneratedQuest[]>([])
   const [checked, setChecked] = useState<string[]>([])
   const [streak, setStreak] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -79,20 +83,22 @@ export default function DailyQuestPage() {
     checkedRef.current = checked
   }, [checked])
 
-  const quests = generatedQuests
-  const questReady = quests.length > 0
+  const quests = allQuests.filter(quest => ['pending', 'partial', 'completed'].includes(quest.status))
+  const adjustedQuests = allQuests.filter(quest => ['deferred', 'cancelled', 'replaced'].includes(quest.status))
+  const questReady = allQuests.length > 0
   const total = quests.length
-  const completed = checked.length
+  const completed = quests.filter(quest => quest.status === 'completed').length
   const pct = total ? Math.round((completed / total) * 100) : 0
-  const xpEarned = quests.filter(q => checked.includes(q.id)).reduce((sum, q) => sum + q.xp, 0)
+  const xpEarned = quests.filter(q => q.status === 'completed').reduce((sum, q) => sum + q.xp, 0)
   const xpTotal = quests.reduce((sum, q) => sum + q.xp, 0)
   const mainQuests = quests.filter(q => q.kind === 'main')
-  const mainDone = mainQuests.filter(q => checked.includes(q.id)).length
+  const mainDone = mainQuests.filter(q => q.status === 'completed').length
 
   const needsContext = !questReady && generationStatus === 'failed' && generationErrorCode === 'insufficient_context'
   const generationBusy = generationStatus === 'queued' || generationStatus === 'running'
   const systemPaused = !questReady && generationStatus === 'blocked_auth'
-  const generationFailed = !questReady && generationStatus === 'failed' && !needsContext
+  const transportInterrupted = !questReady && generationStatus === 'failed' && ['transient_transport_error', 'provider_rate_limited', 'processing_timeout', 'monitor_failed'].includes(generationErrorCode ?? '')
+  const generationFailed = !questReady && generationStatus === 'failed' && !needsContext && !transportInterrupted
   const emptyAfterSuccess = !questReady && generationStatus === 'succeeded'
 
   const refreshStreak = useCallback(async (uid: string, anchorIds: string[]) => {
@@ -108,7 +114,7 @@ export default function DailyQuestPage() {
   const loadGeneratedQuests = useCallback(async (uid: string) => {
     const { data, error } = await supabase
       .from('daily_quests')
-      .select('id,title,category,kind,difficulty,priority,xp,rationale,source,status')
+      .select('id,title,category,kind,difficulty,priority,xp,rationale,source,status,interrupt_id,interrupt_reason,revision')
       .eq('user_id', uid)
       .eq('quest_date', todayStr())
       .order('priority', { ascending: true })
@@ -117,12 +123,17 @@ export default function DailyQuestPage() {
     if (error) throw new Error(error.message)
 
     const rows = (data ?? []) as GeneratedQuest[]
-    setGeneratedQuests(rows)
+    setAllQuests(rows)
     const completedIds = rows.filter(row => row.status === 'completed').map(row => row.id)
     checkedRef.current = completedIds
     setChecked(completedIds)
     return rows.length
   }, [])
+
+  const refreshTodayQuests = useCallback(async () => {
+    if (!userId) return
+    await loadGeneratedQuests(userId)
+  }, [loadGeneratedQuests, userId])
 
   const applyJobState = useCallback((job: AiInferenceJob) => {
     setGenerationStatus(job.status)
@@ -209,6 +220,13 @@ export default function DailyQuestPage() {
 
       const generatedCount = await loadGeneratedQuests(user.id)
       if (generatedCount === 0) await syncAutomaticGeneration(user.id)
+      else {
+        const job = await getAiInferenceJobForDate(supabase, user.id, todayStr())
+        if (job) {
+          applyJobState(job)
+          if (job.status === 'queued' || job.status === 'running') void watchGenerationJob(job.id, user.id)
+        }
+      }
 
       await refreshStreak(user.id, anchorIds)
       setLoading(false)
@@ -220,10 +238,12 @@ export default function DailyQuestPage() {
       setGenerationErrorMessage(error instanceof Error ? error.message : 'System failed to load player state.')
       setLoading(false)
     })
-  }, [username, router, refreshStreak, loadGeneratedQuests, syncAutomaticGeneration])
+  }, [username, router, refreshStreak, loadGeneratedQuests, syncAutomaticGeneration, applyJobState, watchGenerationJob])
 
   const toggle = useCallback((id: string) => {
     if (!questReady) return
+    const quest = quests.find(item => item.id === id)
+    if (!quest || !['pending', 'partial', 'completed'].includes(quest.status)) return
 
     const before = checkedRef.current
     const willComplete = !before.includes(id)
@@ -243,14 +263,14 @@ export default function DailyQuestPage() {
         return
       }
 
-      setGeneratedQuests(current => current.map(quest => quest.id === id
-        ? { ...quest, status: willComplete ? 'completed' : 'pending' }
-        : quest
+      setAllQuests(current => current.map(currentQuest => currentQuest.id === id
+        ? { ...currentQuest, status: willComplete ? 'completed' : 'pending' }
+        : currentQuest
       ))
       setStatus('saved')
       setTimeout(() => setStatus('idle'), 1400)
     })
-  }, [questReady])
+  }, [questReady, quests])
 
   const retryGeneration = useCallback(async () => {
     if (!userId || generationBusy) return
@@ -289,7 +309,9 @@ export default function DailyQuestPage() {
     ? 'Main Quest complete. Hari ini sudah aman — lanjutkan side quest kalau energi masih ada.'
     : mainQuests.length > 0
       ? `${mainQuests.length - mainDone} Main Quest masih aktif. Selesaikan ini sebelum mengejar bonus.`
-      : 'Quest hari ini aktif. Hasil eksekusinya akan dipakai System untuk progression berikutnya.'
+      : adjustedQuests.length > 0 && quests.length === 0
+        ? 'System sudah menyesuaikan plan hari ini. Tidak ada quest aktif yang perlu dipaksakan sekarang.'
+        : 'Quest hari ini aktif. Hasil eksekusinya akan dipakai System untuk progression berikutnya.'
 
   return (
     <div style={{ minHeight: '100dvh', background: S.bg, color: S.ink, fontFamily: '"IBM Plex Sans", sans-serif', paddingBottom: 72 }}>
@@ -321,7 +343,7 @@ export default function DailyQuestPage() {
             </h1>
             <p style={{ color: S.muted, fontSize: 13, lineHeight: 1.55, margin: '10px 0 0', maxWidth: 500 }}>
               {questReady
-                ? 'System sudah menentukan fokus hari ini berdasarkan konteks yang relevan. Quest ini tidak akan berubah hanya karena halaman direfresh.'
+                ? 'Fokus hari ini stabil by default. Kalau situasi penting berubah, System akan melakukan interrupt secara eksplisit — bukan reshuffle diam-diam.'
                 : 'Daily Quest dibuat otomatis dari apa yang System pahami tentang hidup, tujuan, dan hambatan lo.'}
             </p>
           </div>
@@ -332,10 +354,20 @@ export default function DailyQuestPage() {
               generationStatus={generationStatus}
               needsContext={needsContext}
               generationFailed={generationFailed || emptyAfterSuccess}
+              transportInterrupted={transportInterrupted}
               systemPaused={systemPaused}
               onRetry={retryGeneration}
             />
           )}
+
+          {questReady && generationBusy && (
+            <div style={{ marginTop: 18, border: `1px solid ${S.line}`, borderRadius: 12, padding: '10px 12px', background: S.panel2 }}>
+              <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.amber, fontSize: 9, letterSpacing: '.12em' }}>SYSTEM PROCESSING NEW CONTEXT</div>
+              <div style={{ marginTop: 4, color: S.muted, fontSize: 11, lineHeight: 1.45 }}>Quest sekarang tetap aktif selama System menilai apakah update terbaru cukup material untuk mengubah prioritas hari ini.</div>
+            </div>
+          )}
+
+          <SystemInterruptFeed playerId={userId} date={todayStr()} onApplied={refreshTodayQuests} />
 
           {questReady && (
             <>
@@ -361,7 +393,7 @@ export default function DailyQuestPage() {
           )}
         </header>
 
-        {questReady && (
+        {quests.length > 0 && (
           <>
             <div style={{ display: 'flex', gap: 8, overflowX: 'auto', padding: '2px 0 14px' }}>
               {(['semua', ...CATEGORY_ORDER] as const).map(category => (
@@ -432,6 +464,7 @@ export default function DailyQuestPage() {
                                 <span style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, color: quest.kind === 'main' ? S.amber : S.muted, letterSpacing: '.1em' }}>
                                   {questKindLabel[quest.kind]}
                                 </span>
+                                {quest.interrupt_id && <span style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 8, color: S.amber, letterSpacing: '.08em' }}>INTERRUPT</span>}
                                 <span style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, color: S.gold }}>+{quest.xp} XP</span>
                               </div>
                               <div style={{ marginTop: 5, fontSize: 14.5, lineHeight: 1.45, color: done ? S.muted : S.ink, textDecoration: done ? 'line-through' : 'none' }}>
@@ -452,10 +485,27 @@ export default function DailyQuestPage() {
           </>
         )}
 
+        {adjustedQuests.length > 0 && (
+          <section style={{ marginTop: 28 }}>
+            <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.muted, fontSize: 9, letterSpacing: '.13em', marginBottom: 8 }}>ADJUSTED TODAY</div>
+            <div style={{ border: `1px solid ${S.line}`, borderRadius: 14, background: S.panel2, overflow: 'hidden' }}>
+              {adjustedQuests.map((quest, index) => (
+                <div key={quest.id} style={{ padding: '11px 13px', borderTop: index ? `1px solid ${S.line}` : 'none' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'baseline' }}>
+                    <div style={{ color: S.muted, fontSize: 12.5, textDecoration: quest.status === 'replaced' ? 'line-through' : 'none' }}>{quest.title}</div>
+                    <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.amber, fontSize: 8, letterSpacing: '.08em' }}>{quest.status.toUpperCase()}</div>
+                  </div>
+                  {quest.interrupt_reason && <div style={{ marginTop: 4, color: '#626c79', fontSize: 10.5, lineHeight: 1.4 }}>{quest.interrupt_reason}</div>}
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
         <footer style={{ padding: '32px 0 10px', textAlign: 'center' }}>
           <div style={{ color: S.muted, fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, lineHeight: 1.6 }}>
             QUEST AUTHORING IS SYSTEM-OWNED<br />
-            {questReady ? 'today’s quest batch is persistent' : 'add life context and let the System decide what matters next'}
+            {questReady ? 'stable by default · explicit interrupts when material context changes' : 'add life context and let the System decide what matters next'}
           </div>
           <Link href="/" style={{ display: 'inline-block', marginTop: 16, color: S.muted, textDecoration: 'none', fontFamily: '"IBM Plex Mono", monospace', fontSize: 10 }}>
             ← SWITCH PLAYER
@@ -476,6 +526,7 @@ function SystemEmptyState({
   generationStatus,
   needsContext,
   generationFailed,
+  transportInterrupted,
   systemPaused,
   onRetry,
 }: {
@@ -483,6 +534,7 @@ function SystemEmptyState({
   generationStatus: AiInferenceJobStatus | 'idle'
   needsContext: boolean
   generationFailed: boolean
+  transportInterrupted: boolean
   systemPaused: boolean
   onRetry: () => void
 }) {
@@ -504,14 +556,20 @@ function SystemEmptyState({
   } else if (systemPaused) {
     eyebrow = 'SYSTEM TEMPORARILY PAUSED'
     title = 'YOUR CONTEXT IS SAFE'
-    body = 'System belum bisa melanjutkan reasoning saat ini. Update lo tetap tersimpan dan tidak perlu dimasukkan ulang.'
+    body = 'System belum bisa melanjutkan processing saat ini. Update lo tetap tersimpan dan tidak perlu dimasukkan ulang.'
+  } else if (transportInterrupted) {
+    eyebrow = 'SYSTEM TEMPORARILY INTERRUPTED'
+    title = 'YOUR CONTEXT IS SAFE'
+    body = 'Koneksi ke reasoning engine sempat terinterupsi. Tidak ada context yang hilang. Tunggu sebentar lalu coba lagi — lo tidak perlu menulis ulang atau menambah context.'
   } else if (generationFailed) {
     eyebrow = 'SYSTEM COULD NOT FINISH'
     title = 'YOUR CONTEXT IS STILL SAFE'
-    body = 'System belum berhasil menyusun Daily Quest. Lo bisa coba lagi sekarang, atau tambahkan konteks baru kalau ada hal penting yang belum diketahui System.'
+    body = 'System belum berhasil menyelesaikan progression kali ini. Context lo tetap tersimpan; coba proses ulang tanpa memasukkan data yang sama lagi.'
   } else if (needsContext) {
     eyebrow = 'PLAYER CONTEXT REQUIRED'
   }
+
+  const canRetry = generationFailed || transportInterrupted
 
   return (
     <div style={{ marginTop: 20, background: S.panel, border: `1px solid ${S.line}`, borderRadius: 18, padding: '18px 16px' }}>
@@ -519,7 +577,7 @@ function SystemEmptyState({
       <div style={{ marginTop: 8, fontFamily: '"Space Grotesk", sans-serif', fontSize: 19, fontWeight: 700, lineHeight: 1.2 }}>{title}</div>
       <div style={{ marginTop: 9, color: S.muted, fontSize: 12.5, lineHeight: 1.6 }}>{body}</div>
 
-      {!queued && !running && !systemPaused && !generationFailed && (
+      {needsContext && !queued && !running && !systemPaused && (
         <Link
           href={`/${encodeURIComponent(username)}/vault`}
           style={{
@@ -532,22 +590,17 @@ function SystemEmptyState({
         </Link>
       )}
 
-      {generationFailed && (
-        <div style={{ display: 'grid', gap: 8, marginTop: 16 }}>
-          <button
-            type="button"
-            onClick={onRetry}
-            style={{
-              border: 'none', borderRadius: 10, padding: '12px 16px', background: S.amber, color: S.bg,
-              fontFamily: '"IBM Plex Mono", monospace', fontWeight: 700, fontSize: 11, letterSpacing: '.08em', cursor: 'pointer',
-            }}
-          >
-            TRY AGAIN
-          </button>
-          <Link href={`/${encodeURIComponent(username)}/vault`} style={{ color: S.gold, textAlign: 'center', textDecoration: 'none', fontSize: 11 }}>
-            Add more context instead
-          </Link>
-        </div>
+      {canRetry && (
+        <button
+          type="button"
+          onClick={onRetry}
+          style={{
+            width: '100%', marginTop: 16, border: 'none', borderRadius: 10, padding: '12px 16px', background: S.amber, color: S.bg,
+            fontFamily: '"IBM Plex Mono", monospace', fontWeight: 700, fontSize: 11, letterSpacing: '.08em', cursor: 'pointer',
+          }}
+        >
+          TRY AGAIN
+        </button>
       )}
     </div>
   )
