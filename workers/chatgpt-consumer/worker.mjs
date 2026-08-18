@@ -1,6 +1,7 @@
 import { chromium } from 'playwright'
 import { createClient } from '@supabase/supabase-js'
 import { randomUUID } from 'node:crypto'
+import { spawn } from 'node:child_process'
 import { hostname } from 'node:os'
 import os from 'node:os'
 import path from 'node:path'
@@ -21,7 +22,9 @@ const POLL_MS = Number(process.env.SUPERHUMAN_WORKER_POLL_MS || 2500)
 const LEASE_SECONDS = Number(process.env.SUPERHUMAN_WORKER_LEASE_SECONDS || 300)
 const GENERATION_TIMEOUT_MS = Number(process.env.CHATGPT_GENERATION_TIMEOUT_MS || 180000)
 const PROFILE_DIR = process.env.CHATGPT_BROWSER_PROFILE_DIR || path.join(os.homedir(), '.superhuman', 'chatgpt-profile')
-const BROWSER_CHANNEL = process.env.CHATGPT_BROWSER_CHANNEL || undefined
+const CHROME_BIN = process.env.CHATGPT_CHROME_BIN || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+const CDP_PORT = Number(process.env.CHATGPT_CDP_PORT || 9222)
+const CDP_URL = process.env.CHATGPT_CDP_URL || `http://127.0.0.1:${CDP_PORT}`
 const HEADLESS = process.env.CHATGPT_HEADLESS !== 'false'
 const MAX_PENDING_KNOWLEDGE = Number(process.env.SUPERHUMAN_PENDING_KNOWLEDGE_LIMIT || 12)
 
@@ -51,15 +54,6 @@ function normalizeRpcRow(data) {
   return data && typeof data === 'object' ? data : null
 }
 
-function persistentBrowserOptions(headless) {
-  return {
-    headless,
-    viewport: { width: 1365, height: 900 },
-    locale: 'en-US',
-    ...(BROWSER_CHANNEL ? { channel: BROWSER_CHANNEL } : {}),
-  }
-}
-
 async function firstVisible(page, selectors) {
   for (const selector of selectors) {
     const locator = page.locator(selector).first()
@@ -68,7 +62,7 @@ async function firstVisible(page, selectors) {
   return null
 }
 
-async function waitForComposer(page, deadline, { interactiveLogin = false } = {}) {
+async function waitForComposer(page, deadline) {
   const selectors = [
     '#prompt-textarea',
     'textarea[placeholder*="Message"]',
@@ -82,26 +76,16 @@ async function waitForComposer(page, deadline, { interactiveLogin = false } = {}
 
     const body = (await page.locator('body').innerText().catch(() => '')).toLowerCase()
     const url = page.url().toLowerCase()
-    const authRequired = url.includes('/auth/login') || /log in|sign up/.test(body)
-    const browserChallenge = /verify you are human|checking your browser|security check/.test(body)
-
-    if (authRequired && !interactiveLogin) {
+    if (url.includes('/auth/login') || /log in|sign up/.test(body)) {
       throw new WorkerError('browser_auth_required', 'ChatGPT browser session is not authenticated', false)
     }
-    if (browserChallenge && !interactiveLogin) {
+    if (/verify you are human|checking your browser|security check/.test(body)) {
       throw new WorkerError('browser_challenge', 'ChatGPT browser challenge blocked the worker', true)
     }
-
-    await sleep(interactiveLogin ? 1000 : 500)
+    await sleep(500)
   }
 
-  throw new WorkerError(
-    'composer_not_found',
-    interactiveLogin
-      ? 'ChatGPT login setup timed out before the prompt composer became available'
-      : 'ChatGPT prompt composer was not found',
-    true,
-  )
+  throw new WorkerError('composer_not_found', 'ChatGPT prompt composer was not found', true)
 }
 
 async function waitForAssistantResponse(page, previousCount, deadline) {
@@ -129,11 +113,8 @@ async function waitForAssistantResponse(page, previousCount, deadline) {
       'button:has-text("Stop generating")',
     ])
 
-    if (text && text === previousText && !stopVisible) {
-      stablePasses += 1
-    } else {
-      stablePasses = 0
-    }
+    if (text && text === previousText && !stopVisible) stablePasses += 1
+    else stablePasses = 0
 
     if (stablePasses >= 3) return text
     previousText = text
@@ -143,15 +124,68 @@ async function waitForAssistantResponse(page, previousCount, deadline) {
   throw new WorkerError('generation_timeout', 'ChatGPT response did not finish before timeout', true)
 }
 
+let connectedBrowser = null
+let spawnedChrome = null
+
+async function cdpReady() {
+  try {
+    const response = await fetch(`${CDP_URL}/json/version`, { signal: AbortSignal.timeout(1000) })
+    return response.ok
+  } catch {
+    return false
+  }
+}
+
+async function waitForCdp(deadline) {
+  while (Date.now() < deadline) {
+    if (await cdpReady()) return
+    await sleep(250)
+  }
+  throw new WorkerError('browser_unavailable', `Dedicated Chrome did not expose CDP at ${CDP_URL}`, true)
+}
+
+async function ensureChromeRunning() {
+  if (await cdpReady()) return
+
+  await fs.mkdir(PROFILE_DIR, { recursive: true, mode: 0o700 })
+  await fs.chmod(PROFILE_DIR, 0o700).catch(() => {})
+
+  const args = [
+    `--remote-debugging-port=${CDP_PORT}`,
+    '--remote-debugging-address=127.0.0.1',
+    `--user-data-dir=${PROFILE_DIR}`,
+    '--no-first-run',
+    '--no-default-browser-check',
+    ...(HEADLESS ? ['--headless=new'] : []),
+    CHATGPT_URL,
+  ]
+
+  spawnedChrome = spawn(CHROME_BIN, args, { detached: true, stdio: 'ignore' })
+  spawnedChrome.unref()
+  await waitForCdp(Date.now() + 20_000)
+}
+
+async function connectBrowser() {
+  if (connectedBrowser?.isConnected()) return connectedBrowser
+  await ensureChromeRunning()
+  connectedBrowser = await chromium.connectOverCDP(CDP_URL)
+  connectedBrowser.on('disconnected', () => { connectedBrowser = null })
+  return connectedBrowser
+}
+
+async function chatGptContext() {
+  const browser = await connectBrowser()
+  const context = browser.contexts()[0]
+  if (!context) throw new WorkerError('browser_context_missing', 'Dedicated Chrome has no browser context', true)
+  return context
+}
+
 class PlaywrightChatGptTransport {
   async execute({ prompt, timeoutMs }) {
-    await fs.mkdir(PROFILE_DIR, { recursive: true, mode: 0o700 })
-    await fs.chmod(PROFILE_DIR, 0o700).catch(() => {})
-
-    const context = await chromium.launchPersistentContext(PROFILE_DIR, persistentBrowserOptions(HEADLESS))
+    const context = await chatGptContext()
+    const page = await context.newPage()
 
     try {
-      const page = context.pages()[0] || await context.newPage()
       const deadline = Date.now() + timeoutMs
       await page.goto(CHATGPT_URL, { waitUntil: 'domcontentloaded', timeout: Math.min(timeoutMs, 45000) })
 
@@ -178,25 +212,20 @@ class PlaywrightChatGptTransport {
         modelLabel: 'chatgpt-consumer-auto',
       }
     } finally {
-      await context.close()
+      await page.close().catch(() => {})
     }
   }
 }
 
 async function loginMode() {
-  await fs.mkdir(PROFILE_DIR, { recursive: true, mode: 0o700 })
-  const context = await chromium.launchPersistentContext(PROFILE_DIR, persistentBrowserOptions(false))
+  const context = await chatGptContext()
+  let page = context.pages().find(candidate => candidate.url().includes('chatgpt.com'))
+  if (!page) page = await context.newPage()
+  if (!page.url().includes('chatgpt.com')) await page.goto(CHATGPT_URL, { waitUntil: 'domcontentloaded' })
 
-  const page = context.pages()[0] || await context.newPage()
-  await page.goto(CHATGPT_URL, { waitUntil: 'domcontentloaded' })
-  process.stdout.write(`Open browser profile: ${PROFILE_DIR}\nVerifying the previously authenticated ChatGPT session.\n`)
-
-  try {
-    await waitForComposer(page, Date.now() + 60_000)
-    process.stdout.write('ChatGPT session detected. Browser profile is ready for headless worker use.\n')
-  } finally {
-    await context.close()
-  }
+  process.stdout.write(`Connected to dedicated Chrome at ${CDP_URL}\nVerifying the current ChatGPT session without reopening the profile.\n`)
+  await waitForComposer(page, Date.now() + 60_000)
+  process.stdout.write('ChatGPT session detected. Dedicated Chrome is ready for worker use.\n')
 }
 
 function createSupabase() {
@@ -363,7 +392,7 @@ async function main() {
   const client = createSupabase()
   const once = process.argv.includes('--once')
   console.log(`Superhuman ChatGPT consumer worker online as ${WORKER_ID}`)
-  console.log(`ChatGPT profile: ${PROFILE_DIR}; channel=${BROWSER_CHANNEL || 'chromium'}; headless=${HEADLESS}`)
+  console.log(`Dedicated Chrome: ${CDP_URL}; profile=${PROFILE_DIR}; headless fallback=${HEADLESS}`)
 
   do {
     const job = await claimJob(client)
