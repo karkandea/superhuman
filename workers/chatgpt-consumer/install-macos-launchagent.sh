@@ -54,11 +54,32 @@ if [[ -f "$ENV_FILE" ]]; then
   source "$ENV_FILE"
 fi
 
-validate_supabase_secret() {
+normalize_supabase_key() {
   local key="$1"
+
+  # Clipboard content can contain a trailing carriage return or surrounding
+  # whitespace. Remove only surrounding whitespace; never print the key.
+  key="${key//$'\r'/}"
+  while [[ "$key" == [[:space:]]* ]]; do
+    key="${key#?}"
+  done
+  while [[ "$key" == *[[:space:]] ]]; do
+    key="${key%?}"
+  done
+
+  printf '%s' "$key"
+}
+
+validate_supabase_key() {
+  local key
   local status
 
-  if [[ "$key" != sb_secret_* ]]; then
+  key="$(normalize_supabase_key "$1")"
+  [[ -n "$key" ]] || return 1
+
+  # A publishable key can reach the API gateway but is intentionally not
+  # privileged enough for this backend worker.
+  if [[ "$key" == sb_publishable_* ]]; then
     return 1
   fi
 
@@ -74,33 +95,39 @@ if [[ "${RESET_SUPABASE_KEY:-0}" == "1" ]]; then
   unset SUPABASE_SECRET_KEY
 fi
 
-if [[ -n "${SUPABASE_SECRET_KEY:-}" ]] && ! validate_supabase_secret "$SUPABASE_SECRET_KEY"; then
+if [[ -n "${SUPABASE_SECRET_KEY:-}" ]]; then
+  SUPABASE_SECRET_KEY="$(normalize_supabase_key "$SUPABASE_SECRET_KEY")"
+fi
+
+if [[ -n "${SUPABASE_SECRET_KEY:-}" ]] && ! validate_supabase_key "$SUPABASE_SECRET_KEY"; then
   printf "Stored Supabase worker key is invalid for project superhuman; requesting a replacement.\n"
   unset SUPABASE_SECRET_KEY
 fi
 
 while [[ -z "${SUPABASE_SECRET_KEY:-}" ]]; do
-  printf "Supabase Secret API key for project superhuman (sb_secret_...): "
+  printf "Supabase elevated backend key for project superhuman: "
   IFS= read -r -s SUPABASE_SECRET_KEY
   printf "\n"
 
+  SUPABASE_SECRET_KEY="$(normalize_supabase_key "$SUPABASE_SECRET_KEY")"
+
   if [[ -z "$SUPABASE_SECRET_KEY" ]]; then
-    echo "A Supabase Secret API key is required." >&2
-    continue
-  fi
-
-  if [[ "$SUPABASE_SECRET_KEY" != sb_secret_* ]]; then
-    echo "That is not a modern Supabase Secret API key. Use the sb_secret_... key from Settings > API Keys > Secret keys." >&2
+    echo "A Supabase backend key is required." >&2
     unset SUPABASE_SECRET_KEY
     continue
   fi
 
-  if ! validate_supabase_secret "$SUPABASE_SECRET_KEY"; then
-    echo "That Secret API key is not valid for project superhuman. Create/copy a secret key from the superhuman project and try again." >&2
+  if [[ "$SUPABASE_SECRET_KEY" == sb_publishable_* ]]; then
+    echo "That is a publishable key, not a backend secret key." >&2
     unset SUPABASE_SECRET_KEY
     continue
   fi
 
+  if ! validate_supabase_key "$SUPABASE_SECRET_KEY"; then
+    echo "That key is not valid for project superhuman. Use a Secret key (sb_secret_...) or legacy service_role key from this project." >&2
+    unset SUPABASE_SECRET_KEY
+    continue
+  fi
 done
 
 printf "Supabase worker credential validated for project superhuman.\n"
