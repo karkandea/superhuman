@@ -1,4 +1,14 @@
 import type { AiProvider, ModelAudit } from './contracts'
+import {
+  materialityDisposition,
+  validateMaterialityAssessment,
+  validateQuestInterruptPlan,
+  type MaterialityAssessmentDecision,
+  type MaterialityContext,
+  type PersistedMaterialityAssessment,
+  type PersistedQuestInterrupt,
+  type QuestInterruptPlan,
+} from '../materiality'
 import { validateUnderstandingCandidates, type DerivedUnderstandingCandidate, type RetrievedPlayerContext } from '../player-understanding'
 import { validateGeneratedQuestCandidates, type GeneratedQuestCandidate, type PersistedDailyQuest } from '../quest-system'
 
@@ -16,6 +26,24 @@ export interface DailyQuestContextRetriever {
     date: string
     limit: number
   }): Promise<RetrievedPlayerContext>
+}
+
+export interface MaterialityContextRetriever {
+  retrieveForMateriality(input: {
+    playerId: string
+    knowledgeEntryId: string
+    date: string
+    limit: number
+    now?: Date
+  }): Promise<MaterialityContext>
+  retrieveForSystemInterrupt(input: {
+    playerId: string
+    knowledgeEntryId: string
+    date: string
+    assessment: MaterialityAssessmentDecision
+    limit: number
+    now?: Date
+  }): Promise<MaterialityContext>
 }
 
 export interface UnderstandingRepository {
@@ -38,6 +66,33 @@ export interface DailyQuestRepository {
   }): Promise<PersistedDailyQuest[]>
 }
 
+export interface MaterialityRepository {
+  findAssessment(input: {
+    playerId: string
+    knowledgeEntryId: string
+    date: string
+    version: string
+  }): Promise<PersistedMaterialityAssessment | null>
+  persistAssessment(input: {
+    playerId: string
+    knowledgeEntryId: string
+    date: string
+    decision: MaterialityAssessmentDecision
+    audit: ModelAudit
+    context: MaterialityContext
+  }): Promise<PersistedMaterialityAssessment>
+  findInterruptForAssessment(assessmentId: string): Promise<PersistedQuestInterrupt | null>
+  persistInterrupt(input: {
+    playerId: string
+    date: string
+    assessment: PersistedMaterialityAssessment
+    plan: QuestInterruptPlan
+    audit: ModelAudit
+    context: MaterialityContext
+    apply: boolean
+  }): Promise<PersistedQuestInterrupt>
+}
+
 export interface DeriveUnderstandingDependencies {
   provider: AiProvider
   contextRetriever: UnderstandingContextRetriever
@@ -50,8 +105,16 @@ export interface GenerateDailyQuestDependencies {
   repository: DailyQuestRepository
 }
 
+export interface MaterialityDependencies {
+  provider: AiProvider
+  contextRetriever: MaterialityContextRetriever
+  repository: MaterialityRepository
+}
+
 const UNDERSTANDING_SCHEMA_VERSION = 'understanding.v1'
 const QUEST_SCHEMA_VERSION = 'daily-quest.v1'
+export const MATERIALITY_SCHEMA_VERSION = 'materiality.v1'
+export const INTERRUPT_SCHEMA_VERSION = 'system-interrupt.v1'
 
 function requireProvider(provider: AiProvider | undefined): AiProvider {
   if (!provider || typeof provider.invokeStructured !== 'function') {
@@ -167,4 +230,143 @@ export async function generateDailyQuests(
   })
 
   return { source: 'generated', quests }
+}
+
+export async function assessKnowledgeMateriality(
+  dependencies: MaterialityDependencies,
+  input: { playerId: string; knowledgeEntryId: string; date: string; limit?: number; now?: Date },
+): Promise<{ source: 'existing' | 'assessed'; assessment: PersistedMaterialityAssessment }> {
+  const provider = requireProvider(dependencies.provider)
+  if (!input.playerId || !input.knowledgeEntryId) throw new Error('playerId and knowledgeEntryId are required')
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date)) throw new Error('date must use YYYY-MM-DD')
+
+  const existing = await dependencies.repository.findAssessment({
+    playerId: input.playerId,
+    knowledgeEntryId: input.knowledgeEntryId,
+    date: input.date,
+    version: MATERIALITY_SCHEMA_VERSION,
+  })
+  if (existing) return { source: 'existing', assessment: existing }
+
+  const context = await dependencies.contextRetriever.retrieveForMateriality({
+    playerId: input.playerId,
+    knowledgeEntryId: input.knowledgeEntryId,
+    date: input.date,
+    limit: input.limit ?? 24,
+    now: input.now,
+  })
+  if (context.playerId !== input.playerId) throw new Error('Materiality context belongs to another player')
+
+  const response = await provider.invokeStructured({
+    operation: 'assess_materiality',
+    schemaVersion: MATERIALITY_SCHEMA_VERSION,
+    instructions: [
+      'Decide whether this newly understood update is important AND time-sensitive enough to change today’s plan.',
+      'Daily Quest is stable by default. Ordinary journaling, background context, mild mood changes, and long-term insights should usually be non-material.',
+      'Material changes include same-day deadline/schedule shifts, emergencies, major health or relationship events, expiring opportunities, or facts that make an active quest unsafe or irrelevant.',
+      'Use the supplied player timezone/localDateTime, current signals, recent quest results, and active quests. activeQuests may be empty when the existing plan is already completed; in that case an urgent update may still justify recommendedAction=add, but no completed/history quest may be targeted.',
+      'sourceSignalIds should contain only signals that materially support the decision; it may be empty when the trigger update alone is sufficient.',
+    ].join(' '),
+    context,
+    responseContract: {
+      type: 'object',
+      required: ['isMaterial', 'level', 'confidence', 'reason', 'affectedQuestIds', 'sourceSignalIds', 'recommendedAction', 'urgency'],
+      isMaterial: 'boolean',
+      level: ['low', 'medium', 'high', 'critical'],
+      confidence: 'number 0..1',
+      affectedQuestIds: 'array of ids from activeQuests only',
+      sourceSignalIds: 'array of ids from signals only; may be empty',
+      recommendedAction: ['none', 'add', 'replace', 'defer', 'cancel', 'reprioritize'],
+      urgency: ['none', 'today', 'immediate'],
+    },
+  })
+
+  const decision = validateMaterialityAssessment(
+    response.output,
+    new Set(context.activeQuests.map((quest) => quest.id)),
+    new Set(context.signals.map((signal) => signal.id)),
+  )
+
+  const assessment = await dependencies.repository.persistAssessment({
+    playerId: input.playerId,
+    knowledgeEntryId: input.knowledgeEntryId,
+    date: input.date,
+    decision,
+    audit: auditFrom(response, MATERIALITY_SCHEMA_VERSION),
+    context,
+  })
+  return { source: 'assessed', assessment }
+}
+
+export async function generateSystemInterrupt(
+  dependencies: MaterialityDependencies,
+  input: { playerId: string; knowledgeEntryId: string; date: string; assessment: PersistedMaterialityAssessment; limit?: number; now?: Date },
+): Promise<{ source: 'existing' | 'generated'; interrupt: PersistedQuestInterrupt }> {
+  const provider = requireProvider(dependencies.provider)
+  if (input.assessment.disposition === 'no_change') throw new Error('No-change materiality assessment cannot create an interrupt')
+
+  const existing = await dependencies.repository.findInterruptForAssessment(input.assessment.id)
+  if (existing) return { source: 'existing', interrupt: existing }
+
+  const decision: MaterialityAssessmentDecision = {
+    isMaterial: input.assessment.isMaterial,
+    level: input.assessment.level,
+    confidence: input.assessment.confidence,
+    reason: input.assessment.reason,
+    affectedQuestIds: input.assessment.affectedQuestIds,
+    sourceSignalIds: input.assessment.sourceSignalIds,
+    recommendedAction: input.assessment.recommendedAction,
+    urgency: input.assessment.urgency,
+  }
+  if (materialityDisposition(decision) !== input.assessment.disposition) throw new Error('Persisted materiality disposition is inconsistent')
+
+  const context = await dependencies.contextRetriever.retrieveForSystemInterrupt({
+    playerId: input.playerId,
+    knowledgeEntryId: input.knowledgeEntryId,
+    date: input.date,
+    assessment: decision,
+    limit: input.limit ?? 24,
+    now: input.now,
+  })
+
+  const response = await provider.invokeStructured({
+    operation: 'generate_system_interrupt',
+    schemaVersion: INTERRUPT_SCHEMA_VERSION,
+    instructions: [
+      'Create the smallest explicit revision needed because of the persisted material update. Do not regenerate the entire day.',
+      'Supported actions are add, replace, defer, cancel, reprioritize. Prefer defer over cancel when the quest remains valid later.',
+      'Never target completed or historical quests; only target ids present in activeQuests. If activeQuests is empty, the only valid mutation is add.',
+      'For add/replace, create one evidence-backed quest and cite sourceSignalIds. For a priority shift, combine actions when needed (for example defer one quest + add interview preparation).',
+      'Keep the plan concise and directly tied to the materiality reason.',
+    ].join(' '),
+    context,
+    responseContract: {
+      type: 'object',
+      required: ['summary', 'actions'],
+      actions: [{
+        action: ['add', 'replace', 'defer', 'cancel', 'reprioritize'],
+        targetQuestId: 'required except add',
+        newPriority: 'required only for reprioritize',
+        quest: 'required only for add/replace; fields title,category,kind,difficulty,priority,xp,rationale,sourceSignalIds',
+        reason: 'required',
+      }],
+    },
+  })
+
+  const plan = validateQuestInterruptPlan(
+    response.output,
+    new Set(context.activeQuests.map((quest) => quest.id)),
+    new Set(context.signals.map((signal) => signal.id)),
+  )
+  const interrupt = await dependencies.repository.persistInterrupt({
+    playerId: input.playerId,
+    date: input.date,
+    assessment: input.assessment,
+    plan,
+    audit: auditFrom(response, INTERRUPT_SCHEMA_VERSION),
+    context,
+    apply: input.assessment.disposition === 'auto_interrupt',
+  })
+
+  return { source: 'generated', interrupt }
 }

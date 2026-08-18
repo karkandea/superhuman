@@ -9,9 +9,15 @@ import { spawn } from 'node:child_process'
 
 import { ChatGptConsumerWebProvider } from '../../lib/ai/chatgpt-consumer-provider.ts'
 import { BoundedPlayerContextRetriever } from '../../lib/context-retrieval.ts'
-import { derivePlayerUnderstanding, generateDailyQuests } from '../../lib/ai/orchestrator.ts'
+import {
+  assessKnowledgeMateriality,
+  derivePlayerUnderstanding,
+  generateDailyQuests,
+  generateSystemInterrupt,
+} from '../../lib/ai/orchestrator.ts'
 import {
   createSupabaseDailyQuestRepository,
+  createSupabaseMaterialityRepository,
   createSupabasePlayerContextStore,
   createSupabaseUnderstandingRepository,
 } from '../../lib/supabase/progression-store.ts'
@@ -27,6 +33,7 @@ const CDP_PORT = Number(process.env.CHATGPT_CDP_PORT || 9222)
 const CDP_URL = process.env.CHATGPT_CDP_URL || `http://127.0.0.1:${CDP_PORT}`
 const HEADLESS = process.env.CHATGPT_HEADLESS !== 'false'
 const MAX_PENDING_KNOWLEDGE = Number(process.env.SUPERHUMAN_PENDING_KNOWLEDGE_LIMIT || 12)
+const MAX_MATERIALITY_UPDATES = Number(process.env.SUPERHUMAN_MATERIALITY_LIMIT || 12)
 
 class WorkerError extends Error {
   constructor(code, message, retryable = true) {
@@ -51,7 +58,8 @@ function serviceKey() {
 
 function normalizeRpcRow(data) {
   if (Array.isArray(data)) return data[0] || null
-  return data && typeof data === 'object' ? data : null
+  if (!data || typeof data !== 'object' || !data.id) return null
+  return data
 }
 
 async function firstVisible(page, selectors) {
@@ -60,6 +68,17 @@ async function firstVisible(page, selectors) {
     if (await locator.isVisible().catch(() => false)) return locator
   }
   return null
+}
+
+async function throwIfProviderRateLimited(page) {
+  const modal = page.locator('[data-testid="modal-conversation-history-rate-limit"]').first()
+  if (await modal.isVisible().catch(() => false)) {
+    throw new WorkerError(
+      'provider_rate_limited',
+      'ChatGPT temporarily rate-limited the browser session. Player context is safe and the job will retry later.',
+      true,
+    )
+  }
 }
 
 async function waitForComposer(page, deadline) {
@@ -71,6 +90,7 @@ async function waitForComposer(page, deadline) {
   ]
 
   while (Date.now() < deadline) {
+    await throwIfProviderRateLimited(page)
     const composer = await firstVisible(page, selectors)
     if (composer) return composer
 
@@ -92,6 +112,7 @@ async function waitForAssistantResponse(page, previousCount, deadline) {
   const assistantMessages = page.locator('[data-message-author-role="assistant"]')
 
   while (Date.now() < deadline) {
+    await throwIfProviderRateLimited(page)
     if (await assistantMessages.count() > previousCount) break
     await sleep(500)
   }
@@ -104,6 +125,7 @@ async function waitForAssistantResponse(page, previousCount, deadline) {
   let stablePasses = 0
 
   while (Date.now() < deadline) {
+    await throwIfProviderRateLimited(page)
     const count = await assistantMessages.count()
     const latest = assistantMessages.nth(Math.max(0, count - 1))
     const text = (await latest.innerText().catch(() => '')).trim()
@@ -191,12 +213,14 @@ class PlaywrightChatGptTransport {
     try {
       const deadline = Date.now() + timeoutMs
       await page.goto(CHATGPT_URL, { waitUntil: 'domcontentloaded', timeout: Math.min(timeoutMs, 45000) })
+      await throwIfProviderRateLimited(page)
 
       const composer = await waitForComposer(page, deadline)
       const assistantMessages = page.locator('[data-message-author-role="assistant"]')
       const previousCount = await assistantMessages.count()
 
       await composer.fill(prompt)
+      await throwIfProviderRateLimited(page)
 
       const sendButton = await firstVisible(page, [
         'button[data-testid="send-button"]',
@@ -229,11 +253,6 @@ async function loginMode() {
   process.stdout.write(`Connected to dedicated Chrome at ${CDP_URL}\nVerifying the current ChatGPT session without reopening the profile.\n`)
   await waitForComposer(page, Date.now() + 60_000)
   process.stdout.write('ChatGPT session detected. Dedicated Chrome is ready for worker use.\n')
-
-  // The verifier connects to a Chrome process that is intentionally kept alive by
-  // the installer. A live CDP websocket would otherwise keep this short-lived
-  // Node process running forever and prevent the installer from reaching the
-  // LaunchAgent setup. Force a clean verifier exit without closing Chrome.
   process.exit(0)
 }
 
@@ -276,6 +295,62 @@ async function pendingKnowledgeIds(client, playerId) {
   return (data || []).map(row => row.id)
 }
 
+async function pendingMaterialityKnowledgeIds(client, playerId) {
+  const { data, error } = await client
+    .from('knowledge_entries')
+    .select('id')
+    .eq('user_id', playerId)
+    .eq('processing_status', 'processed')
+    .in('materiality_status', ['pending', 'failed'])
+    .order('updated_at', { ascending: true })
+    .limit(MAX_MATERIALITY_UPDATES)
+  if (error) throw new Error(`load pending materiality knowledge: ${error.message}`)
+  return (data || []).map(row => row.id)
+}
+
+function mapAssessment(row) {
+  return {
+    id: String(row.id),
+    userId: String(row.user_id),
+    knowledgeEntryId: String(row.knowledge_entry_id),
+    targetDate: String(row.target_date),
+    isMaterial: Boolean(row.is_material),
+    level: row.level,
+    confidence: Number(row.confidence),
+    reason: String(row.reason),
+    affectedQuestIds: Array.isArray(row.affected_quest_ids) ? row.affected_quest_ids.map(String) : [],
+    sourceSignalIds: Array.isArray(row.source_signal_ids) ? row.source_signal_ids.map(String) : [],
+    recommendedAction: row.recommended_action,
+    urgency: row.urgency,
+    disposition: row.disposition,
+    createdAt: String(row.created_at),
+  }
+}
+
+async function assessmentsAwaitingInterrupt(client, playerId, date) {
+  const { data, error } = await client
+    .from('materiality_assessments')
+    .select('*,quest_interrupts(id)')
+    .eq('user_id', playerId)
+    .eq('target_date', date)
+    .in('disposition', ['suggest', 'auto_interrupt'])
+    .order('created_at', { ascending: true })
+  if (error) throw new Error(`load pending interrupt assessments: ${error.message}`)
+  return (data || [])
+    .filter(row => !Array.isArray(row.quest_interrupts) || row.quest_interrupts.length === 0)
+    .map(mapAssessment)
+}
+
+async function markBaselineKnowledgeNotRequired(client, playerId) {
+  const { error } = await client
+    .from('knowledge_entries')
+    .update({ materiality_status: 'not_required' })
+    .eq('user_id', playerId)
+    .eq('processing_status', 'processed')
+    .in('materiality_status', ['pending', 'failed'])
+  if (error) throw new Error(`mark baseline materiality not required: ${error.message}`)
+}
+
 function classifyError(error) {
   if (error instanceof WorkerError) return error
   const message = error instanceof Error ? error.message : String(error)
@@ -283,7 +358,7 @@ function classifyError(error) {
   if (/evidence-backed player signals|No player knowledge was retrieved|At least one knowledge entry/.test(message)) {
     return new WorkerError('insufficient_context', message, false)
   }
-  if (/correlation mismatch|operation mismatch|schema version mismatch|malformed JSON|parseable JSON|sourceSignalIds|sourceKnowledgeEntryIds|outside retrieved context/.test(message)) {
+  if (/correlation mismatch|operation mismatch|schema version mismatch|malformed JSON|parseable JSON|sourceSignalIds|sourceKnowledgeEntryIds|outside retrieved context|Materiality|materiality|System Interrupt|Interrupt action|interrupt plan|affectedQuestIds|urgency|recommendedAction/.test(message)) {
     return new WorkerError('model_output_invalid', message, true)
   }
   if (/timeout|fetch failed|network|connection|temporar/i.test(message)) {
@@ -293,12 +368,15 @@ function classifyError(error) {
 }
 
 async function scheduleRetry(client, job, error, refs) {
+  const delaySeconds = error.code === 'provider_rate_limited'
+    ? 120
+    : Math.min(60, 2 ** Number(job.attempt_count || 1) * 3)
   const { error: rpcError } = await client.rpc('schedule_ai_inference_retry', {
     p_job_id: job.id,
     p_worker_id: WORKER_ID,
     p_error_code: error.code,
     p_error_message: error.message,
-    p_delay_seconds: Math.min(60, 2 ** Number(job.attempt_count || 1) * 3),
+    p_delay_seconds: delaySeconds,
     p_provider_id: 'chatgpt-consumer-web',
     p_provider_conversation_refs: refs,
   })
@@ -329,14 +407,21 @@ async function processJob(client, job) {
   const contextRetriever = new BoundedPlayerContextRetriever(contextStore)
   const understandingRepository = createSupabaseUnderstandingRepository(client)
   const dailyQuestRepository = createSupabaseDailyQuestRepository(client)
+  const materialityRepository = createSupabaseMaterialityRepository(client)
 
   const heartbeatTimer = setInterval(() => {
     heartbeat(client, job.id).catch(error => console.error(`[heartbeat] ${error.message}`))
   }, Math.max(15_000, Math.floor(LEASE_SECONDS * 500)))
 
   try {
+    const questsBefore = await dailyQuestRepository.findForDate(job.user_id, job.target_date)
+    const hadDailyPlan = questsBefore.length > 0
     const knowledgeIds = await pendingKnowledgeIds(client, job.user_id)
     let derivedCount = 0
+    let materialityCount = 0
+    let noChangeCount = 0
+    let suggestedInterruptCount = 0
+    let appliedInterruptCount = 0
 
     if (knowledgeIds.length > 0) {
       const derived = await derivePlayerUnderstanding({
@@ -351,6 +436,39 @@ async function processJob(client, job) {
       derivedCount = derived.length
     }
 
+    if (hadDailyPlan) {
+      const materialityIds = await pendingMaterialityKnowledgeIds(client, job.user_id)
+      for (const knowledgeEntryId of materialityIds) {
+        const assessed = await assessKnowledgeMateriality({
+          provider,
+          contextRetriever,
+          repository: materialityRepository,
+        }, {
+          playerId: job.user_id,
+          knowledgeEntryId,
+          date: job.target_date,
+        })
+        materialityCount += assessed.source === 'assessed' ? 1 : 0
+        if (assessed.assessment.disposition === 'no_change') noChangeCount += 1
+      }
+
+      const pendingInterrupts = await assessmentsAwaitingInterrupt(client, job.user_id, job.target_date)
+      for (const assessment of pendingInterrupts) {
+        const generated = await generateSystemInterrupt({
+          provider,
+          contextRetriever,
+          repository: materialityRepository,
+        }, {
+          playerId: job.user_id,
+          knowledgeEntryId: assessment.knowledgeEntryId,
+          date: job.target_date,
+          assessment,
+        })
+        if (generated.interrupt.status === 'applied') appliedInterruptCount += 1
+        else suggestedInterruptCount += 1
+      }
+    }
+
     const generated = await generateDailyQuests({
       provider,
       contextRetriever,
@@ -360,15 +478,23 @@ async function processJob(client, job) {
       date: job.target_date,
     })
 
+    if (!hadDailyPlan && generated.quests.length > 0) {
+      await markBaselineKnowledgeNotRequired(client, job.user_id)
+    }
+
     const refs = provider.consumeConversationRefs()
     await completeJob(client, job, 'succeeded', refs, {
       derivedUnderstandingCount: derivedCount,
+      materialityAssessmentCount: materialityCount,
+      materialityNoChangeCount: noChangeCount,
+      suggestedInterruptCount,
+      appliedInterruptCount,
       questCount: generated.quests.length,
       questSource: generated.source,
       targetDate: job.target_date,
     })
 
-    console.log(`[job ${job.id}] succeeded: ${generated.quests.length} quests (${generated.source})`)
+    console.log(`[job ${job.id}] succeeded: ${generated.quests.length} quests (${generated.source}); materiality=${materialityCount}; interrupts=${appliedInterruptCount} applied/${suggestedInterruptCount} suggested`)
   } catch (rawError) {
     const error = classifyError(rawError)
     const refs = provider.consumeConversationRefs()

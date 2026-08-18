@@ -3,7 +3,7 @@ import type { Category } from './checklist-data'
 export type QuestKind = 'main' | 'side' | 'maintenance' | 'bonus'
 export type QuestSource = 'system' | 'legacy' | 'ai'
 export type QuestDifficulty = 'easy' | 'medium' | 'hard'
-export type QuestStatus = 'pending' | 'completed' | 'partial' | 'skipped' | 'failed'
+export type QuestStatus = 'pending' | 'completed' | 'partial' | 'skipped' | 'failed' | 'deferred' | 'cancelled' | 'replaced'
 export type QuestPriority = 1 | 2 | 3 | 4 | 5
 
 export interface DailyQuest {
@@ -34,6 +34,12 @@ export interface PersistedDailyQuest extends GeneratedQuestCandidate {
   questDate: string
   source: QuestSource
   status: QuestStatus
+  revision?: number
+  supersedesQuestId?: string
+  interruptId?: string
+  materialityAssessmentId?: string
+  interruptedAt?: string
+  interruptReason?: string
   completedAt?: string
 }
 
