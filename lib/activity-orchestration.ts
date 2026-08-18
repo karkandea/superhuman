@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AiProvider } from './ai/contracts'
 import {
@@ -101,7 +102,10 @@ function localDateTime(now: Date, timezone: string): string {
 
 export function materialityBatchKey(date: string, knowledgeEntryIds: string[]): string {
   const stableIds = [...new Set(knowledgeEntryIds)].sort()
-  return `${MATERIALITY_BATCH_SCHEMA_VERSION}:${date}:${stableIds.join(',')}`
+  const digest = createHash('sha256')
+    .update(`${MATERIALITY_BATCH_SCHEMA_VERSION}\n${date}\n${stableIds.join('\n')}`)
+    .digest('hex')
+  return `${MATERIALITY_BATCH_SCHEMA_VERSION}:${digest}`
 }
 
 function mapAssessment(row: Record<string, unknown>): BatchMaterialityAssessment {
