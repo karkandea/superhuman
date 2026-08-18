@@ -17,7 +17,8 @@ if ! command -v apt-get >/dev/null 2>&1; then
 fi
 
 SERVICE_USER="${SUPERHUMAN_SERVICE_USER:-superhuman-ai}"
-SERVICE_NAME="superhuman-ai-worker.service"
+WORKER_SERVICE="superhuman-ai-worker.service"
+BROWSER_SERVICE="superhuman-chatgpt-browser.service"
 REPO_URL="https://github.com/karkandea/superhuman.git"
 REPO_DIR="${SUPERHUMAN_REPO_DIR:-/opt/superhuman}"
 WORKER_DIR="$REPO_DIR/workers/chatgpt-consumer"
@@ -27,7 +28,8 @@ STATE_DIR="/var/lib/superhuman-ai"
 PROFILE_DIR="$STATE_DIR/chatgpt-profile"
 LOG_DIR="$STATE_DIR/logs"
 CHROME_WRAPPER="/usr/local/bin/superhuman-chrome"
-SERVICE_FILE="/etc/systemd/system/$SERVICE_NAME"
+WORKER_SERVICE_FILE="/etc/systemd/system/$WORKER_SERVICE"
+BROWSER_SERVICE_FILE="/etc/systemd/system/$BROWSER_SERVICE"
 SUPABASE_URL="https://ispfhvdelglwvixaspza.supabase.co"
 CDP_PORT="9222"
 CDP_URL="http://127.0.0.1:$CDP_PORT"
@@ -49,11 +51,6 @@ if [[ "$node_major" -lt 20 ]]; then
   apt-get install -y nodejs
 fi
 
-if ! command -v node >/dev/null 2>&1 || [[ "$(node -p "Number(process.versions.node.split('.')[0])")" -lt 20 ]]; then
-  echo "Node.js 20+ could not be installed." >&2
-  exit 1
-fi
-
 CHROME_REAL="$(command -v google-chrome-stable || command -v google-chrome || true)"
 if [[ -z "$CHROME_REAL" ]]; then
   if [[ "$(uname -m)" != "x86_64" ]]; then
@@ -65,11 +62,6 @@ if [[ -z "$CHROME_REAL" ]]; then
   apt-get install -y "$chrome_deb"
   rm -f "$chrome_deb"
   CHROME_REAL="$(command -v google-chrome-stable || command -v google-chrome || true)"
-fi
-
-if [[ -z "$CHROME_REAL" ]]; then
-  echo "Google Chrome could not be installed." >&2
-  exit 1
 fi
 
 cat > "$CHROME_WRAPPER" <<EOF_CHROME
@@ -85,12 +77,8 @@ SERVICE_HOME="$(getent passwd "$SERVICE_USER" | cut -d: -f6)"
 
 mkdir -p "$CONFIG_DIR" "$PROFILE_DIR" "$LOG_DIR"
 chown -R "$SERVICE_USER:$SERVICE_USER" "$STATE_DIR"
-chmod 700 "$STATE_DIR" "$PROFILE_DIR" "$LOG_DIR"
-chmod 700 "$CONFIG_DIR"
+chmod 700 "$STATE_DIR" "$PROFILE_DIR" "$LOG_DIR" "$CONFIG_DIR"
 
-# The repository is owned by the unprivileged worker account. Always run Git as
-# that same account so reruns do not trip Git's dubious-ownership protection and
-# we never need a root-global safe.directory exception.
 if [[ -d "$REPO_DIR/.git" ]]; then
   chown -R "$SERVICE_USER:$SERVICE_USER" "$REPO_DIR"
   runuser -u "$SERVICE_USER" -- env HOME="$SERVICE_HOME" git -C "$REPO_DIR" fetch --depth=1 origin main
@@ -101,10 +89,6 @@ else
   runuser -u "$SERVICE_USER" -- env HOME="$SERVICE_HOME" git clone --depth=1 --branch main "$REPO_URL" "$REPO_DIR"
 fi
 
-# The root lockfile was produced on macOS and currently contains optional/native
-# dependency metadata that npm ci rejects on Linux. Runtime installation follows
-# package.json without rewriting the repository lockfile; the lockfile can be
-# repaired separately without blocking the 24/7 worker rollout.
 runuser -u "$SERVICE_USER" -- env HOME="$SERVICE_HOME" bash -lc "cd '$REPO_DIR' && npm install --package-lock=false --no-audit --no-fund"
 runuser -u "$SERVICE_USER" -- env HOME="$SERVICE_HOME" bash -lc "cd '$WORKER_DIR' && npm install --package-lock=false --no-audit --no-fund"
 
@@ -136,13 +120,11 @@ while [[ -z "$SUPABASE_SECRET_KEY" ]]; do
   IFS= read -r -s SUPABASE_SECRET_KEY
   printf "\n"
   SUPABASE_SECRET_KEY="$(normalize_key "$SUPABASE_SECRET_KEY")"
-
   if [[ "$SUPABASE_SECRET_KEY" == sb_publishable_* ]]; then
     echo "That is a publishable key, not a backend secret key." >&2
     SUPABASE_SECRET_KEY=""
     continue
   fi
-
   if ! validate_supabase_key "$SUPABASE_SECRET_KEY"; then
     echo "That key is not valid for project superhuman. Use sb_secret_... or the legacy service_role key from this project." >&2
     SUPABASE_SECRET_KEY=""
@@ -160,7 +142,7 @@ CHATGPT_BROWSER_PROFILE_DIR=$PROFILE_DIR
 CHATGPT_CHROME_BIN=$CHROME_WRAPPER
 CHATGPT_CDP_PORT=$CDP_PORT
 CHATGPT_CDP_URL=$CDP_URL
-CHATGPT_HEADLESS=true
+CHATGPT_HEADLESS=false
 SUPERHUMAN_WORKER_ID=superhuman-vps-$(hostname -s)
 EOF_ENV
 chmod 600 "$ENV_FILE"
@@ -170,11 +152,38 @@ NODE_BIN="$(command -v node)"
 NPM_BIN="$(command -v npm)"
 NODE_DIR="$(dirname "$NODE_BIN")"
 
-cat > "$SERVICE_FILE" <<EOF_SERVICE
+cat > "$BROWSER_SERVICE_FILE" <<EOF_BROWSER
 [Unit]
-Description=Superhuman ChatGPT consumer AI worker
+Description=Superhuman persistent ChatGPT browser
 Wants=network-online.target
 After=network-online.target
+
+[Service]
+Type=simple
+User=$SERVICE_USER
+Group=$SERVICE_USER
+WorkingDirectory=$WORKER_DIR
+EnvironmentFile=$ENV_FILE
+Environment=HOME=$SERVICE_HOME
+Environment=PATH=$NODE_DIR:/usr/local/bin:/usr/bin:/bin
+ExecStart=/bin/bash $WORKER_DIR/browser-vps.sh
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+KillMode=mixed
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
+EOF_BROWSER
+
+cat > "$WORKER_SERVICE_FILE" <<EOF_WORKER
+[Unit]
+Description=Superhuman ChatGPT consumer AI worker
+Requires=$BROWSER_SERVICE
+After=network-online.target $BROWSER_SERVICE
 
 [Service]
 Type=simple
@@ -195,10 +204,10 @@ ProtectSystem=full
 
 [Install]
 WantedBy=multi-user.target
-EOF_SERVICE
+EOF_WORKER
 
 systemctl daemon-reload
-systemctl disable --now "$SERVICE_NAME" >/dev/null 2>&1 || true
+systemctl disable --now "$WORKER_SERVICE" "$BROWSER_SERVICE" >/dev/null 2>&1 || true
 
 cat <<EOF_READY
 
@@ -206,7 +215,8 @@ VPS runtime bootstrap complete.
 - Service user: $SERVICE_USER
 - Repo: $REPO_DIR
 - Browser profile: $PROFILE_DIR
-- Service: $SERVICE_NAME (not started until login passes)
+- Browser service: $BROWSER_SERVICE
+- Worker service: $WORKER_SERVICE
 
 Starting one-time private ChatGPT login setup now...
 EOF_READY
