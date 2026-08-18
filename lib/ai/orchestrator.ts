@@ -9,7 +9,12 @@ import {
   type PersistedQuestInterrupt,
   type QuestInterruptPlan,
 } from '../materiality'
-import { validateUnderstandingCandidates, type DerivedUnderstandingCandidate, type RetrievedPlayerContext } from '../player-understanding'
+import {
+  UNDERSTANDING_TYPES,
+  validateUnderstandingCandidates,
+  type DerivedUnderstandingCandidate,
+  type RetrievedPlayerContext,
+} from '../player-understanding'
 import { validateGeneratedQuestCandidates, type GeneratedQuestCandidate, type PersistedDailyQuest } from '../quest-system'
 
 export interface UnderstandingContextRetriever {
@@ -156,11 +161,26 @@ export async function derivePlayerUnderstanding(
   const response = await provider.invokeStructured({
     operation: 'derive_understanding',
     schemaVersion: UNDERSTANDING_SCHEMA_VERSION,
-    instructions: 'Extract only evidence-backed player understanding. Every candidate must cite sourceKnowledgeEntryIds from the retrieved context. Do not invent goals, obstacles, relationships, preferences, or events.',
+    instructions: [
+      'Extract only evidence-backed player understanding.',
+      `Every candidate type must be exactly one of: ${UNDERSTANDING_TYPES.join(', ')}.`,
+      'Do not invent new type labels or use topical labels such as career, health, finance, motivation, identity, or reflection as the type.',
+      'Every candidate must cite sourceKnowledgeEntryIds from the retrieved context.',
+      'Do not invent goals, obstacles, relationships, preferences, priorities, opportunities, constraints, or events that are not supported by the supplied evidence.',
+    ].join(' '),
     context,
     responseContract: {
       type: 'array',
       required: ['type', 'summary', 'confidence', 'importance', 'sourceKnowledgeEntryIds'],
+      items: {
+        type: [...UNDERSTANDING_TYPES],
+        summary: 'non-empty string',
+        details: 'object optional',
+        confidence: 'number 0..1',
+        importance: 'integer 1..5',
+        sourceKnowledgeEntryIds: 'non-empty array of ids from context.knowledgeEntries only',
+        evidenceExcerpt: 'optional string',
+      },
     },
   })
 
@@ -210,11 +230,25 @@ export async function generateDailyQuests(
   const response = await provider.invokeStructured({
     operation: 'generate_daily_quests',
     schemaVersion: QUEST_SCHEMA_VERSION,
-    instructions: 'Generate adaptive daily quests only from the retrieved player signals and context. Every quest must cite sourceSignalIds and explain its rationale. Never generate random filler tasks.',
+    instructions: [
+      'Generate adaptive daily quests only from the retrieved player signals and context.',
+      'Every quest must cite sourceSignalIds and explain its rationale. Never generate random filler tasks.',
+      'Use only the canonical enum values provided in RESPONSE_CONTRACT for category, kind, and difficulty. Do not invent alternative labels.',
+    ].join(' '),
     context,
     responseContract: {
       type: 'array',
       required: ['title', 'category', 'kind', 'difficulty', 'priority', 'xp', 'rationale', 'sourceSignalIds'],
+      items: {
+        title: 'non-empty string',
+        category: ['pagi', 'siang', 'malam', 'sepanjang_hari'],
+        kind: ['main', 'side', 'maintenance', 'bonus'],
+        difficulty: ['easy', 'medium', 'hard'],
+        priority: 'integer 1..5',
+        xp: 'non-negative integer',
+        rationale: 'non-empty string',
+        sourceSignalIds: 'non-empty array of ids from context.signals only',
+      },
     },
   })
 
