@@ -60,11 +60,12 @@ test('daily quest context consumes derived signals and results without loading r
   const retriever = new BoundedPlayerContextRetriever({
     async loadKnowledgeEntries() { rawLoads += 1; return [] },
     async loadSignals() { return [{ id: 's1', userId: 'p1', type: 'obstacle', summary: 'System design gap', importance: 5, confidence: 0.9, observedAt: '2026-08-18T00:00:00Z' }] },
-    async loadRecentQuestResults() { return [{ questId: 'q0', outcome: 'failed', recordedAt: '2026-08-17T12:00:00Z' }] },
+    async loadRecentQuestResults() { return [{ id: 'r0', questId: 'q0', outcome: 'failed', recordedAt: '2026-08-17T12:00:00Z' }] },
   })
   const context = await retriever.retrieveForDailyQuest({ playerId: 'p1', date: '2026-08-18', limit: 32 })
   assert.equal(rawLoads, 0)
   assert.equal(context.signals[0].id, 's1')
+  assert.equal(context.recentQuestResults[0].id, 'r0')
   assert.equal(context.recentQuestResults[0].outcome, 'failed')
 })
 

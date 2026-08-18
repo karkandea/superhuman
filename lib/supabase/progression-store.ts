@@ -54,13 +54,14 @@ export function createSupabasePlayerContextStore(client: SupabaseClient): Player
     async loadRecentQuestResults(playerId, limit) {
       const { data, error } = await client
         .from('quest_results')
-        .select('quest_id,outcome,note,recorded_at')
+        .select('id,quest_id,outcome,note,recorded_at')
         .eq('user_id', playerId)
         .order('recorded_at', { ascending: false })
         .limit(limit)
       fail(error, 'load quest results')
 
       return (data ?? []).map((row) => ({
+        id: row.id,
         questId: row.quest_id,
         outcome: row.outcome,
         ...(row.note ? { note: row.note } : {}),
@@ -84,6 +85,8 @@ export function createSupabaseUnderstandingRepository(client: SupabaseClient): U
         p_model_id: audit.modelId,
         p_request_id: audit.requestId ?? null,
         p_version: audit.schemaVersion,
+        p_generated_at: context.generatedAt,
+        p_retrieval: context.retrieval,
       })
       fail(error, 'persist derived understanding')
     },
@@ -133,11 +136,14 @@ export function createSupabaseDailyQuestRepository(client: SupabaseClient): Dail
         p_user_id: playerId,
         p_quest_date: date,
         p_signal_ids: context.signals.map((signal) => signal.id),
+        p_quest_result_ids: context.recentQuestResults.map((result) => result.id),
         p_quests: candidates,
         p_provider_id: audit.providerId,
         p_model_id: audit.modelId,
         p_request_id: audit.requestId ?? null,
         p_version: audit.schemaVersion,
+        p_generated_at: context.generatedAt,
+        p_retrieval: context.retrieval,
       })
       fail(error, 'persist daily quest batch')
 

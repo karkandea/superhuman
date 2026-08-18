@@ -43,6 +43,7 @@ export interface PlayerSignal {
 }
 
 export interface RecentQuestResult {
+  id: string
   questId: string
   outcome: 'completed' | 'partial' | 'skipped' | 'failed'
   note?: string
