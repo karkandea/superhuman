@@ -38,6 +38,8 @@ function firstRow(data: unknown): Record<string, unknown> | null {
   return null
 }
 
+const JOB_COLUMNS = 'id,user_id,operation,target_date,status,attempt_count,max_attempts,error_code,error_message,created_at,updated_at'
+
 export async function requestDailyQuestGeneration(client: SupabaseClient, targetDate: string): Promise<AiInferenceJob> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) throw new Error('targetDate must use YYYY-MM-DD')
   const { data, error } = await client.rpc('request_progression_cycle', { p_target_date: targetDate })
@@ -50,9 +52,29 @@ export async function requestDailyQuestGeneration(client: SupabaseClient, target
 export async function getAiInferenceJob(client: SupabaseClient, jobId: string): Promise<AiInferenceJob | null> {
   const { data, error } = await client
     .from('ai_inference_jobs')
-    .select('id,user_id,operation,target_date,status,attempt_count,max_attempts,error_code,error_message,created_at,updated_at')
+    .select(JOB_COLUMNS)
     .eq('id', jobId)
     .maybeSingle()
   if (error) throw new Error(`load inference job: ${error.message}`)
+  return data ? mapJob(data as Record<string, unknown>) : null
+}
+
+export async function getAiInferenceJobForDate(
+  client: SupabaseClient,
+  playerId: string,
+  targetDate: string,
+): Promise<AiInferenceJob | null> {
+  if (!playerId) throw new Error('playerId is required')
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) throw new Error('targetDate must use YYYY-MM-DD')
+
+  const { data, error } = await client
+    .from('ai_inference_jobs')
+    .select(JOB_COLUMNS)
+    .eq('user_id', playerId)
+    .eq('operation', 'progression_cycle')
+    .eq('target_date', targetDate)
+    .maybeSingle()
+
+  if (error) throw new Error(`load inference job for date: ${error.message}`)
   return data ? mapJob(data as Record<string, unknown>) : null
 }
