@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { PlayerContextStore } from '../context-retrieval'
 import type { MaterialityRepository, UnderstandingRepository, DailyQuestRepository } from '../ai/orchestrator'
-import type { PersistedMaterialityAssessment, PersistedQuestInterrupt } from '../materiality'
+import type { ActiveQuestContext, PersistedMaterialityAssessment, PersistedQuestInterrupt } from '../materiality'
 import type { PlayerSignal, RecentQuestResult } from '../player-understanding'
 import type { PersistedDailyQuest, QuestSource, QuestStatus } from '../quest-system'
 
@@ -93,7 +93,7 @@ export function createSupabasePlayerContextStore(client: SupabaseClient): Player
         status: row.status,
         source: row.source,
         ...(row.completed_at ? { completedAt: row.completed_at } : {}),
-      }))
+      })) as ActiveQuestContext[]
     },
 
     async loadPlayerTimezone(playerId) {
