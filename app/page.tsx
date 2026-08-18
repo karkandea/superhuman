@@ -9,9 +9,7 @@ const PRODUCTION_SITE_URL = 'https://superhuman.dualangka.com'
 
 function authRedirectUrl() {
   const configured = process.env.NEXT_PUBLIC_SITE_URL?.trim()
-  if (configured) return configured.replace(/\/+$/, '')
-  if (process.env.NODE_ENV === 'production') return PRODUCTION_SITE_URL
-  return window.location.origin
+  return configured ? configured.replace(/\/+$/, '') : PRODUCTION_SITE_URL
 }
 
 const S = {
