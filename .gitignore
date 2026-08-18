@@ -2,6 +2,7 @@
 
 # dependencies
 /node_modules
+/workers/**/node_modules/
 /.pnp
 .pnp.*
 .yarn/*
@@ -20,6 +21,10 @@
 
 # production
 /build
+
+# browser worker credentials/session state
+/.chatgpt-profile/
+/workers/**/.chatgpt-profile/
 
 # misc
 .DS_Store
