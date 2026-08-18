@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { CATEGORY_LABEL, CATEGORY_ORDER, Category, todayStr, toDateStr } from '@/lib/checklist-data'
+import { getAiInferenceJob, requestDailyQuestGeneration, type AiInferenceJobStatus } from '@/lib/ai/inference-job-service'
 import { legacyItemToQuest, questKindLabel } from '@/lib/quest-system'
 
 const S = {
@@ -18,6 +19,19 @@ interface Item {
   category: Category
   anchor: boolean
   sort_order: number
+}
+
+interface GeneratedQuest {
+  id: string
+  title: string
+  category: Category
+  kind: 'main' | 'side' | 'maintenance' | 'bonus'
+  difficulty: 'easy' | 'medium' | 'hard'
+  priority: 1 | 2 | 3 | 4 | 5
+  xp: number
+  rationale: string
+  source: 'ai' | 'system' | 'legacy'
+  status: 'pending' | 'completed' | 'partial' | 'skipped' | 'failed'
 }
 
 function computeStreak(logs: { date: string; checked_ids: string[] }[], anchorIds: string[]) {
@@ -37,6 +51,8 @@ function computeStreak(logs: { date: string; checked_ids: string[] }[], anchorId
   return streak
 }
 
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
 export default function ChecklistPage() {
   const params = useParams()
   const router = useRouter()
@@ -44,11 +60,14 @@ export default function ChecklistPage() {
 
   const [userId, setUserId] = useState<string | null>(null)
   const [items, setItems] = useState<Item[]>([])
+  const [generatedQuests, setGeneratedQuests] = useState<GeneratedQuest[]>([])
   const [checked, setChecked] = useState<string[]>([])
   const [streak, setStreak] = useState(0)
   const [loading, setLoading] = useState(true)
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved'>('idle')
   const [filter, setFilter] = useState<'semua' | Category>('semua')
+  const [generationStatus, setGenerationStatus] = useState<AiInferenceJobStatus | 'idle'>('idle')
+  const [generationError, setGenerationError] = useState<string | null>(null)
 
   const checkedRef = useRef<string[]>([])
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -57,7 +76,9 @@ export default function ChecklistPage() {
     checkedRef.current = checked
   }, [checked])
 
-  const quests = useMemo(() => items.map(legacyItemToQuest), [items])
+  const legacyQuests = useMemo(() => items.map(legacyItemToQuest), [items])
+  const quests = useMemo(() => generatedQuests.length > 0 ? generatedQuests : legacyQuests, [generatedQuests, legacyQuests])
+  const usingGeneratedQuests = generatedQuests.length > 0
   const anchorIds = useMemo(() => items.filter(item => item.anchor).map(item => item.id), [items])
   const total = quests.length
   const completed = checked.length
@@ -70,7 +91,9 @@ export default function ChecklistPage() {
     ? 'Main Quest complete. Hari ini sudah aman — lanjutkan side quest kalau energi masih ada.'
     : mainQuests.length > 0
       ? `${mainQuests.length - mainDone} Main Quest masih aktif. Sistem menyarankan selesaikan ini sebelum mengejar bonus.`
-      : 'Quest hari ini masih memakai checklist legacy. AI-generated quest akan menggantikan sumber ini setelah Player Knowledge aktif.'
+      : usingGeneratedQuests
+        ? 'Quest batch hari ini aktif. Sistem akan memakai hasil eksekusinya sebagai signal untuk progression berikutnya.'
+        : 'Belum ada AI quest untuk hari ini. Generate setelah Life Vault berisi konteks yang relevan.'
 
   const refreshStreak = useCallback(async (uid: string, anchors: string[]) => {
     const from60 = toDateStr(new Date(Date.now() - 60 * 864e5))
@@ -80,6 +103,27 @@ export default function ChecklistPage() {
       .eq('user_id', uid)
       .gte('date', from60)
     setStreak(computeStreak(data ?? [], anchors))
+  }, [])
+
+  const loadGeneratedQuests = useCallback(async (uid: string) => {
+    const { data, error } = await supabase
+      .from('daily_quests')
+      .select('id,title,category,kind,difficulty,priority,xp,rationale,source,status')
+      .eq('user_id', uid)
+      .eq('quest_date', todayStr())
+      .order('priority', { ascending: true })
+      .order('created_at', { ascending: true })
+
+    if (error) throw new Error(error.message)
+
+    const rows = (data ?? []) as GeneratedQuest[]
+    setGeneratedQuests(rows)
+    if (rows.length > 0) {
+      const completedIds = rows.filter(row => row.status === 'completed').map(row => row.id)
+      checkedRef.current = completedIds
+      setChecked(completedIds)
+    }
+    return rows.length
   }, [])
 
   useEffect(() => {
@@ -104,36 +148,44 @@ export default function ChecklistPage() {
       const activeItems = itemRows ?? []
       setItems(activeItems)
 
+      const generatedCount = await loadGeneratedQuests(user.id)
       const today = todayStr()
-      const { data: log } = await supabase
-        .from('daily_logs')
-        .select('checked_ids')
-        .eq('user_id', user.id)
-        .eq('date', today)
-        .single()
 
-      setChecked(log?.checked_ids ?? [])
+      if (generatedCount === 0) {
+        const { data: log } = await supabase
+          .from('daily_logs')
+          .select('checked_ids')
+          .eq('user_id', user.id)
+          .eq('date', today)
+          .single()
+
+        setChecked(log?.checked_ids ?? [])
+
+        channel = supabase
+          .channel(`logs:${user.id}:${today}`)
+          .on('postgres_changes',
+            { event: '*', schema: 'public', table: 'daily_logs', filter: `user_id=eq.${user.id}` },
+            payload => {
+              const row = payload.new as { date: string; checked_ids: string[] }
+              if (row?.date !== todayStr()) return
+              const incoming = row.checked_ids ?? []
+              const same = incoming.length === checkedRef.current.length && incoming.every(id => checkedRef.current.includes(id))
+              if (!same) setChecked(incoming)
+            }
+          )
+          .subscribe()
+      }
+
       await refreshStreak(user.id, activeItems.filter(item => item.anchor).map(item => item.id))
       setLoading(false)
-
-      channel = supabase
-        .channel(`logs:${user.id}:${today}`)
-        .on('postgres_changes',
-          { event: '*', schema: 'public', table: 'daily_logs', filter: `user_id=eq.${user.id}` },
-          payload => {
-            const row = payload.new as { date: string; checked_ids: string[] }
-            if (row?.date !== todayStr()) return
-            const incoming = row.checked_ids ?? []
-            const same = incoming.length === checkedRef.current.length && incoming.every(id => checkedRef.current.includes(id))
-            if (!same) setChecked(incoming)
-          }
-        )
-        .subscribe()
     }
 
-    init()
+    void init().catch(() => {
+      setGenerationError('System gagal memuat player state.')
+      setLoading(false)
+    })
     return () => { if (channel) supabase.removeChannel(channel) }
-  }, [username, router, refreshStreak])
+  }, [username, router, refreshStreak, loadGeneratedQuests])
 
   const persist = useCallback((next: string[]) => {
     if (saveTimer.current) clearTimeout(saveTimer.current)
@@ -164,12 +216,79 @@ export default function ChecklistPage() {
   }, [userId, total, refreshStreak, anchorIds])
 
   const toggle = useCallback((id: string) => {
+    if (usingGeneratedQuests) {
+      const before = checkedRef.current
+      const willComplete = !before.includes(id)
+      const next = willComplete ? [...before, id] : before.filter(value => value !== id)
+      checkedRef.current = next
+      setChecked(next)
+      setStatus('saving')
+
+      void supabase.rpc('set_daily_quest_completion', {
+        p_quest_id: id,
+        p_completed: willComplete,
+      }).then(({ error }) => {
+        if (error) {
+          checkedRef.current = before
+          setChecked(before)
+          setStatus('idle')
+          return
+        }
+        setGeneratedQuests(current => current.map(quest => quest.id === id
+          ? { ...quest, status: willComplete ? 'completed' : 'pending' }
+          : quest
+        ))
+        setStatus('saved')
+        setTimeout(() => setStatus('idle'), 1400)
+      })
+      return
+    }
+
     setChecked(prev => {
       const next = prev.includes(id) ? prev.filter(value => value !== id) : [...prev, id]
       persist(next)
       return next
     })
-  }, [persist])
+  }, [persist, usingGeneratedQuests])
+
+  const generateToday = useCallback(async () => {
+    if (!userId || generationStatus === 'queued' || generationStatus === 'running') return
+    setGenerationError(null)
+
+    try {
+      const job = await requestDailyQuestGeneration(supabase, todayStr())
+      setGenerationStatus(job.status)
+
+      if (job.status === 'succeeded') {
+        await loadGeneratedQuests(userId)
+        return
+      }
+
+      for (let index = 0; index < 120; index += 1) {
+        await delay(1500)
+        const current = await getAiInferenceJob(supabase, job.id)
+        if (!current) throw new Error('Generation job disappeared')
+        setGenerationStatus(current.status)
+
+        if (current.status === 'succeeded') {
+          const count = await loadGeneratedQuests(userId)
+          if (count === 0) throw new Error('Generation completed without persisted quests')
+          return
+        }
+        if (current.status === 'failed' || current.status === 'blocked_auth') {
+          setGenerationError(current.errorMessage ?? (current.status === 'blocked_auth'
+            ? 'ChatGPT worker session perlu login ulang.'
+            : 'AI generation gagal.'))
+          return
+        }
+      }
+
+      setGenerationError('Generation masih berjalan terlalu lama. Job tetap aman di queue; refresh halaman untuk cek lagi.')
+    } catch (error) {
+      setGenerationStatus('failed')
+      setGenerationError(error instanceof Error ? error.message : 'Generation gagal dijalankan.')
+    }
+  }, [generationStatus, loadGeneratedQuests, userId])
 
   if (loading) {
     return (
@@ -180,6 +299,7 @@ export default function ChecklistPage() {
   }
 
   const visibleCategories = filter === 'semua' ? CATEGORY_ORDER : [filter]
+  const generationBusy = generationStatus === 'queued' || generationStatus === 'running'
 
   return (
     <div style={{ minHeight: '100dvh', background: S.bg, color: S.ink, fontFamily: '"IBM Plex Sans", sans-serif', paddingBottom: 72 }}>
@@ -205,9 +325,36 @@ export default function ChecklistPage() {
               Daily Quest
             </h1>
             <p style={{ color: S.muted, fontSize: 13, lineHeight: 1.55, margin: '10px 0 0', maxWidth: 500 }}>
-              Sistem menentukan apa yang perlu lo selesaikan hari ini. Saat ini quest masih dimigrasikan dari checklist lama; berikutnya sumber quest akan datang dari Player Knowledge + AI.
+              {usingGeneratedQuests
+                ? 'Quest hari ini dipersist dari bounded Player Knowledge reasoning. Refresh tidak akan mengganti quest batch yang sama.'
+                : 'Belum ada generated quest hari ini. Sistem bisa memproses bounded Life Vault context lalu menyimpan Daily Quest secara otomatis.'}
             </p>
           </div>
+
+          {!usingGeneratedQuests && (
+            <div style={{ marginTop: 18, background: S.panel, border: `1px solid ${S.line}`, borderRadius: 14, padding: 14 }}>
+              <button
+                type="button"
+                onClick={generateToday}
+                disabled={generationBusy}
+                style={{
+                  width: '100%', border: 'none', borderRadius: 10, padding: '12px 16px',
+                  background: generationBusy ? '#3a3328' : S.amber,
+                  color: generationBusy ? S.muted : S.bg,
+                  fontFamily: '"IBM Plex Mono", monospace', fontWeight: 700, fontSize: 11,
+                  letterSpacing: '.08em', cursor: generationBusy ? 'default' : 'pointer',
+                }}
+              >
+                {generationStatus === 'queued' ? 'AI JOB QUEUED...' : generationStatus === 'running' ? 'CHATGPT REASONING...' : 'GENERATE TODAY\'S QUEST'}
+              </button>
+              {generationError && (
+                <div style={{ color: S.red, fontSize: 11, lineHeight: 1.45, marginTop: 10 }}>{generationError}</div>
+              )}
+              <div style={{ color: S.muted, fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, lineHeight: 1.5, marginTop: 10 }}>
+                bounded context → ChatGPT consumer worker → schema validation → Supabase persistence
+              </div>
+            </div>
+          )}
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10, marginTop: 22 }}>
             <Stat value={`${pct}%`} label="PROGRESS" />
@@ -220,7 +367,7 @@ export default function ChecklistPage() {
           </div>
 
           <div style={{ marginTop: 14, background: S.panel2, border: `1px solid ${S.line}`, borderRadius: 14, padding: '13px 14px' }}>
-            <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.amber, fontSize: 9, letterSpacing: '.12em' }}>SYSTEM ASSESSMENT</div>
+            <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.amber, fontSize: 9, letterSpacing: '.12em' }}>SYSTEM ASSESSMENT · {usingGeneratedQuests ? 'AI BATCH' : 'LEGACY FALLBACK'}</div>
             <div style={{ color: S.ink, fontSize: 12.5, lineHeight: 1.5, marginTop: 6 }}>{systemMessage}</div>
           </div>
 
@@ -312,6 +459,9 @@ export default function ChecklistPage() {
                           <div style={{ marginTop: 5, fontSize: 14.5, lineHeight: 1.45, color: done ? S.muted : S.ink, textDecoration: done ? 'line-through' : 'none' }}>
                             {quest.title}
                           </div>
+                          {usingGeneratedQuests && 'rationale' in quest && quest.rationale && (
+                            <div style={{ marginTop: 6, color: S.muted, fontSize: 11, lineHeight: 1.45 }}>{quest.rationale}</div>
+                          )}
                         </div>
                       </div>
                     )
@@ -325,7 +475,7 @@ export default function ChecklistPage() {
         <footer style={{ padding: '32px 0 10px', textAlign: 'center' }}>
           <div style={{ color: S.muted, fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, lineHeight: 1.6 }}>
             QUEST AUTHORING IS SYSTEM-OWNED<br />
-            manual edit dipindahkan dari daily execution flow
+            {usingGeneratedQuests ? 'persisted AI quest batch is canonical for today' : 'legacy checklist is fallback until AI batch exists'}
           </div>
           <Link href="/" style={{ display: 'inline-block', marginTop: 16, color: S.muted, textDecoration: 'none', fontFamily: '"IBM Plex Mono", monospace', fontSize: 10 }}>
             ← SWITCH PLAYER
