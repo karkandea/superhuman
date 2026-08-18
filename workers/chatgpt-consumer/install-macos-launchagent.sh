@@ -35,6 +35,11 @@ if [[ ! -x "$CHROME_BIN" ]]; then
   exit 1
 fi
 
+if ! command -v curl >/dev/null 2>&1; then
+  echo "curl is required to validate the Supabase worker credential." >&2
+  exit 1
+fi
+
 mkdir -p "$CONFIG_DIR" "$PROFILE_DIR" "$LOG_DIR" "$HOME/Library/LaunchAgents"
 chmod 700 "$CONFIG_DIR" "$STATE_DIR" "$PROFILE_DIR" "$LOG_DIR"
 
@@ -49,16 +54,56 @@ if [[ -f "$ENV_FILE" ]]; then
   source "$ENV_FILE"
 fi
 
-if [[ -z "${SUPABASE_SECRET_KEY:-}" ]]; then
-  printf "Supabase secret/service-role key for project superhuman: "
-  IFS= read -r -s SUPABASE_SECRET_KEY
-  printf "\n"
+validate_supabase_secret() {
+  local key="$1"
+  local status
+
+  if [[ "$key" != sb_secret_* ]]; then
+    return 1
+  fi
+
+  # Feed the API key to curl through stdin config so the secret is not placed
+  # directly in the process argument list or printed to stdout/stderr.
+  status="$({ printf 'header = "apikey: %s"\n' "$key"; } | \
+    curl --config - -sS -o /dev/null -w '%{http_code}' "$SUPABASE_URL/rest/v1/" || true)"
+
+  [[ "$status" == "200" ]]
+}
+
+if [[ "${RESET_SUPABASE_KEY:-0}" == "1" ]]; then
+  unset SUPABASE_SECRET_KEY
 fi
 
-if [[ -z "$SUPABASE_SECRET_KEY" ]]; then
-  echo "A Supabase secret/service-role key is required." >&2
-  exit 1
+if [[ -n "${SUPABASE_SECRET_KEY:-}" ]] && ! validate_supabase_secret "$SUPABASE_SECRET_KEY"; then
+  printf "Stored Supabase worker key is invalid for project superhuman; requesting a replacement.\n"
+  unset SUPABASE_SECRET_KEY
 fi
+
+while [[ -z "${SUPABASE_SECRET_KEY:-}" ]]; do
+  printf "Supabase Secret API key for project superhuman (sb_secret_...): "
+  IFS= read -r -s SUPABASE_SECRET_KEY
+  printf "\n"
+
+  if [[ -z "$SUPABASE_SECRET_KEY" ]]; then
+    echo "A Supabase Secret API key is required." >&2
+    continue
+  fi
+
+  if [[ "$SUPABASE_SECRET_KEY" != sb_secret_* ]]; then
+    echo "That is not a modern Supabase Secret API key. Use the sb_secret_... key from Settings > API Keys > Secret keys." >&2
+    unset SUPABASE_SECRET_KEY
+    continue
+  fi
+
+  if ! validate_supabase_secret "$SUPABASE_SECRET_KEY"; then
+    echo "That Secret API key is not valid for project superhuman. Create/copy a secret key from the superhuman project and try again." >&2
+    unset SUPABASE_SECRET_KEY
+    continue
+  fi
+
+done
+
+printf "Supabase worker credential validated for project superhuman.\n"
 
 umask 077
 cat > "$ENV_FILE" <<EOF
