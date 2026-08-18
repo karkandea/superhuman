@@ -1,40 +1,65 @@
 # Auth + Ownership Rollout
 
-## Why this comes before Life Vault
+## Status
 
-The current production schema uses `public.users.id` as the owner key for checklist items, daily logs, time slots, weekly goals, and weekly progress. RLS is enabled, but the existing policies grant broad access to the `anon` role. That is not safe enough for private Player Knowledge.
+Production hardening is **prepared but blocked** until both legacy player emails are explicitly mapped and production mutation is approved.
+
+| Player | Existing owner UUID | Email |
+| --- | --- | --- |
+| Arkan | `f26ca205-54f6-43ce-9fa7-417b747faabe` | blocked / unknown |
+| Ais | `5d93e7e4-fcb2-479d-bab2-a8c7924c5e8d` | blocked / unknown |
+
+Do not infer either email from GitHub, account metadata, or personal context.
 
 ## Ownership model
 
-Keep the existing player UUID as the canonical owner ID.
+Keep the existing player UUID as the canonical owner ID. Create each Supabase Auth user with the **same UUID** as `public.users.id`. Existing child foreign keys then already carry the authenticated owner ID, preserving all checklist/history data without a data-copy migration.
 
-For each legacy row in `public.users`, create the corresponding Supabase Auth user with the **same UUID**. This preserves every existing foreign key and all historical data while allowing RLS to use the direct predicate `(select auth.uid()) = user_id`.
+Authorization is based on `auth.uid()`, never user-editable metadata.
 
-Do not put authorization decisions in user-editable `user_metadata`.
+## Prepared tooling
 
-## Rollout order
+- `scripts/create-auth-user.mjs`: UUID/email validation, legacy-profile preflight, collision detection, `--dry-run`, idempotent correct mapping.
+- `supabase/sql/enforce_auth_ownership.sql`: guarded FK + anon revocation + owner RLS + secure default privileges.
+- `supabase/sql/verify_security_post_rollout.sql`: read-only post-rollout report.
+- `supabase/tests/database/auth_ownership_rls.test.sql`: pgTAP own-access, cross-player denial, and unauthenticated denial.
 
-1. Keep PR #1 in draft while auth is being introduced.
-2. Create one Supabase Auth account per existing player with `scripts/create-auth-user.mjs`. The script requires a server-only secret/service-role key and explicitly reuses the existing player UUID.
-3. Configure the Supabase Auth Site URL / redirect URLs for the deployed app.
-4. Promote `supabase/sql/enforce_auth_ownership.sql` into a real timestamped migration using `supabase migration new`.
-5. Apply the migration. Its first block aborts if any legacy player is still missing a same-ID Auth account.
-6. Run Supabase security advisors and verify anon requests cannot read `users`, `checklist_items`, or `daily_logs`.
-7. Validate magic-link login, daily quest read/write, history read, and cross-player denial.
-8. Only after this passes should Life Vault / Player Knowledge tables be introduced.
+## Production rollout order
 
-## Provisioning command
+1. Receive explicit Arkan/Ais email mapping plus approval to mutate production Auth/RLS.
+2. Reconfirm target project ref `ispfhvdelglwvixaspza` (`superhuman`).
+3. Dry-run both provisioning commands, then provision both Auth users with existing UUIDs.
+4. Confirm Auth Site URL / redirect URLs for the deployed app.
+5. For this existing remote project, establish a proper CLI migration baseline with `supabase db pull` and review it.
+6. Create the real migration with `supabase migration new enforce_auth_ownership`; copy in the reviewed staged SQL.
+7. Run local `supabase db reset` and `supabase test db`.
+8. Run `supabase db push --dry-run` against the explicitly linked project; only then apply.
+9. Run the post-rollout verification SQL plus Security Advisor and Performance Advisor.
+10. Verify real magic-link login for both players, cross-player read/write denial, existing checklist/daily-quest/history regression, and unauthenticated denial.
+11. Only after PASS, apply the separately staged Life Vault schema.
+
+Never run `supabase db reset --linked` against production.
+
+## Provisioning
 
 ```bash
-SUPABASE_URL=... \
-SUPABASE_SECRET_KEY=... \
+SUPABASE_URL=... SUPABASE_SECRET_KEY=... \
+node scripts/create-auth-user.mjs --dry-run <existing-player-uuid> <player-email>
+
+SUPABASE_URL=... SUPABASE_SECRET_KEY=... \
 node scripts/create-auth-user.mjs <existing-player-uuid> <player-email>
 ```
 
-`SUPABASE_SERVICE_ROLE_KEY` is accepted as a legacy fallback. Never prefix either admin key with `NEXT_PUBLIC_`.
+`SUPABASE_SERVICE_ROLE_KEY` is a legacy fallback. Never expose an admin key with `NEXT_PUBLIC_`.
 
 ## Login behavior
 
-The root screen uses email magic links with `shouldCreateUser: false`. Unknown emails are not auto-created. After authentication, the app resolves `public.users.id = auth.users.id` and routes only to that player's username page.
+The root screen uses email magic links with `shouldCreateUser: false`. Unknown emails are not auto-created. After authentication, the app resolves `public.users.id = auth.users.id` and routes only to that player. Human-readable `[username]` routes are not an authorization boundary; RLS is.
 
-The existing `[username]` routes can remain readable by name because RLS makes every other player's `users` row invisible to the authenticated session.
+## Safety / rollback
+
+Prefer **roll-forward** over deleting Auth users or restoring public anonymous access. `users_auth_user_fkey` uses `ON DELETE RESTRICT` so an Auth identity that owns a legacy player cannot be deleted accidentally.
+
+If enforcement exposes an app regression, first verify session/redirect configuration and UUID ownership. Restoring old `anon ... true` policies would expand production access and therefore requires its own explicit security decision; never do it silently.
+
+Before any production DB mutation, capture the current policy/grant state and verify the project's available backup/recovery option.
