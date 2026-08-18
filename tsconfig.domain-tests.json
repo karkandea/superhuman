@@ -16,9 +16,11 @@
     "lib/player-understanding.ts",
     "lib/quest-system.ts",
     "lib/materiality.ts",
+    "lib/activity-orchestration.ts",
     "lib/ai/contracts.ts",
     "lib/ai/orchestrator.ts",
     "lib/ai/chatgpt-consumer-provider.ts",
-    "lib/context-retrieval.ts"
+    "lib/context-retrieval.ts",
+    "lib/supabase/progression-store.ts"
   ]
 }
