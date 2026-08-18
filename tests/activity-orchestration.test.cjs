@@ -37,9 +37,11 @@ test('UTF-8 byte accounting handles multibyte text', () => {
   assert.ok(utf8ByteLength('🔥') > 1)
 })
 
-test('materiality batch idempotency key is stable for the same activity set', () => {
+test('materiality batch idempotency key is stable and fixed-size for the same activity set', () => {
   const first = materialityBatchKey('2026-08-18', ['k3', 'k1', 'k2'])
   const second = materialityBatchKey('2026-08-18', ['k2', 'k3', 'k1', 'k1'])
+  const large = materialityBatchKey('2026-08-18', Array.from({ length: 300 }, (_, index) => `k-${index}`))
   assert.equal(first, second)
-  assert.match(first, new RegExp(`^${MATERIALITY_BATCH_SCHEMA_VERSION}:2026-08-18:`))
+  assert.match(first, new RegExp(`^${MATERIALITY_BATCH_SCHEMA_VERSION}:[a-f0-9]{64}$`))
+  assert.equal(first.length, large.length)
 })
