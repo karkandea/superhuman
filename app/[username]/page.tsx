@@ -52,7 +52,10 @@ export default function ChecklistPage() {
 
   const checkedRef = useRef<string[]>([])
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  checkedRef.current = checked
+
+  useEffect(() => {
+    checkedRef.current = checked
+  }, [checked])
 
   const quests = useMemo(() => items.map(legacyItemToQuest), [items])
   const anchorIds = useMemo(() => items.filter(item => item.anchor).map(item => item.id), [items])
