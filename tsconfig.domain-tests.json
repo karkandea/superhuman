@@ -20,6 +20,7 @@
     "lib/ai/contracts.ts",
     "lib/ai/orchestrator.ts",
     "lib/ai/chatgpt-consumer-provider.ts",
+    "lib/ai/inference-job-service.ts",
     "lib/context-retrieval.ts",
     "lib/supabase/progression-store.ts"
   ]
