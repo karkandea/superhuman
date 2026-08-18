@@ -1,11 +1,11 @@
 import { chromium } from 'playwright'
 import { createClient } from '@supabase/supabase-js'
 import { randomUUID } from 'node:crypto'
-import { spawn } from 'node:child_process'
 import { hostname } from 'node:os'
 import os from 'node:os'
 import path from 'node:path'
 import fs from 'node:fs/promises'
+import { spawn } from 'node:child_process'
 
 import { ChatGptConsumerWebProvider } from '../../lib/ai/chatgpt-consumer-provider.ts'
 import { BoundedPlayerContextRetriever } from '../../lib/context-retrieval.ts'
@@ -113,8 +113,11 @@ async function waitForAssistantResponse(page, previousCount, deadline) {
       'button:has-text("Stop generating")',
     ])
 
-    if (text && text === previousText && !stopVisible) stablePasses += 1
-    else stablePasses = 0
+    if (text && text === previousText && !stopVisible) {
+      stablePasses += 1
+    } else {
+      stablePasses = 0
+    }
 
     if (stablePasses >= 3) return text
     previousText = text
@@ -129,7 +132,7 @@ let spawnedChrome = null
 
 async function cdpReady() {
   try {
-    const response = await fetch(`${CDP_URL}/json/version`, { signal: AbortSignal.timeout(1000) })
+    const response = await fetch(`${CDP_URL}/json/version`)
     return response.ok
   } catch {
     return false
@@ -141,7 +144,7 @@ async function waitForCdp(deadline) {
     if (await cdpReady()) return
     await sleep(250)
   }
-  throw new WorkerError('browser_unavailable', `Dedicated Chrome did not expose CDP at ${CDP_URL}`, true)
+  throw new WorkerError('browser_start_failed', `Chrome CDP did not become ready at ${CDP_URL}`, true)
 }
 
 async function ensureChromeRunning() {
@@ -226,6 +229,12 @@ async function loginMode() {
   process.stdout.write(`Connected to dedicated Chrome at ${CDP_URL}\nVerifying the current ChatGPT session without reopening the profile.\n`)
   await waitForComposer(page, Date.now() + 60_000)
   process.stdout.write('ChatGPT session detected. Dedicated Chrome is ready for worker use.\n')
+
+  // The verifier connects to a Chrome process that is intentionally kept alive by
+  // the installer. A live CDP websocket would otherwise keep this short-lived
+  // Node process running forever and prevent the installer from reaching the
+  // LaunchAgent setup. Force a clean verifier exit without closing Chrome.
+  process.exit(0)
 }
 
 function createSupabase() {
@@ -392,7 +401,7 @@ async function main() {
   const client = createSupabase()
   const once = process.argv.includes('--once')
   console.log(`Superhuman ChatGPT consumer worker online as ${WORKER_ID}`)
-  console.log(`Dedicated Chrome: ${CDP_URL}; profile=${PROFILE_DIR}; headless fallback=${HEADLESS}`)
+  console.log(`ChatGPT profile: ${PROFILE_DIR}; cdp=${CDP_URL}; headless=${HEADLESS}`)
 
   do {
     const job = await claimJob(client)
