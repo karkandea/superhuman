@@ -12,8 +12,11 @@ import {
 import {
   UNDERSTANDING_TYPES,
   validateUnderstandingCandidates,
+  validateUnderstandingDelta,
   type DerivedUnderstandingCandidate,
+  type PersistedUnderstandingDeltaResult,
   type RetrievedPlayerContext,
+  type UnderstandingDeltaAction,
 } from '../player-understanding'
 import { validateGeneratedQuestCandidates, type GeneratedQuestCandidate, type PersistedDailyQuest } from '../quest-system'
 
@@ -21,6 +24,15 @@ export interface UnderstandingContextRetriever {
   retrieveForUnderstanding(input: {
     playerId: string
     knowledgeEntryIds: string[]
+    limit: number
+  }): Promise<RetrievedPlayerContext>
+}
+
+export interface UnderstandingDeltaContextRetriever extends UnderstandingContextRetriever {
+  retrieveForUnderstandingDelta(input: {
+    playerId: string
+    knowledgeEntryIds: string[]
+    date: string
     limit: number
   }): Promise<RetrievedPlayerContext>
 }
@@ -58,6 +70,13 @@ export interface UnderstandingRepository {
     audit: ModelAudit
     context: RetrievedPlayerContext
   }): Promise<void>
+  persistDelta(input: {
+    playerId: string
+    actions: UnderstandingDeltaAction[]
+    batchKey: string
+    audit: ModelAudit
+    context: RetrievedPlayerContext
+  }): Promise<PersistedUnderstandingDeltaResult>
 }
 
 export interface DailyQuestRepository {
@@ -104,6 +123,12 @@ export interface DeriveUnderstandingDependencies {
   repository: UnderstandingRepository
 }
 
+export interface DeriveUnderstandingDeltaDependencies {
+  provider: AiProvider
+  contextRetriever: UnderstandingDeltaContextRetriever
+  repository: UnderstandingRepository
+}
+
 export interface GenerateDailyQuestDependencies {
   provider: AiProvider
   contextRetriever: DailyQuestContextRetriever
@@ -117,6 +142,7 @@ export interface MaterialityDependencies {
 }
 
 const UNDERSTANDING_SCHEMA_VERSION = 'understanding.v1'
+export const UNDERSTANDING_DELTA_SCHEMA_VERSION = 'understanding-delta.v1'
 const QUEST_SCHEMA_VERSION = 'daily-quest.v1'
 export const MATERIALITY_SCHEMA_VERSION = 'materiality.v1'
 export const INTERRUPT_SCHEMA_VERSION = 'system-interrupt.v1'
@@ -141,6 +167,8 @@ function auditFrom(providerResponse: {
   }
 }
 
+// Legacy extraction remains for compatibility with historical jobs/tests. Production progression
+// uses derivePlayerUnderstandingDelta so canonical memory evolves instead of accumulating duplicates.
 export async function derivePlayerUnderstanding(
   dependencies: DeriveUnderstandingDependencies,
   input: { playerId: string; knowledgeEntryIds: string[]; limit?: number },
@@ -203,6 +231,76 @@ export async function derivePlayerUnderstanding(
   return candidates
 }
 
+export async function derivePlayerUnderstandingDelta(
+  dependencies: DeriveUnderstandingDeltaDependencies,
+  input: { playerId: string; knowledgeEntryIds: string[]; date: string; batchKey: string; limit?: number },
+): Promise<{ actions: UnderstandingDeltaAction[]; persistence: PersistedUnderstandingDeltaResult }> {
+  const provider = requireProvider(dependencies.provider)
+  if (!input.playerId) throw new Error('playerId is required')
+  if (input.knowledgeEntryIds.length === 0) throw new Error('At least one knowledge entry is required')
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date)) throw new Error('date must use YYYY-MM-DD')
+  if (!input.batchKey.trim()) throw new Error('batchKey is required')
+
+  const context = await dependencies.contextRetriever.retrieveForUnderstandingDelta({
+    playerId: input.playerId,
+    knowledgeEntryIds: [...new Set(input.knowledgeEntryIds)],
+    date: input.date,
+    limit: input.limit ?? 24,
+  })
+
+  if (context.playerId !== input.playerId) throw new Error('Retrieved context belongs to another player')
+  if (context.knowledgeEntries.length === 0) throw new Error('No player knowledge was retrieved')
+  if (!context.playerBrief) throw new Error('Canonical Player Brief is required for understanding delta')
+
+  const response = await provider.invokeStructured({
+    operation: 'derive_understanding_delta',
+    schemaVersion: UNDERSTANDING_DELTA_SCHEMA_VERSION,
+    instructions: [
+      'Treat playerBrief as the canonical current state of this player. Do not reconstruct identity from scratch and do not treat conversation history as memory.',
+      'Compare only the new knowledgeEntries against playerBrief, active signals, recent quest results, and active quests, then return the smallest evidence-backed state delta.',
+      'Valid actions are create, update, resolve, supersede. Return actions: [] when the new batch does not materially change persistent player understanding.',
+      'Use create only for genuinely new persistent understanding. Use update when an existing understanding is still the same concept but has evolved. Use resolve when an active understanding is no longer true/relevant. Use supersede when new evidence replaces or contradicts an active understanding.',
+      `For create/update/supersede, type must be exactly one of: ${UNDERSTANDING_TYPES.join(', ')}.`,
+      'targetUnderstandingId may only reference playerBrief.activeUnderstandingIds. create must not target an existing understanding.',
+      'Every action must cite sourceKnowledgeEntryIds from knowledgeEntries only and include a concise reason. Never infer a state change without evidence from the new activity batch.',
+      'Do not create duplicate understanding just because wording differs. Prefer no-op or update when the current Player Brief already represents the same fact.',
+    ].join(' '),
+    context,
+    responseContract: {
+      type: 'object',
+      required: ['actions'],
+      actions: [{
+        action: ['create', 'update', 'resolve', 'supersede'],
+        targetUnderstandingId: 'required for update/resolve/supersede; id from playerBrief.activeUnderstandingIds only; forbidden for create',
+        type: [...UNDERSTANDING_TYPES, 'required for create/update/supersede; omit for resolve'],
+        summary: 'non-empty string required for create/update/supersede; omit for resolve',
+        details: 'object required for create/update/supersede; omit for resolve',
+        confidence: 'number 0..1 required for create/update/supersede; omit for resolve',
+        importance: 'integer 1..5 required for create/update/supersede; omit for resolve',
+        sourceKnowledgeEntryIds: 'non-empty array of ids from context.knowledgeEntries only',
+        evidenceExcerpt: 'optional string copied or tightly paraphrased from source evidence',
+        reason: 'non-empty concise reason for this state transition',
+      }],
+    },
+  })
+
+  const actions = validateUnderstandingDelta(
+    response.output,
+    new Set(context.knowledgeEntries.map((entry) => entry.id)),
+    new Set(context.playerBrief.activeUnderstandingIds),
+  )
+
+  const persistence = await dependencies.repository.persistDelta({
+    playerId: input.playerId,
+    actions,
+    batchKey: input.batchKey,
+    audit: auditFrom(response, UNDERSTANDING_DELTA_SCHEMA_VERSION),
+    context,
+  })
+
+  return { actions, persistence }
+}
+
 export async function generateDailyQuests(
   dependencies: GenerateDailyQuestDependencies,
   input: { playerId: string; date: string; limit?: number },
@@ -223,6 +321,7 @@ export async function generateDailyQuests(
   })
 
   if (context.playerId !== input.playerId) throw new Error('Retrieved context belongs to another player')
+  if (!context.playerBrief) throw new Error('Canonical Player Brief is required for Daily Quest generation')
   if (context.signals.length === 0) {
     throw new Error('Daily quests require evidence-backed player signals; generation stopped')
   }
@@ -231,7 +330,8 @@ export async function generateDailyQuests(
     operation: 'generate_daily_quests',
     schemaVersion: QUEST_SCHEMA_VERSION,
     instructions: [
-      'Generate adaptive daily quests only from the retrieved player signals and context.',
+      'Use playerBrief as the canonical current player state; conversation history is not memory.',
+      'Generate adaptive daily quests only from the retrieved player signals and bounded execution context.',
       'Every quest must cite sourceSignalIds and explain its rationale. Never generate random filler tasks.',
       'Use only the canonical enum values provided in RESPONSE_CONTRACT for category, kind, and difficulty. Do not invent alternative labels.',
     ].join(' '),
@@ -290,11 +390,13 @@ export async function assessKnowledgeMateriality(
     now: input.now,
   })
   if (context.playerId !== input.playerId) throw new Error('Materiality context belongs to another player')
+  if (!context.playerBrief) throw new Error('Canonical Player Brief is required for materiality assessment')
 
   const response = await provider.invokeStructured({
     operation: 'assess_materiality',
     schemaVersion: MATERIALITY_SCHEMA_VERSION,
     instructions: [
+      'Use playerBrief as the canonical current player state; conversation history is not memory.',
       'Decide whether this newly understood update is important AND time-sensitive enough to change today’s plan.',
       'Daily Quest is stable by default. Ordinary journaling, background context, mild mood changes, and long-term insights should usually be non-material.',
       'Material changes include same-day deadline/schedule shifts, emergencies, major health or relationship events, expiring opportunities, or facts that make an active quest unsafe or irrelevant.',
@@ -362,11 +464,13 @@ export async function generateSystemInterrupt(
     limit: input.limit ?? 24,
     now: input.now,
   })
+  if (!context.playerBrief) throw new Error('Canonical Player Brief is required for System Interrupt generation')
 
   const response = await provider.invokeStructured({
     operation: 'generate_system_interrupt',
     schemaVersion: INTERRUPT_SCHEMA_VERSION,
     instructions: [
+      'Use playerBrief as the canonical current player state; conversation history is not memory.',
       'Create the smallest explicit revision needed because of the persisted material update. Do not regenerate the entire day.',
       'Supported actions are add, replace, defer, cancel, reprioritize. Prefer defer over cancel when the quest remains valid later.',
       'Never target completed or historical quests; only target ids present in activeQuests. If activeQuests is empty, the only valid mutation is add.',
