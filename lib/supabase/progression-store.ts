@@ -2,11 +2,91 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { PlayerContextStore } from '../context-retrieval'
 import type { MaterialityRepository, UnderstandingRepository, DailyQuestRepository } from '../ai/orchestrator'
 import type { ActiveQuestContext, PersistedMaterialityAssessment, PersistedQuestInterrupt } from '../materiality'
-import type { PlayerSignal, RecentQuestResult } from '../player-understanding'
+import type { PersistedUnderstandingDeltaResult, PlayerBriefSnapshot, PlayerSignal, RecentQuestResult } from '../player-understanding'
 import type { PersistedDailyQuest, QuestSource, QuestStatus } from '../quest-system'
 
 function fail(error: { message: string } | null, operation: string) {
   if (error) throw new Error(`${operation}: ${error.message}`)
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+}
+
+function mapPlayerBrief(row: Record<string, unknown>): PlayerBriefSnapshot {
+  const brief = asRecord(row.brief)
+  const player = asRecord(brief.player)
+  const sections = asRecord(brief.sections)
+  const counts = asRecord(brief.counts)
+
+  const mapUnderstanding = (value: unknown) => Array.isArray(value) ? value.map((item) => {
+    const object = asRecord(item)
+    return {
+      id: String(object.id),
+      ...(object.type ? { type: object.type as PlayerBriefSnapshot['highlights'][number]['type'] } : {}),
+      summary: String(object.summary ?? ''),
+      ...(object.details && typeof object.details === 'object' && !Array.isArray(object.details) ? { details: object.details as Record<string, unknown> } : {}),
+      confidence: Number(object.confidence ?? 0),
+      importance: Number(object.importance ?? 3),
+      ...(object.firstObservedAt ? { firstObservedAt: String(object.firstObservedAt) } : {}),
+      lastObservedAt: String(object.lastObservedAt ?? row.created_at ?? ''),
+    }
+  }) : []
+
+  const activeSignals = Array.isArray(brief.activeSignals) ? brief.activeSignals.map((item) => {
+    const object = asRecord(item)
+    return {
+      id: String(object.id),
+      type: object.type as PlayerBriefSnapshot['activeSignals'][number]['type'],
+      summary: String(object.summary ?? ''),
+      importance: Number(object.importance ?? 3),
+      confidence: Number(object.confidence ?? 0),
+      observedAt: String(object.observedAt ?? row.created_at ?? ''),
+      ...(object.sourceUnderstandingId ? { sourceUnderstandingId: String(object.sourceUnderstandingId) } : {}),
+    }
+  }) : []
+
+  return {
+    id: String(row.id),
+    version: Number(row.version),
+    schemaVersion: String(row.schema_version ?? brief.schemaVersion ?? 'player-brief.v1'),
+    reason: String(row.reason ?? 'state_refresh'),
+    createdAt: String(row.created_at),
+    generatedAt: String(brief.generatedAt ?? row.created_at),
+    player: {
+      id: String(player.id),
+      name: String(player.name ?? ''),
+      timezone: String(player.timezone ?? 'UTC'),
+    },
+    activeUnderstandingIds: Array.isArray(brief.activeUnderstandingIds) ? brief.activeUnderstandingIds.map(String) : [],
+    highlights: mapUnderstanding(brief.highlights),
+    sections: {
+      goals: mapUnderstanding(sections.goals),
+      obstacles: mapUnderstanding(sections.obstacles),
+      opportunities: mapUnderstanding(sections.opportunities),
+      constraints: mapUnderstanding(sections.constraints),
+      preferences: mapUnderstanding(sections.preferences),
+      relationships: mapUnderstanding(sections.relationships),
+      events: mapUnderstanding(sections.events),
+      priorities: mapUnderstanding(sections.priorities),
+    },
+    activeSignals,
+    counts: {
+      activeUnderstanding: Number(counts.activeUnderstanding ?? 0),
+      activeSignals: Number(counts.activeSignals ?? 0),
+    },
+  }
+}
+
+function retrievalWithBrief(context: { retrieval: Record<string, unknown>; playerBrief?: PlayerBriefSnapshot }) {
+  return {
+    ...context.retrieval,
+    ...(context.playerBrief ? {
+      playerBriefId: context.playerBrief.id,
+      playerBriefVersion: context.playerBrief.version,
+      playerBriefSchemaVersion: context.playerBrief.schemaVersion,
+    } : {}),
+  }
 }
 
 export function createSupabasePlayerContextStore(client: SupabaseClient): PlayerContextStore {
@@ -105,6 +185,17 @@ export function createSupabasePlayerContextStore(client: SupabaseClient): Player
       fail(error, 'load player timezone')
       return data?.timezone || 'UTC'
     },
+
+    async loadCurrentPlayerBrief(playerId) {
+      const { data, error } = await client
+        .from('player_briefs')
+        .select('id,user_id,version,schema_version,brief,is_current,reason,created_at')
+        .eq('user_id', playerId)
+        .eq('is_current', true)
+        .maybeSingle()
+      fail(error, 'load current player brief')
+      return data ? mapPlayerBrief(data as Record<string, unknown>) : null
+    },
   }
 }
 
@@ -123,9 +214,40 @@ export function createSupabaseUnderstandingRepository(client: SupabaseClient): U
         p_request_id: audit.requestId ?? null,
         p_version: audit.schemaVersion,
         p_generated_at: context.generatedAt,
-        p_retrieval: context.retrieval,
+        p_retrieval: retrievalWithBrief(context),
       })
       fail(error, 'persist derived understanding')
+    },
+
+    async persistDelta({ playerId, actions, batchKey, audit, context }) {
+      if (!context.playerBrief) throw new Error('persist understanding delta requires canonical Player Brief')
+      const { data, error } = await client.rpc('persist_understanding_delta', {
+        p_user_id: playerId,
+        p_actions: actions,
+        p_knowledge_entry_ids: context.knowledgeEntries.map((entry) => entry.id),
+        p_signal_ids: context.signals.map((signal) => signal.id),
+        p_quest_result_ids: context.recentQuestResults.map((result) => result.id),
+        p_active_quest_ids: (context.activeQuests ?? []).map((quest) => quest.id),
+        p_player_brief_id: context.playerBrief.id,
+        p_batch_key: batchKey,
+        p_provider_id: audit.providerId,
+        p_model_id: audit.modelId,
+        p_request_id: audit.requestId ?? null,
+        p_version: audit.schemaVersion,
+        p_generated_at: context.generatedAt,
+        p_retrieval: retrievalWithBrief(context),
+      })
+      fail(error, 'persist understanding delta')
+      if (!data || typeof data !== 'object') throw new Error('persist understanding delta returned no result')
+      const row = data as Record<string, unknown>
+      return {
+        deltaBatchId: String(row.deltaBatchId),
+        actionCount: Number(row.actionCount ?? 0),
+        playerBriefId: String(row.playerBriefId),
+        playerBriefVersion: Number(row.playerBriefVersion),
+        playerBriefChanged: Boolean(row.playerBriefChanged),
+        source: row.source === 'existing' ? 'existing' : 'persisted',
+      } satisfies PersistedUnderstandingDeltaResult
     },
   }
 }
@@ -186,7 +308,7 @@ export function createSupabaseDailyQuestRepository(client: SupabaseClient): Dail
         p_request_id: audit.requestId ?? null,
         p_version: audit.schemaVersion,
         p_generated_at: context.generatedAt,
-        p_retrieval: context.retrieval,
+        p_retrieval: retrievalWithBrief(context),
       })
       fail(error, 'persist daily quest batch')
 
@@ -258,7 +380,7 @@ export function createSupabaseMaterialityRepository(client: SupabaseClient): Mat
         p_generated_at: context.generatedAt,
         p_player_timezone: context.playerTimezone,
         p_local_datetime: context.localDateTime,
-        p_retrieval: context.retrieval,
+        p_retrieval: retrievalWithBrief(context),
       })
       fail(error, 'persist materiality assessment')
       if (!data || typeof data !== 'object') throw new Error('persist materiality assessment returned no assessment')
@@ -288,7 +410,7 @@ export function createSupabaseMaterialityRepository(client: SupabaseClient): Mat
         p_request_id: audit.requestId ?? null,
         p_version: audit.schemaVersion,
         p_generated_at: context.generatedAt,
-        p_retrieval: context.retrieval,
+        p_retrieval: retrievalWithBrief(context),
         p_apply: apply,
       })
       fail(error, 'persist quest interrupt')
