@@ -160,6 +160,7 @@ export interface ProgressionIntelligenceStore {
     playerId: string
     date: string
     progressionTargetId: string
+    noQuestReason: string
     audit: ModelAudit
     retrieval: Record<string, unknown>
   }): Promise<void>
@@ -301,11 +302,12 @@ export function createSupabaseProgressionIntelligenceStore(client: SupabaseClien
       fail(error, 'attach quest intelligence metadata')
     },
 
-    async persistNoQuestPlan({ playerId, date, progressionTargetId, audit, retrieval }) {
+    async persistNoQuestPlan({ playerId, date, progressionTargetId, noQuestReason, audit, retrieval }) {
       const { error } = await client.rpc('persist_no_quest_plan', {
         p_user_id: playerId,
         p_quest_date: date,
         p_progression_target_id: progressionTargetId,
+        p_no_quest_reason: noQuestReason,
         p_provider_id: audit.providerId,
         p_model_id: audit.modelId,
         p_request_id: audit.requestId ?? null,
