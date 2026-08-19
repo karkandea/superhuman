@@ -187,5 +187,6 @@ test('worker and Today page preserve the daily lifecycle boundary', () => {
   assert.match(checkin, /SYSTEM CHECK-IN/)
   assert.match(checkin, /NO, NORMAL DAY/)
   assert.match(checkin, /TELL SYSTEM…/)
-  assert.match(today, /questReady && \(\s*<div id="update-system"/)
+  assert.match(today, /dailyPlanReady && \(\s*<div id="update-system"/)
+  assert.match(today, /SYSTEM DECISION · NO QUEST NEEDED/)
 })

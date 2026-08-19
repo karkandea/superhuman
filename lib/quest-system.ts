@@ -1,4 +1,5 @@
 import type { Category } from './checklist-data'
+import type { QuestExecutionContract, QuestStrategicChain } from './progression-intelligence'
 
 export type QuestKind = 'main' | 'side' | 'maintenance' | 'bonus'
 export type QuestSource = 'system' | 'legacy' | 'ai'
@@ -25,6 +26,9 @@ export interface GeneratedQuestCandidate {
   xp: number
   rationale: string
   sourceSignalIds: string[]
+  candidateId?: string
+  strategicChain?: QuestStrategicChain
+  executionContract?: QuestExecutionContract
 }
 
 export interface PersistedDailyQuest extends GeneratedQuestCandidate {
@@ -34,6 +38,7 @@ export interface PersistedDailyQuest extends GeneratedQuestCandidate {
   questDate: string
   source: QuestSource
   status: QuestStatus
+  progressionTargetId?: string
   revision?: number
   supersedesQuestId?: string
   interruptId?: string
@@ -136,6 +141,9 @@ export function validateGeneratedQuestCandidates(
       xp: Number(xp),
       rationale,
       sourceSignalIds: sourceIds(candidate.sourceSignalIds, index, allowedSignalIds),
+      ...(typeof candidate.candidateId === 'string' && candidate.candidateId.trim() ? { candidateId: candidate.candidateId.trim() } : {}),
+      ...(isRecord(candidate.strategicChain) ? { strategicChain: candidate.strategicChain as unknown as QuestStrategicChain } : {}),
+      ...(isRecord(candidate.executionContract) ? { executionContract: candidate.executionContract as unknown as QuestExecutionContract } : {}),
     }
   })
 }

@@ -13,19 +13,25 @@
     "lib/checklist-data.ts",
     "lib/daily-context.ts",
     "lib/daily-context-service.ts",
+    "lib/daily-plan-service.ts",
     "lib/player-knowledge.ts",
     "lib/player-knowledge-service.ts",
     "lib/player-understanding.ts",
+    "lib/progression-intelligence.ts",
     "lib/quest-system.ts",
     "lib/quest-policy.ts",
+    "lib/quest-intelligence-policy.ts",
     "lib/materiality.ts",
     "lib/activity-orchestration.ts",
     "lib/system-ux.ts",
     "lib/ai/contracts.ts",
     "lib/ai/orchestrator.ts",
+    "lib/ai/progression-intelligence.ts",
+    "lib/ai/daily-quest-intelligence.ts",
     "lib/ai/chatgpt-consumer-provider.ts",
     "lib/ai/inference-job-service.ts",
     "lib/context-retrieval.ts",
-    "lib/supabase/progression-store.ts"
+    "lib/supabase/progression-store.ts",
+    "lib/supabase/progression-intelligence-store.ts"
   ]
 }
