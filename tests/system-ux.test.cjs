@@ -50,6 +50,10 @@ test('text plus attachment stays below the bounded reasoning payload budget', ()
     /note plus attached file under 22 KB total/,
   )
   assert.doesNotThrow(() => composeKnowledgeText('short note', 'x'.repeat(18 * 1024), 'context.txt'))
+  assert.throws(
+    () => composeKnowledgeText('short note', '🚀'.repeat(6000), 'context.txt'),
+    /note plus attached file under 22 KB total/,
+  )
 })
 
 test('queued progression is presented as collecting updates', () => {
