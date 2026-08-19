@@ -327,9 +327,11 @@ export default function DailyQuestPage() {
 
           <SystemInterruptFeed playerId={userId} date={todayStr()} onApplied={refreshTodayQuests} />
 
-          <div style={{ marginTop: 17 }}>
-            <UpdateSystemComposer variant="compact" onSaved={handleSystemUpdateSaved} />
-          </div>
+          {!questReady && (
+            <div id="update-system" style={{ marginTop: 17, scrollMarginTop: 16 }}>
+              <UpdateSystemComposer variant="compact" onSaved={handleSystemUpdateSaved} />
+            </div>
+          )}
 
           <div aria-live="polite" style={{ height: 15, marginTop: 7, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, color: saveStatus === 'failed' ? S.red : saveStatus === 'saved' ? S.amber : S.muted, opacity: saveStatus === 'idle' ? 0 : 1 }}>
             {saveStatus === 'saving' ? 'SYNCING QUEST…' : saveStatus === 'saved' ? '✓ QUEST SAVED' : saveStatus === 'failed' ? 'QUEST UPDATE FAILED · NOTHING CHANGED' : ''}
@@ -354,7 +356,7 @@ export default function DailyQuestPage() {
                 <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.amber, fontSize: 9, letterSpacing: '.14em' }}>TODAY’S PLAN</div>
                 <h2 style={{ margin: '5px 0 0', fontFamily: '"Space Grotesk", sans-serif', fontSize: 20, letterSpacing: '-.025em' }}>{completed}/{total} complete</h2>
               </div>
-              <div style={{ color: S.muted2, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5 }}>STABLE BY DEFAULT</div>
+              <a href="#update-system" style={{ color: S.gold, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, textDecoration: 'none', letterSpacing: '.06em', whiteSpace: 'nowrap' }}>UPDATE SYSTEM ↓</a>
             </div>
 
             {CATEGORY_ORDER.map(category => {
@@ -421,6 +423,12 @@ export default function DailyQuestPage() {
               ))}
             </div>
           </section>
+        )}
+
+        {questReady && (
+          <div id="update-system" style={{ marginTop: 27, scrollMarginTop: 16 }}>
+            <UpdateSystemComposer variant="compact" onSaved={handleSystemUpdateSaved} />
+          </div>
         )}
 
         <footer style={{ padding: '32px 0 10px', textAlign: 'center' }}>
