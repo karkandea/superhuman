@@ -12,7 +12,7 @@ export interface ContextKnowledgeEntry {
 export interface PlayerContextStore {
   loadKnowledgeEntries(playerId: string, ids: string[]): Promise<ContextKnowledgeEntry[]>
   loadSignals(playerId: string, limit: number): Promise<PlayerSignal[]>
-  loadRecentQuestResults(playerId: string, limit: number): Promise<RecentQuestResult[]>
+  loadRecentQuestResults(playerId: string, limit: number, beforeDate?: string): Promise<RecentQuestResult[]>
   loadActiveQuests(playerId: string, date: string): Promise<ActiveQuestContext[]>
   loadPlayerTimezone(playerId: string): Promise<string>
   loadCurrentPlayerBrief(playerId: string): Promise<PlayerBriefSnapshot | null>
@@ -75,7 +75,7 @@ export class BoundedPlayerContextRetriever {
     const [knowledgeEntries, signals, recentQuestResults, activeQuests, playerBrief] = await Promise.all([
       this.store.loadKnowledgeEntries(input.playerId, ids),
       this.store.loadSignals(input.playerId, Math.min(12, Math.max(8, input.limit))),
-      this.store.loadRecentQuestResults(input.playerId, Math.min(8, Math.max(1, input.limit))),
+      this.store.loadRecentQuestResults(input.playerId, Math.min(8, Math.max(1, input.limit)), input.date),
       this.store.loadActiveQuests(input.playerId, input.date),
       this.store.loadCurrentPlayerBrief(input.playerId),
     ])
@@ -104,7 +104,7 @@ export class BoundedPlayerContextRetriever {
   }): Promise<RetrievedPlayerContext> {
     const [signals, recentQuestResults, playerBrief, dailyContext] = await Promise.all([
       this.store.loadSignals(input.playerId, input.limit),
-      this.store.loadRecentQuestResults(input.playerId, Math.min(12, input.limit)),
+      this.store.loadRecentQuestResults(input.playerId, Math.min(12, input.limit), input.date),
       this.store.loadCurrentPlayerBrief(input.playerId),
       this.store.loadDailyContext(input.playerId, input.date),
     ])
@@ -139,7 +139,7 @@ export class BoundedPlayerContextRetriever {
     const [knowledgeEntries, signals, recentQuestResults, activeQuests, timezone, playerBrief] = await Promise.all([
       this.store.loadKnowledgeEntries(input.playerId, [input.knowledgeEntryId]),
       this.store.loadSignals(input.playerId, input.limit),
-      this.store.loadRecentQuestResults(input.playerId, Math.min(8, input.limit)),
+      this.store.loadRecentQuestResults(input.playerId, Math.min(8, input.limit), input.date),
       this.store.loadActiveQuests(input.playerId, input.date),
       this.store.loadPlayerTimezone(input.playerId),
       this.store.loadCurrentPlayerBrief(input.playerId),
