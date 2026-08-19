@@ -201,7 +201,7 @@ function classifyError(error) {
   if (/evidence-backed player signals|No player knowledge was retrieved|At least one knowledge entry/.test(message)) {
     return new WorkerError('insufficient_context', message, false)
   }
-  if (/correlation mismatch|operation mismatch|schema version mismatch|malformed JSON|parseable JSON|sourceSignalIds|sourceKnowledgeEntryIds|targetUnderstandingId|outside retrieved context|outside current Player Brief|Understanding delta|Materiality|materiality|System Interrupt|Interrupt action|interrupt plan|affectedQuestIds|urgency|recommendedAction/.test(message)) {
+  if (/correlation mismatch|operation mismatch|schema version mismatch|malformed JSON|parseable JSON|sourceSignalIds|sourceKnowledgeEntryIds|targetUnderstandingId|outside retrieved context|outside current Player Brief|Understanding delta|Materiality|materiality|System Interrupt|Interrupt action|interrupt plan|affectedQuestIds|urgency|recommendedAction|Quest Policy|Quest candidate|Quest selection|Quest portfolio/.test(message)) {
     return new WorkerError('model_output_invalid', message, true)
   }
   if (/Player Brief is missing|Player brief changed before understanding delta persistence/.test(message)) {
@@ -363,6 +363,33 @@ async function processJob(client, job) {
       playerId: job.user_id,
       date: job.target_date,
     })
+
+    if (generated.source === 'awaiting_context') {
+      const refs = provider.consumeConversationRefs()
+      await completeJob(client, job, 'succeeded', refs, {
+        derivedUnderstandingCount: understandingDeltaActionCount,
+        understandingDeltaActionCount,
+        playerBriefChangedCount,
+        noOpUnderstandingBatchCount,
+        latestPlayerBriefVersion,
+        processedKnowledgeCount,
+        knowledgeBatchCount,
+        knowledgeBytes,
+        knowledgeBatchBudgetBytes: KNOWLEDGE_BATCH_BUDGET_BYTES,
+        materialityAssessmentCount: materialityCount,
+        materialityBatchEntryCount,
+        materialityNoChangeCount: noChangeCount,
+        suggestedInterruptCount,
+        appliedInterruptCount,
+        questCount: 0,
+        questSource: 'awaiting_context',
+        awaitingDailyContext: true,
+        targetDate: job.target_date,
+        windowCutoffAt: cutoff,
+      })
+      console.log(`[job ${job.id}] succeeded: player memory updated; awaiting Daily Context before first quest generation`)
+      return
+    }
 
     if (!hadDailyPlan && generated.quests.length > 0) {
       await markBaselineKnowledgeNotRequired(client, job.user_id, cutoff)
