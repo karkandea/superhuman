@@ -1,4 +1,4 @@
-name: Canonicalize stale package lock once
+name: Finalize canonical package lock
 
 on:
   pull_request:
@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   canonicalize:
-    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'agent/player-brief-production-complete'
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'agent/player-brief-finalize'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,9 +19,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
       - name: Regenerate lock with npm
         run: npm install --package-lock-only --ignore-scripts
+      - name: Verify exact canonical hash
+        shell: bash
+        run: |
+          actual="$(sha256sum package-lock.json | awk '{print $1}')"
+          expected="fa6613b469241ee765a3c1e45cd3798d93e5f34323a35f38f2adfc3736002e38"
+          echo "expected=$expected"
+          echo "actual=$actual"
+          test "$actual" = "$expected"
       - name: Verify canonical clean install
         run: npm ci
       - name: Lint
@@ -36,13 +43,14 @@ jobs:
           NEXT_PUBLIC_SUPABASE_ANON_KEY: build-only-placeholder
         run: npm run build
       - name: Commit generated lock to PR branch
+        shell: bash
         run: |
           if git diff --quiet -- package-lock.json; then
             echo 'package-lock.json already canonical'
             exit 0
           fi
-          git config user.name 'Arkan'
-          git config user.email '98953892+karkandea@users.noreply.github.com'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add package-lock.json
-          git commit -m 'chore: regenerate package lock with npm'
+          git commit -m 'fix: repair root npm lockfile'
           git push origin HEAD:${{ github.event.pull_request.head.ref }}
