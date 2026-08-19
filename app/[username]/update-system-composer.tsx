@@ -109,7 +109,13 @@ export default function UpdateSystemComposer({
         text: 'Saved to Life Vault. System will collect nearby updates before processing.',
       })
       if (variant === 'compact') setExpanded(false)
-      await onSaved?.(entryId)
+
+      try {
+        await onSaved?.(entryId)
+      } catch {
+        // The write already succeeded. A refresh failure must never imply that the player
+        // should submit the same update again; freshness polling will reconcile later.
+      }
     } catch (error) {
       setNotice({ tone: 'error', text: error instanceof Error ? error.message : 'Could not save this update' })
     } finally {
