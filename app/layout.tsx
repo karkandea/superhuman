@@ -2,8 +2,8 @@ import type { Metadata } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Superhuman Checklist',
-  description: 'Daily habits tracker',
+  title: 'Superhuman — Daily Quest System',
+  description: 'Your personal progression System for daily quests, Life Vault updates, and adaptive priorities.',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
