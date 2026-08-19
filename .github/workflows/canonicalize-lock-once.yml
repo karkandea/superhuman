@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   canonicalize:
-    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'agent/player-brief-finalize'
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'agent/player-brief-finalize-v2'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
