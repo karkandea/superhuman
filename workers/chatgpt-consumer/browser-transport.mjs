@@ -202,14 +202,25 @@ export class PlaywrightChatGptTransport {
 }
 
 export async function loginMode() {
-  const context = await chatGptContext()
-  let page = context.pages().find(candidate => candidate.url().includes('chatgpt.com'))
-  if (!page) page = await context.newPage()
-  if (!page.url().includes('chatgpt.com')) await page.goto(CHATGPT_URL, { waitUntil: 'domcontentloaded' })
+  const browser = await connectBrowser()
 
-  process.stdout.write(`Connected to dedicated Chrome at ${CDP_URL}\nVerifying the current ChatGPT session without reopening the profile.\n`)
-  await waitForComposer(page, Date.now() + 60_000)
-  process.stdout.write('ChatGPT session detected. Dedicated Chrome is ready for worker use.\n')
+  try {
+    const context = browser.contexts()[0]
+    if (!context) throw new WorkerError('browser_context_missing', 'Dedicated Chrome has no browser context', true)
+
+    let page = context.pages().find(candidate => candidate.url().includes('chatgpt.com'))
+    if (!page) page = await context.newPage()
+    if (!page.url().includes('chatgpt.com')) await page.goto(CHATGPT_URL, { waitUntil: 'domcontentloaded' })
+
+    process.stdout.write(`Connected to dedicated Chrome at ${CDP_URL}\nVerifying the current ChatGPT session without reopening the profile.\n`)
+    await waitForComposer(page, Date.now() + 60_000)
+    process.stdout.write('ChatGPT session detected. Dedicated Chrome is ready for worker use.\n')
+  } finally {
+    // connectOverCDP attaches to an externally managed Chrome. Closing this connected
+    // Browser object disconnects Playwright without terminating the persistent Chrome process.
+    await browser.close().catch(() => {})
+    connectedBrowser = null
+  }
 }
 
 export function browserRuntimeSummary() {
