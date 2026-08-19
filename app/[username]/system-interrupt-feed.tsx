@@ -37,12 +37,15 @@ export default function SystemInterruptFeed({
 
   useEffect(() => {
     if (!playerId) return
-    try {
-      const parsed = JSON.parse(window.localStorage.getItem(seenStorageKey(playerId)) ?? '[]')
-      setSeenAppliedIds(new Set(Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === 'string') : []))
-    } catch {
-      setSeenAppliedIds(new Set())
-    }
+    const first = window.setTimeout(() => {
+      try {
+        const parsed = JSON.parse(window.localStorage.getItem(seenStorageKey(playerId)) ?? '[]')
+        setSeenAppliedIds(new Set(Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === 'string') : []))
+      } catch {
+        setSeenAppliedIds(new Set())
+      }
+    }, 0)
+    return () => window.clearTimeout(first)
   }, [playerId])
 
   const refresh = useCallback(async () => {
