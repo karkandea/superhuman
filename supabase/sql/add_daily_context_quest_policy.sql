@@ -167,7 +167,8 @@ begin
         when v_has_quests and not v_has_pending_progression then 'succeeded'
         else 'queued' end,
       rerun_requested = case
-        when public.ai_inference_jobs.status='running' and v_has_pending_progression then true
+        when public.ai_inference_jobs.status='running'
+          and (v_has_pending_progression or (not v_has_quests and v_has_daily_context)) then true
         else false end,
       correlation_id = case
         when public.ai_inference_jobs.status='running' then public.ai_inference_jobs.correlation_id
