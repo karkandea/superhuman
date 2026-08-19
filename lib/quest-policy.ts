@@ -1,9 +1,16 @@
+import {
+  type ProgressionMapSnapshot,
+  type ProgressionTargetSnapshot,
+  type QuestExecutionContract,
+  type QuestFeasibilityAssessment,
+  type QuestStrategicChain,
+} from './progression-intelligence'
 import { validateGeneratedQuestCandidates, type GeneratedQuestCandidate, type QuestKind } from './quest-system'
 
-export const QUEST_POLICY_VERSION = 'quest-policy.v1'
+export const QUEST_POLICY_VERSION = 'quest-policy.v2'
 export const QUEST_CANDIDATE_MIN = 8
 export const QUEST_CANDIDATE_MAX = 15
-export const QUEST_SELECTION_MIN = 1
+export const QUEST_SELECTION_MIN = 0
 export const QUEST_SELECTION_MAX = 5
 
 export const QUEST_SCORE_DIMENSIONS = [
@@ -28,6 +35,9 @@ export interface QuestPolicyCandidate {
   xp: number
   rationale: string
   sourceSignalIds: string[]
+  strategicChain: QuestStrategicChain
+  feasibility: QuestFeasibilityAssessment
+  executionContract: QuestExecutionContract
   scores: QuestPolicyScores
 }
 
@@ -42,16 +52,28 @@ export interface QuestPolicyDecision {
   candidates: QuestPolicyCandidate[]
   selections: QuestPolicySelection[]
   quests: GeneratedQuestCandidate[]
+  noQuestReason?: string
+}
+
+export interface QuestPolicyValidationContext {
+  progressionMap: ProgressionMapSnapshot
+  progressionTarget: ProgressionTargetSnapshot
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function nonEmptyString(value: unknown, field: string) {
+function nonEmptyString(value: unknown, field: string, max = 1600) {
   const text = typeof value === 'string' ? value.trim() : ''
   if (!text) throw new Error(`${field} must be a non-empty string`)
+  if (text.length > max) throw new Error(`${field} is too long`)
   return text
+}
+
+function optionalString(value: unknown, field: string) {
+  if (value === undefined || value === null || value === '') return undefined
+  return nonEmptyString(value, field, 240)
 }
 
 function signalIds(value: unknown, field: string, allowedSignalIds: ReadonlySet<string>) {
@@ -76,20 +98,92 @@ function scores(value: unknown, index: number): QuestPolicyScores {
   return result
 }
 
+function executionContract(value: unknown, index: number): QuestExecutionContract {
+  if (!isRecord(value)) throw new Error(`Quest candidate ${index} requires an executionContract`)
+  return {
+    action: nonEmptyString(value.action, `Quest candidate ${index} execution action`),
+    completionCondition: nonEmptyString(value.completionCondition, `Quest candidate ${index} completion condition`),
+    appropriateContext: nonEmptyString(value.appropriateContext, `Quest candidate ${index} appropriate context`),
+    dose: nonEmptyString(value.dose, `Quest candidate ${index} dose`, 500),
+  }
+}
+
+function feasibility(value: unknown, index: number): QuestFeasibilityAssessment {
+  if (!isRecord(value)) throw new Error(`Quest candidate ${index} requires feasibility assessment`)
+  if (typeof value.feasibleToday !== 'boolean') throw new Error(`Quest candidate ${index} feasibility requires feasibleToday`)
+  if (!['low', 'medium', 'high', 'unknown'].includes(String(value.receptivity))) {
+    throw new Error(`Quest candidate ${index} has invalid receptivity`)
+  }
+  if (!Number.isInteger(value.estimatedMinutes) || Number(value.estimatedMinutes) < 1 || Number(value.estimatedMinutes) > 480) {
+    throw new Error(`Quest candidate ${index} estimatedMinutes must be an integer from 1 to 480`)
+  }
+  return {
+    feasibleToday: value.feasibleToday,
+    receptivity: value.receptivity as QuestFeasibilityAssessment['receptivity'],
+    estimatedMinutes: Number(value.estimatedMinutes),
+    reason: nonEmptyString(value.reason, `Quest candidate ${index} feasibility reason`),
+  }
+}
+
+function strategicChain(
+  value: unknown,
+  index: number,
+  validation: QuestPolicyValidationContext,
+): QuestStrategicChain {
+  if (!isRecord(value)) throw new Error(`Quest candidate ${index} requires a strategicChain`)
+  if (!['bottleneck', 'opportunity', 'maintenance'].includes(String(value.driverType))) {
+    throw new Error(`Quest candidate ${index} has invalid strategic driver type`)
+  }
+  const driverType = value.driverType as QuestStrategicChain['driverType']
+  const goalId = optionalString(value.goalId, `Quest candidate ${index} goalId`)
+  const proximalOutcomeId = optionalString(value.proximalOutcomeId, `Quest candidate ${index} proximalOutcomeId`)
+  const driverId = optionalString(value.driverId, `Quest candidate ${index} driverId`)
+
+  const goalById = new Map(validation.progressionMap.goals.map(goal => [goal.nodeId, goal]))
+  const outcomeById = new Map(validation.progressionMap.proximalOutcomes.map(outcome => [outcome.nodeId, outcome]))
+  const bottleneckById = new Map(validation.progressionMap.bottlenecks.map(driver => [driver.nodeId, driver]))
+  const opportunityById = new Map(validation.progressionMap.opportunities.map(driver => [driver.nodeId, driver]))
+
+  if (driverType !== 'maintenance') {
+    if (!goalId || !goalById.has(goalId)) throw new Error(`Quest candidate ${index} strategic chain requires a valid goal`)
+    if (!proximalOutcomeId || !outcomeById.has(proximalOutcomeId)) throw new Error(`Quest candidate ${index} strategic chain requires a valid proximal outcome`)
+    if (outcomeById.get(proximalOutcomeId)!.goalId !== goalId) throw new Error(`Quest candidate ${index} strategic chain crosses unrelated goal/outcome nodes`)
+    if (!driverId) throw new Error(`Quest candidate ${index} strategic chain requires a driver id`)
+    const driver = driverType === 'bottleneck' ? bottleneckById.get(driverId) : opportunityById.get(driverId)
+    if (!driver) throw new Error(`Quest candidate ${index} strategic chain references an unknown ${driverType}`)
+    if (!driver.outcomeIds.includes(proximalOutcomeId)) throw new Error(`Quest candidate ${index} strategic driver does not affect the selected proximal outcome`)
+  } else {
+    if (goalId && !goalById.has(goalId)) throw new Error(`Quest candidate ${index} maintenance chain references an unknown goal`)
+    if (proximalOutcomeId && !outcomeById.has(proximalOutcomeId)) throw new Error(`Quest candidate ${index} maintenance chain references an unknown proximal outcome`)
+    if (driverId) throw new Error(`Quest candidate ${index} maintenance chain must not invent a strategic driver id`)
+  }
+
+  return {
+    ...(goalId ? { goalId } : {}),
+    ...(proximalOutcomeId ? { proximalOutcomeId } : {}),
+    driverType,
+    ...(driverId ? { driverId } : {}),
+    causalReason: nonEmptyString(value.causalReason, `Quest candidate ${index} causal reason`),
+  }
+}
+
 export function questPolicyInstructions() {
   return [
     'QUEST POLICY / CONSTITUTION:',
-    'The objective is not to represent every player goal. Choose what most deserves the player’s attention today.',
-    'First create an internal pool of 8–15 distinct, evidence-backed candidate actions. Do not jump directly to final quests.',
+    'The objective is not to represent every player goal. Choose only what most deserves the player’s attention today.',
+    'Candidates must come from the strategic chain: distal Goal -> Proximal Outcome -> current Bottleneck/Opportunity -> candidate action. Maintenance may protect baseline capacity without inventing a bottleneck.',
+    'Before scoring, apply a feasibility/receptivity gate using Daily Context and Player Response Model. Mark options that cannot realistically be executed today as feasibleToday=false; they may not be selected even if strategically attractive.',
+    'Every candidate needs an executable contract: a concrete action, observable completion condition, appropriate context, and reasonable dose. Avoid vague tasks such as “work on career”, “apply jobs”, or “exercise” without a bounded done condition.',
+    'Create an internal pool of 8–15 distinct, evidence-backed candidate actions when the Progression Target calls for intervention.',
     'Score every candidate from 0–5 on goalRelevance, urgency, leverage, obstacleRemoval, actionability, contextFit, progressionValue, and redundancyPenalty.',
     'A high redundancyPenalty means the action has been repeated recently without enough new value. Do not calculate one blind weighted total; use the dimensions as a consistent decision frame.',
-    'Then choose a portfolio, not simply the top numerical scores: exactly 1 Main Quest, at most 2 Side Quests, at most 1 Maintenance Quest, and at most 1 Bonus Quest; total 1–5 quests.',
-    'Never invent filler just to occupy a slot. A single focused Main Quest is correct when capacity is very low or one action deserves concentrated attention.',
+    'Then choose a portfolio, not simply the top numerical scores: if any quest is selected, exactly 1 Main Quest, at most 2 Side Quests, at most 1 Maintenance Quest, and at most 1 Bonus Quest; total must not exceed Progression Target maxQuestCount.',
+    'Selecting zero quests is valid when all candidates fail feasibility/receptivity, critical progress is already covered, uncertainty is too high, or another quest would mostly add burden. Provide a concrete noQuestReason.',
+    'Never invent filler just to occupy a slot. A single focused Main Quest is correct when capacity is low or one action deserves concentrated attention.',
     'Daily Context is temporary state for this target date only. Use it to fit time, health, location, travel, appointments, energy, or unusual commitments, but never turn it into permanent identity or player memory.',
-    'Normal day means no unusual temporary constraint was reported. It does not mean unlimited time or energy.',
-    'Use recent quest outcomes to calibrate difficulty. Repeated successful execution can justify a modest progression step; repeated partial/skipped/failed execution should simplify, shrink, reschedule, or target the actual blocker instead of repeating the same oversized quest.',
-    'Failure is calibration data, not punishment. Progression should stretch the player slightly without ignoring real capacity.',
-    'When a bottleneck is visible, prefer actions that remove that bottleneck over more learning/activity in areas already progressing well.',
+    'Use Player Response Model as calibration evidence, not as identity. Repeated successful execution may justify a modest increase in dose/difficulty; repeated partial/skipped/failed execution should shrink, simplify, reschedule, or target the upstream blocker instead of repeating the same oversized quest.',
+    'Completion is compliance evidence, not automatic strategy effectiveness. Prefer strategies with evidence of moving the proximal outcome when such evidence exists.',
+    'Failure is calibration data, not punishment. No universal success-rate or difficulty ratio should be assumed.',
     'Priority uses 5 as highest and 1 as lowest. Quest time-of-day category is scheduling context, not a life-domain taxonomy.',
   ].join(' ')
 }
@@ -97,6 +191,7 @@ export function questPolicyInstructions() {
 export function validateQuestPolicyDecision(
   value: unknown,
   allowedSignalIds: ReadonlySet<string>,
+  validation: QuestPolicyValidationContext,
 ): QuestPolicyDecision {
   if (!isRecord(value)) throw new Error('Quest Policy output must be an object')
   if (!Array.isArray(value.candidates) || value.candidates.length < QUEST_CANDIDATE_MIN || value.candidates.length > QUEST_CANDIDATE_MAX) {
@@ -107,9 +202,10 @@ export function validateQuestPolicyDecision(
   }
 
   const seenCandidateIds = new Set<string>()
+  const seenTitles = new Set<string>()
   const candidates: QuestPolicyCandidate[] = value.candidates.map((raw, index) => {
     if (!isRecord(raw)) throw new Error(`Quest candidate ${index} must be an object`)
-    const candidateId = nonEmptyString(raw.candidateId, `Quest candidate ${index} candidateId`)
+    const candidateId = nonEmptyString(raw.candidateId, `Quest candidate ${index} candidateId`, 120)
     if (seenCandidateIds.has(candidateId)) throw new Error('Quest candidate ids must be unique')
     seenCandidateIds.add(candidateId)
 
@@ -123,6 +219,9 @@ export function validateQuestPolicyDecision(
       rationale: raw.rationale,
       sourceSignalIds: raw.sourceSignalIds,
     }], allowedSignalIds)
+    const normalizedTitle = validated.title.toLocaleLowerCase()
+    if (seenTitles.has(normalizedTitle)) throw new Error('Quest candidate titles must be distinct')
+    seenTitles.add(normalizedTitle)
 
     return {
       candidateId,
@@ -132,6 +231,9 @@ export function validateQuestPolicyDecision(
       xp: validated.xp,
       rationale: validated.rationale,
       sourceSignalIds: signalIds(raw.sourceSignalIds, `Quest candidate ${index} sourceSignalIds`, allowedSignalIds),
+      strategicChain: strategicChain(raw.strategicChain, index, validation),
+      feasibility: feasibility(raw.feasibility, index),
+      executionContract: executionContract(raw.executionContract, index),
       scores: scores(raw.scores, index),
     }
   })
@@ -140,8 +242,10 @@ export function validateQuestPolicyDecision(
   const selectedIds = new Set<string>()
   const selections: QuestPolicySelection[] = value.selections.map((raw, index) => {
     if (!isRecord(raw)) throw new Error(`Quest selection ${index} must be an object`)
-    const candidateId = nonEmptyString(raw.candidateId, `Quest selection ${index} candidateId`)
-    if (!candidateById.has(candidateId)) throw new Error(`Quest selection ${index} references a candidate outside the candidate pool`)
+    const candidateId = nonEmptyString(raw.candidateId, `Quest selection ${index} candidateId`, 120)
+    const candidate = candidateById.get(candidateId)
+    if (!candidate) throw new Error(`Quest selection ${index} references a candidate outside the candidate pool`)
+    if (!candidate.feasibility.feasibleToday) throw new Error(`Quest selection ${index} selected a candidate that failed feasibility/receptivity gate`)
     if (selectedIds.has(candidateId)) throw new Error('Quest selections must reference distinct candidates')
     selectedIds.add(candidateId)
 
@@ -158,11 +262,18 @@ export function validateQuestPolicyDecision(
     }
   })
 
+  if (selections.length > validation.progressionTarget.maxQuestCount) {
+    throw new Error('Quest portfolio exceeds Progression Target maxQuestCount')
+  }
   const count = (kind: QuestKind) => selections.filter(selection => selection.kind === kind).length
-  if (count('main') !== 1) throw new Error('Quest portfolio must contain exactly one Main Quest')
+  if (selections.length > 0 && count('main') !== 1) throw new Error('Quest portfolio with quests must contain exactly one Main Quest')
   if (count('side') > 2) throw new Error('Quest portfolio may contain at most two Side Quests')
   if (count('maintenance') > 1) throw new Error('Quest portfolio may contain at most one Maintenance Quest')
   if (count('bonus') > 1) throw new Error('Quest portfolio may contain at most one Bonus Quest')
+
+  const noQuestReason = optionalString(value.noQuestReason, 'Quest Policy noQuestReason')
+  if (selections.length === 0 && !noQuestReason) throw new Error('Quest Policy selecting zero quests requires noQuestReason')
+  if (selections.length > 0 && noQuestReason) throw new Error('Quest Policy must omit noQuestReason when quests are selected')
 
   const quests = selections.map(selection => {
     const candidate = candidateById.get(selection.candidateId)!
@@ -173,24 +284,33 @@ export function validateQuestPolicyDecision(
       difficulty: candidate.difficulty,
       priority: selection.priority,
       xp: candidate.xp,
-      rationale: candidate.rationale,
+      rationale: candidate.strategicChain.causalReason,
       sourceSignalIds: candidate.sourceSignalIds,
+      candidateId: candidate.candidateId,
+      strategicChain: candidate.strategicChain,
+      executionContract: candidate.executionContract,
     } satisfies GeneratedQuestCandidate
   })
 
-  return { candidates, selections, quests }
+  return { candidates, selections, quests, ...(noQuestReason ? { noQuestReason } : {}) }
 }
 
 export function compactQuestPolicyDecision(decision: QuestPolicyDecision) {
   return {
     version: QUEST_POLICY_VERSION,
     candidateCount: decision.candidates.length,
-    candidates: decision.candidates.map(candidate => ({ id: candidate.candidateId, scores: candidate.scores })),
+    candidates: decision.candidates.map(candidate => ({
+      id: candidate.candidateId,
+      scores: candidate.scores,
+      feasibility: candidate.feasibility,
+      strategicChain: candidate.strategicChain,
+    })),
     selections: decision.selections.map(selection => ({
       candidateId: selection.candidateId,
       kind: selection.kind,
       priority: selection.priority,
       reason: selection.selectionReason,
     })),
+    ...(decision.noQuestReason ? { noQuestReason: decision.noQuestReason } : {}),
   }
 }
