@@ -3,7 +3,7 @@ import { validateGeneratedQuestCandidates, type GeneratedQuestCandidate, type Qu
 export const QUEST_POLICY_VERSION = 'quest-policy.v1'
 export const QUEST_CANDIDATE_MIN = 8
 export const QUEST_CANDIDATE_MAX = 15
-export const QUEST_SELECTION_MIN = 2
+export const QUEST_SELECTION_MIN = 1
 export const QUEST_SELECTION_MAX = 5
 
 export const QUEST_SCORE_DIMENSIONS = [
@@ -83,8 +83,8 @@ export function questPolicyInstructions() {
     'First create an internal pool of 8–15 distinct, evidence-backed candidate actions. Do not jump directly to final quests.',
     'Score every candidate from 0–5 on goalRelevance, urgency, leverage, obstacleRemoval, actionability, contextFit, progressionValue, and redundancyPenalty.',
     'A high redundancyPenalty means the action has been repeated recently without enough new value. Do not calculate one blind weighted total; use the dimensions as a consistent decision frame.',
-    'Then choose a portfolio, not simply the top numerical scores: exactly 1 Main Quest, at most 2 Side Quests, at most 1 Maintenance Quest, and at most 1 Bonus Quest; total 2–5 quests.',
-    'Never invent filler just to occupy a slot. Fewer quests are correct when capacity is low or one action deserves concentrated attention.',
+    'Then choose a portfolio, not simply the top numerical scores: exactly 1 Main Quest, at most 2 Side Quests, at most 1 Maintenance Quest, and at most 1 Bonus Quest; total 1–5 quests.',
+    'Never invent filler just to occupy a slot. A single focused Main Quest is correct when capacity is very low or one action deserves concentrated attention.',
     'Daily Context is temporary state for this target date only. Use it to fit time, health, location, travel, appointments, energy, or unusual commitments, but never turn it into permanent identity or player memory.',
     'Normal day means no unusual temporary constraint was reported. It does not mean unlimited time or energy.',
     'Use recent quest outcomes to calibrate difficulty. Repeated successful execution can justify a modest progression step; repeated partial/skipped/failed execution should simplify, shrink, reschedule, or target the actual blocker instead of repeating the same oversized quest.',
