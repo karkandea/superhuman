@@ -1,0 +1,4 @@
+{
+  "installCommand": "npm install --package-lock-only --ignore-scripts && npm install --ignore-scripts --no-audit --no-fund",
+  "buildCommand": "mkdir -p public && cp package-lock.json public/__generated_package_lock.json && npm run build"
+}
