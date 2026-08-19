@@ -3,11 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
+import DailyContextCheckin from './daily-context-checkin'
 import SystemFreshnessCard from './system-freshness-card'
 import SystemInterruptFeed from './system-interrupt-feed'
 import UpdateSystemComposer from './update-system-composer'
 import { supabase } from '@/lib/supabase'
 import { CATEGORY_LABEL, CATEGORY_ORDER, Category, todayStr, toDateStr } from '@/lib/checklist-data'
+import { getDailyContextForDate } from '@/lib/daily-context-service'
+import type { DailyContextSnapshot } from '@/lib/daily-context'
 import {
   getAiInferenceJob,
   getAiInferenceJobForDate,
@@ -60,6 +63,7 @@ export default function DailyQuestPage() {
   const router = useRouter()
   const username = decodeURIComponent(params.username as string)
   const [userId, setUserId] = useState<string | null>(null)
+  const [dailyContext, setDailyContext] = useState<DailyContextSnapshot | null>(null)
   const [allQuests, setAllQuests] = useState<GeneratedQuest[]>([])
   const [checked, setChecked] = useState<string[]>([])
   const [streak, setStreak] = useState(0)
@@ -86,11 +90,11 @@ export default function DailyQuestPage() {
   const mainQuests = quests.filter(quest => quest.kind === 'main')
   const mainDone = mainQuests.filter(quest => quest.status === 'completed').length
   const generationBusy = generationStatus === 'queued' || generationStatus === 'running'
-  const needsContext = !questReady && generationStatus === 'failed' && generationErrorCode === 'insufficient_context'
+  const needsPlayerContext = !questReady && generationStatus === 'failed' && generationErrorCode === 'insufficient_context'
   const systemPaused = !questReady && generationStatus === 'blocked_auth'
   const transportInterrupted = !questReady && generationStatus === 'failed' && ['transient_transport_error', 'provider_rate_limited', 'processing_timeout', 'monitor_failed'].includes(generationErrorCode ?? '')
-  const generationFailed = !questReady && generationStatus === 'failed' && !needsContext && !transportInterrupted
-  const emptyAfterSuccess = !questReady && generationStatus === 'succeeded'
+  const generationFailed = !questReady && generationStatus === 'failed' && !needsPlayerContext && !transportInterrupted
+  const emptyAfterSuccess = !questReady && Boolean(dailyContext) && generationStatus === 'succeeded'
 
   const refreshStreak = useCallback(async (uid: string, anchorIds: string[]) => {
     const from60 = toDateStr(new Date(Date.now() - 60 * 864e5))
@@ -138,8 +142,12 @@ export default function DailyQuestPage() {
         if (current.status === 'succeeded') {
           const count = await loadGeneratedQuests(uid)
           if (count === 0) {
-            setGenerationErrorCode('empty_result')
-            setGenerationErrorMessage('No Daily Quest was persisted for today.')
+            const context = await getDailyContextForDate(supabase, uid, todayStr())
+            setDailyContext(context)
+            if (context) {
+              setGenerationErrorCode('empty_result')
+              setGenerationErrorMessage('No Daily Quest was persisted for today.')
+            }
           } else {
             setGenerationErrorCode(null)
             setGenerationErrorMessage(null)
@@ -176,6 +184,22 @@ export default function DailyQuestPage() {
     if (job.status !== 'failed' && job.status !== 'blocked_auth') void watchGenerationJob(job.id, uid)
   }, [applyJobState, loadGeneratedQuests, watchGenerationJob])
 
+  const startGenerationAfterCheckin = useCallback(async (uid: string) => {
+    setGenerationErrorCode(null)
+    setGenerationErrorMessage(null)
+    const job = await requestDailyQuestGeneration(supabase, todayStr())
+    applyJobState(job)
+    if (job.status === 'succeeded') {
+      const count = await loadGeneratedQuests(uid)
+      if (count === 0) {
+        setGenerationErrorCode('empty_result')
+        setGenerationErrorMessage('No Daily Quest was persisted for today.')
+      }
+      return
+    }
+    if (job.status !== 'failed' && job.status !== 'blocked_auth') void watchGenerationJob(job.id, uid)
+  }, [applyJobState, loadGeneratedQuests, watchGenerationJob])
+
   useEffect(() => {
     let cancelled = false
     async function init() {
@@ -188,8 +212,20 @@ export default function DailyQuestPage() {
       const { data: itemRows } = await supabase.from('checklist_items').select('id,anchor').eq('user_id', user.id).eq('is_deleted', false)
       const anchorIds = ((itemRows ?? []) as Item[]).filter(item => item.anchor).map(item => item.id)
       const generatedCount = await loadGeneratedQuests(user.id)
-      if (generatedCount === 0) await syncAutomaticGeneration(user.id)
-      else {
+      const context = await getDailyContextForDate(supabase, user.id, todayStr())
+      if (!cancelled) setDailyContext(context)
+
+      if (generatedCount === 0) {
+        if (context) {
+          const job = await getAiInferenceJobForDate(supabase, user.id, todayStr())
+          if (!job || job.status === 'succeeded') await startGenerationAfterCheckin(user.id)
+          else await syncAutomaticGeneration(user.id)
+        } else {
+          setGenerationStatus('idle')
+          setGenerationErrorCode(null)
+          setGenerationErrorMessage(null)
+        }
+      } else {
         const job = await getAiInferenceJobForDate(supabase, user.id, todayStr())
         if (job) {
           applyJobState(job)
@@ -207,7 +243,7 @@ export default function DailyQuestPage() {
       setLoading(false)
     })
     return () => { cancelled = true }
-  }, [username, router, refreshStreak, loadGeneratedQuests, syncAutomaticGeneration, applyJobState, watchGenerationJob])
+  }, [username, router, refreshStreak, loadGeneratedQuests, startGenerationAfterCheckin, syncAutomaticGeneration, applyJobState, watchGenerationJob])
 
   async function persistQuestCompletion(id: string, before: string[], willComplete: boolean) {
     try {
@@ -244,19 +280,25 @@ export default function DailyQuestPage() {
   }
 
   async function retryGeneration() {
-    if (!userId || generationBusy) return
-    setGenerationErrorCode(null)
-    setGenerationErrorMessage(null)
+    if (!userId || generationBusy || (!dailyContext && !questReady)) return
     try {
-      const job = await requestDailyQuestGeneration(supabase, todayStr())
-      applyJobState(job)
-      setFreshnessToken(token => token + 1)
-      if (job.status === 'succeeded') await loadGeneratedQuests(userId)
-      else if (job.status !== 'failed' && job.status !== 'blocked_auth') await watchGenerationJob(job.id, userId)
+      await startGenerationAfterCheckin(userId)
     } catch (error) {
       setGenerationStatus('failed')
       setGenerationErrorCode('manual_retry_failed')
       setGenerationErrorMessage(error instanceof Error ? error.message : 'System retry failed.')
+    }
+  }
+
+  async function handleDailyContextConfirmed(context: DailyContextSnapshot) {
+    setDailyContext(context)
+    if (!userId) return
+    try {
+      await startGenerationAfterCheckin(userId)
+    } catch (error) {
+      setGenerationStatus('failed')
+      setGenerationErrorCode('daily_context_generation_failed')
+      setGenerationErrorMessage(error instanceof Error ? error.message : 'System could not start today progression.')
     }
   }
 
@@ -294,7 +336,11 @@ export default function DailyQuestPage() {
             <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.muted, fontSize: 10.5 }}>{new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</div>
             <h1 style={{ fontFamily: '"Space Grotesk", sans-serif', fontSize: 'clamp(32px,8vw,44px)', lineHeight: .98, letterSpacing: '-.045em', margin: '7px 0 0' }}>Daily Quest</h1>
             <p style={{ color: S.muted, fontSize: 12.5, lineHeight: 1.55, margin: '9px 0 0', maxWidth: 520 }}>
-              {questReady ? 'The System keeps today stable by default. Important changes become explicit interrupts — never silent reshuffles.' : 'Tell the System what is happening. It will turn real life context into today’s next actions.'}
+              {questReady
+                ? 'The System keeps today stable by default. Important changes become explicit interrupts — never silent reshuffles.'
+                : dailyContext
+                  ? 'Check-in received. The System is deciding what deserves your attention today.'
+                  : 'One quick check-in fills the blind spot the System cannot observe before it chooses today’s quests.'}
             </p>
           </div>
 
@@ -315,23 +361,19 @@ export default function DailyQuestPage() {
             </>
           )}
 
-          <div style={{ marginTop: 13 }}>
-            <SystemFreshnessCard
-              playerId={userId}
-              date={todayStr()}
-              refreshToken={freshnessToken}
-              compact
-              onSettled={refreshTodayQuests}
-            />
-          </div>
-
-          <SystemInterruptFeed playerId={userId} date={todayStr()} onApplied={refreshTodayQuests} />
-
-          {!questReady && (
-            <div id="update-system" style={{ marginTop: 17, scrollMarginTop: 16 }}>
-              <UpdateSystemComposer variant="compact" onSaved={handleSystemUpdateSaved} />
+          {questReady && (
+            <div style={{ marginTop: 13 }}>
+              <SystemFreshnessCard
+                playerId={userId}
+                date={todayStr()}
+                refreshToken={freshnessToken}
+                compact
+                onSettled={refreshTodayQuests}
+              />
             </div>
           )}
+
+          {questReady && <SystemInterruptFeed playerId={userId} date={todayStr()} onApplied={refreshTodayQuests} />}
 
           <div aria-live="polite" style={{ height: 15, marginTop: 7, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, color: saveStatus === 'failed' ? S.red : saveStatus === 'saved' ? S.amber : S.muted, opacity: saveStatus === 'idle' ? 0 : 1 }}>
             {saveStatus === 'saving' ? 'SYNCING QUEST…' : saveStatus === 'saved' ? '✓ QUEST SAVED' : saveStatus === 'failed' ? 'QUEST UPDATE FAILED · NOTHING CHANGED' : ''}
@@ -339,14 +381,31 @@ export default function DailyQuestPage() {
         </header>
 
         {!questReady && (
+          <div style={{ marginTop: 4 }}>
+            <DailyContextCheckin
+              date={todayStr()}
+              context={dailyContext}
+              generationBusy={generationBusy}
+              onConfirmed={handleDailyContextConfirmed}
+            />
+          </div>
+        )}
+
+        {!questReady && dailyContext && (
           <SystemEmptyState
             generationStatus={generationStatus}
-            needsContext={needsContext}
+            needsPlayerContext={needsPlayerContext}
             generationFailed={generationFailed || emptyAfterSuccess}
             transportInterrupted={transportInterrupted}
             systemPaused={systemPaused}
             onRetry={() => { void retryGeneration() }}
           />
+        )}
+
+        {!questReady && dailyContext && needsPlayerContext && (
+          <div style={{ marginTop: 16 }}>
+            <UpdateSystemComposer variant="compact" onSaved={handleSystemUpdateSaved} />
+          </div>
         )}
 
         {quests.length > 0 && (
@@ -432,7 +491,7 @@ export default function DailyQuestPage() {
         )}
 
         <footer style={{ padding: '32px 0 10px', textAlign: 'center' }}>
-          <div style={{ color: S.muted2, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, lineHeight: 1.6 }}>DAILY QUEST IS SYSTEM-OWNED<br />STABLE BY DEFAULT · EXPLICIT INTERRUPTS WHEN LIFE MATERIALLY CHANGES</div>
+          <div style={{ color: S.muted2, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, lineHeight: 1.6 }}>DAILY QUEST IS SYSTEM-OWNED<br />ONE CHECK-IN · STABLE PLAN · EXPLICIT INTERRUPTS WHEN LIFE MATERIALLY CHANGES</div>
           <Link href="/" style={{ display: 'inline-block', marginTop: 15, color: S.muted, textDecoration: 'none', fontFamily: '"IBM Plex Mono", monospace', fontSize: 9 }}>← SWITCH PLAYER</Link>
           {generationErrorMessage && process.env.NODE_ENV !== 'production' && <div style={{ marginTop: 12, color: S.red, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5 }}>DEBUG · {generationErrorCode ?? 'unknown'} · {generationErrorMessage}</div>}
         </footer>
@@ -443,14 +502,14 @@ export default function DailyQuestPage() {
 
 function SystemEmptyState({
   generationStatus,
-  needsContext,
+  needsPlayerContext,
   generationFailed,
   transportInterrupted,
   systemPaused,
   onRetry,
 }: {
   generationStatus: AiInferenceJobStatus | 'idle'
-  needsContext: boolean
+  needsPlayerContext: boolean
   generationFailed: boolean
   transportInterrupted: boolean
   systemPaused: boolean
@@ -458,19 +517,19 @@ function SystemEmptyState({
 }) {
   const queued = generationStatus === 'queued'
   const running = generationStatus === 'running'
-  let eyebrow = 'NO QUEST YET'
-  let title = 'Tell the System what is happening.'
-  let body = 'Use the update box above. Once enough real context exists, the System will create today’s Daily Quest automatically.'
-  if (queued) { eyebrow = 'COLLECTING UPDATES'; title = 'Your update is safe.'; body = 'System is grouping nearby updates before it starts one progression cycle.' }
-  else if (running) { eyebrow = 'PROCESSING'; title = 'System is updating its understanding…'; body = 'Daily Quest will appear automatically when the progression cycle finishes.' }
-  else if (systemPaused) { eyebrow = 'SYSTEM TEMPORARILY PAUSED'; title = 'Your context is safe.'; body = 'System processing is temporarily unavailable. Your Life Vault update does not need to be entered again.' }
-  else if (transportInterrupted) { eyebrow = 'PROCESSING INTERRUPTED'; title = 'Your context is safe.'; body = 'The reasoning connection was interrupted. Retry processing without rewriting the update.' }
-  else if (generationFailed) { eyebrow = 'SYSTEM COULD NOT FINISH'; title = 'Your context is still safe.'; body = 'System could not finish this progression cycle. Retry without adding duplicate context.' }
-  else if (needsContext) { eyebrow = 'MORE PLAYER CONTEXT NEEDED'; title = 'Tell the System what matters right now.'; body = 'A normal update above is enough — there is no category or setup flow to complete.' }
+  let eyebrow = 'CHECK-IN RECEIVED'
+  let title = 'System is choosing today’s quests.'
+  let body = 'It is combining who you are, recent execution, and today’s temporary constraints through the Quest Policy.'
+  if (queued) { eyebrow = 'QUEST GENERATION QUEUED'; title = 'Check-in received.'; body = 'System will choose today’s quest portfolio as soon as the progression worker picks up this cycle.' }
+  else if (running) { eyebrow = 'SYSTEM DECIDING'; title = 'System is choosing what deserves attention…'; body = 'Candidate actions are being evaluated against your goals, bottlenecks, recent execution, and today context.' }
+  else if (systemPaused) { eyebrow = 'SYSTEM TEMPORARILY PAUSED'; title = 'Your check-in is safe.'; body = 'System processing is temporarily unavailable. You do not need to enter today context again.' }
+  else if (transportInterrupted) { eyebrow = 'PROCESSING INTERRUPTED'; title = 'Your check-in is safe.'; body = 'The reasoning connection was interrupted. Retry processing without rewriting today context.' }
+  else if (generationFailed) { eyebrow = 'SYSTEM COULD NOT FINISH'; title = 'Your check-in is still safe.'; body = 'System could not finish this quest cycle. Retry without duplicating today context.' }
+  else if (needsPlayerContext) { eyebrow = 'MORE PLAYER CONTEXT NEEDED'; title = 'The System needs one real life update first.'; body = 'Today context is saved separately. Use Update System below for the permanent/current player evidence the Quest Engine is missing.' }
   const canRetry = generationFailed || transportInterrupted
 
   return (
-    <section style={{ marginTop: 8, background: S.panel, border: `1px solid ${S.line}`, borderRadius: 17, padding: '17px 15px' }}>
+    <section style={{ marginTop: 12, background: S.panel, border: `1px solid ${S.line}`, borderRadius: 17, padding: '17px 15px' }}>
       <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, color: S.amber, letterSpacing: '.14em' }}>{eyebrow}</div>
       <div style={{ marginTop: 7, fontFamily: '"Space Grotesk", sans-serif', fontSize: 18, fontWeight: 700, lineHeight: 1.2 }}>{title}</div>
       <div style={{ marginTop: 8, color: S.muted, fontSize: 12, lineHeight: 1.55 }}>{body}</div>
