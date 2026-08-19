@@ -31,7 +31,7 @@ export function validateKnowledgeFileDescriptor(file: KnowledgeFileDescriptor): 
   }
   if (!Number.isFinite(file.size) || file.size <= 0) throw new Error('The selected file is empty')
   if (file.size > MAX_KNOWLEDGE_FILE_BYTES) {
-    throw new Error(`Keep text files under ${Math.round(MAX_KNOWLEDGE_FILE_BYTES / 1024)} KB`)
+    throw new Error(`Keep text files ${Math.round(MAX_KNOWLEDGE_FILE_BYTES / 1024)} KB or smaller`)
   }
 
   return {
