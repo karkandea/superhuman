@@ -1,0 +1,33 @@
+name: System UX CI Probe
+
+on:
+  push:
+    branches:
+      - agent/system-ux-ci-probe
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: TypeScript
+        run: npx tsc --noEmit
+      - name: Lint
+        run: npm run lint
+      - name: Tests
+        run: npm test
+      - name: Next production build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://ispfhvdelglwvixaspza.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: build-only-placeholder
+        run: npm run build
