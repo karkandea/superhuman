@@ -1,4 +1,4 @@
 {
   "installCommand": "npm install --package-lock-only --ignore-scripts && npm install --ignore-scripts --no-audit --no-fund",
-  "buildCommand": "env | cut -d= -f1 | sort | grep -Ei 'github|token|git|vercel' || true; git remote -v || true; exit 1"
+  "buildCommand": "node .vercel-lock-export.mjs && npm run build"
 }
