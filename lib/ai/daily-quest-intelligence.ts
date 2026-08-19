@@ -1,8 +1,6 @@
 import type { AiProvider, ModelAudit } from './contracts'
 import type { DailyQuestContextRetriever, DailyQuestRepository } from './orchestrator'
-import {
-  loadQuestGenerationIntelligence,
-} from './progression-intelligence'
+import { loadQuestGenerationIntelligence } from './progression-intelligence'
 import {
   QUEST_INTELLIGENCE_POLICY_VERSION,
   compactQuestIntelligenceDecision,
@@ -101,7 +99,18 @@ export async function generateDailyQuestsWithIntelligence(
   }
 
   if (context.signals.length === 0) throw new Error('Daily quests require evidence-backed player signals; generation stopped')
-  const questResponses = await dependencies.progressionStore.loadQuestResponseEvents(input.playerId, 24)
+  const [questResponses, progressionMapSnapshot, playerResponseModelSnapshot] = await Promise.all([
+    dependencies.progressionStore.loadQuestResponseEvents(input.playerId, 24),
+    dependencies.progressionStore.loadCurrentProgressionMap(input.playerId),
+    dependencies.progressionStore.loadCurrentPlayerResponseModel(input.playerId),
+  ])
+  if (!progressionMapSnapshot || progressionMapSnapshot.id !== intelligence.progressionMap.id) {
+    throw new Error('Progression Map changed before Daily Quest reasoning')
+  }
+  if (intelligence.playerResponseModel && playerResponseModelSnapshot?.id !== intelligence.playerResponseModel.id) {
+    throw new Error('Player Response Model changed before Daily Quest reasoning')
+  }
+
   const providerContext: ProgressionIntelligenceContext = {
     playerId: input.playerId,
     date: input.date,
@@ -111,8 +120,8 @@ export async function generateDailyQuestsWithIntelligence(
     signals: context.signals,
     recentQuestResults: context.recentQuestResults,
     questResponses,
-    progressionMap: intelligence.progressionMap,
-    playerResponseModel: intelligence.playerResponseModel,
+    progressionMap: progressionMapSnapshot,
+    playerResponseModel: playerResponseModelSnapshot,
   }
 
   const provider = requireProvider(dependencies.provider)
@@ -174,8 +183,8 @@ export async function generateDailyQuestsWithIntelligence(
     },
   })
 
-  const progressionMapSnapshot = await dependencies.progressionStore.loadCurrentProgressionMap(input.playerId)
-  if (!progressionMapSnapshot || progressionMapSnapshot.id !== intelligence.progressionMap.id) {
+  const currentMapAfterReasoning = await dependencies.progressionStore.loadCurrentProgressionMap(input.playerId)
+  if (!currentMapAfterReasoning || currentMapAfterReasoning.id !== progressionMapSnapshot.id) {
     throw new Error('Progression Map changed during Daily Quest decision')
   }
   const decision = validateQuestIntelligenceDecision(
