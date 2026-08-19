@@ -1,6 +1,8 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 const test = require('node:test')
 const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const path = require('node:path')
 
 const {
   MAX_KNOWLEDGE_FILE_BYTES,
@@ -54,6 +56,22 @@ test('text plus attachment stays below the bounded reasoning payload budget', ()
     () => composeKnowledgeText('short note', '🚀'.repeat(6000), 'context.txt'),
     /note plus attached file under 22 KB total/,
   )
+})
+
+test('Today keeps Daily Quest ahead of the compact System composer once quests exist', () => {
+  const source = fs.readFileSync(path.join(process.cwd(), 'app/[username]/page.tsx'), 'utf8')
+  const planIndex = source.indexOf('TODAY’S PLAN')
+  const questReadyComposerIndex = source.lastIndexOf('id="update-system"')
+
+  assert.ok(planIndex >= 0, 'Today plan heading is present')
+  assert.ok(questReadyComposerIndex > planIndex, 'quest-ready composer renders after Today plan')
+  assert.match(source, /href="#update-system"/)
+})
+
+test('product metadata no longer presents Superhuman as a checklist tracker', () => {
+  const source = fs.readFileSync(path.join(process.cwd(), 'app/layout.tsx'), 'utf8')
+  assert.match(source, /Superhuman — Daily Quest System/)
+  assert.doesNotMatch(source, /Superhuman Checklist|Daily habits tracker/)
 })
 
 test('queued progression is presented as collecting updates', () => {
