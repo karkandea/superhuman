@@ -2,6 +2,7 @@ export const SUPPORTED_KNOWLEDGE_FILE_EXTENSIONS = ['txt', 'md', 'json'] as cons
 export type SupportedKnowledgeFileExtension = (typeof SUPPORTED_KNOWLEDGE_FILE_EXTENSIONS)[number]
 
 export const MAX_KNOWLEDGE_FILE_BYTES = 20 * 1024
+export const MAX_KNOWLEDGE_FILE_UPDATE_BYTES = 22 * 1024
 export const MAX_KNOWLEDGE_TEXT_LENGTH = 50_000
 
 export interface KnowledgeFileDescriptor {
@@ -41,6 +42,10 @@ export function validateKnowledgeFileDescriptor(file: KnowledgeFileDescriptor): 
   }
 }
 
+function utf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).byteLength
+}
+
 export function composeKnowledgeText(message: string, fileText?: string, fileName?: string): string {
   const cleanMessage = message.trim()
   const cleanFileText = fileText?.trim() ?? ''
@@ -55,6 +60,9 @@ export function composeKnowledgeText(message: string, fileText?: string, fileNam
   if (!combined) throw new Error('Tell the System something or attach a file')
   if (combined.length > MAX_KNOWLEDGE_TEXT_LENGTH) {
     throw new Error('This update is too large. Shorten the text or upload a smaller file')
+  }
+  if (cleanFileText && utf8ByteLength(combined) > MAX_KNOWLEDGE_FILE_UPDATE_BYTES) {
+    throw new Error(`Keep the note plus attached file under ${Math.round(MAX_KNOWLEDGE_FILE_UPDATE_BYTES / 1024)} KB total`)
   }
 
   return combined
