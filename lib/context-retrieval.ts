@@ -1,3 +1,4 @@
+import type { DailyContextSnapshot } from './daily-context'
 import type { ActiveQuestContext, MaterialityAssessmentDecision, MaterialityContext } from './materiality'
 import type { PlayerBriefSnapshot, RetrievedPlayerContext, PlayerSignal, RecentQuestResult } from './player-understanding'
 
@@ -15,6 +16,7 @@ export interface PlayerContextStore {
   loadActiveQuests(playerId: string, date: string): Promise<ActiveQuestContext[]>
   loadPlayerTimezone(playerId: string): Promise<string>
   loadCurrentPlayerBrief(playerId: string): Promise<PlayerBriefSnapshot | null>
+  loadDailyContext(playerId: string, date: string): Promise<DailyContextSnapshot | null>
 }
 
 function localDateTime(now: Date, timezone: string): string {
@@ -100,10 +102,11 @@ export class BoundedPlayerContextRetriever {
     date: string
     limit: number
   }): Promise<RetrievedPlayerContext> {
-    const [signals, recentQuestResults, playerBrief] = await Promise.all([
+    const [signals, recentQuestResults, playerBrief, dailyContext] = await Promise.all([
       this.store.loadSignals(input.playerId, input.limit),
-      this.store.loadRecentQuestResults(input.playerId, Math.min(10, input.limit)),
+      this.store.loadRecentQuestResults(input.playerId, Math.min(12, input.limit)),
       this.store.loadCurrentPlayerBrief(input.playerId),
+      this.store.loadDailyContext(input.playerId, input.date),
     ])
 
     return {
@@ -111,14 +114,16 @@ export class BoundedPlayerContextRetriever {
       purpose: 'daily_quest',
       generatedAt: new Date().toISOString(),
       playerBrief: requireBrief(playerBrief),
+      dailyContext,
       knowledgeEntries: [],
       signals,
       recentQuestResults,
       activeQuests: [],
       retrieval: {
-        strategy: 'canonical_player_brief_plus_active_signals_and_recent_quest_results',
+        strategy: 'canonical_player_brief_plus_daily_context_active_signals_and_recent_quest_results',
         limit: input.limit,
-        reason: `Generate ${input.date} quests from canonical player state and derived context, never the full raw Vault`,
+        reason: `Generate ${input.date} quests from permanent player state plus date-bounded Daily Context and recent execution calibration, never the full raw Vault`,
+        ...(dailyContext ? { dailyContextId: dailyContext.id, dailyContextMode: dailyContext.mode } : {}),
       },
     }
   }
