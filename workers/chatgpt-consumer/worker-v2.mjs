@@ -6,9 +6,15 @@ import { ChatGptConsumerWebProvider } from '../../lib/ai/chatgpt-consumer-provid
 import { BoundedPlayerContextRetriever } from '../../lib/context-retrieval.ts'
 import {
   derivePlayerUnderstandingDelta,
-  generateDailyQuests,
   generateSystemInterrupt,
 } from '../../lib/ai/orchestrator.ts'
+import { generateDailyQuestsWithIntelligence } from '../../lib/ai/daily-quest-intelligence.ts'
+import {
+  chooseProgressionTarget,
+  refreshPlayerResponseModel,
+  refreshProgressionMap,
+  reviewQuestResponses,
+} from '../../lib/ai/progression-intelligence.ts'
 import {
   MATERIALITY_BATCH_SCHEMA_VERSION,
   assessActivityMateriality,
@@ -20,6 +26,7 @@ import {
   createSupabasePlayerContextStore,
   createSupabaseUnderstandingRepository,
 } from '../../lib/supabase/progression-store.ts'
+import { createSupabaseProgressionIntelligenceStore } from '../../lib/supabase/progression-intelligence-store.ts'
 import {
   PlaywrightChatGptTransport,
   WorkerError,
@@ -201,10 +208,10 @@ function classifyError(error) {
   if (/evidence-backed player signals|No player knowledge was retrieved|At least one knowledge entry/.test(message)) {
     return new WorkerError('insufficient_context', message, false)
   }
-  if (/correlation mismatch|operation mismatch|schema version mismatch|malformed JSON|parseable JSON|sourceSignalIds|sourceKnowledgeEntryIds|targetUnderstandingId|outside retrieved context|outside current Player Brief|Understanding delta|Materiality|materiality|System Interrupt|Interrupt action|interrupt plan|affectedQuestIds|urgency|recommendedAction|Quest Policy|Quest candidate|Quest selection|Quest portfolio/.test(message)) {
+  if (/correlation mismatch|operation mismatch|schema version mismatch|malformed JSON|parseable JSON|sourceSignalIds|sourceKnowledgeEntryIds|targetUnderstandingId|outside retrieved context|outside current Player Brief|Understanding delta|Materiality|materiality|System Interrupt|Interrupt action|interrupt plan|affectedQuestIds|urgency|recommendedAction|Quest Policy|Quest candidate|Quest selection|Quest portfolio|Progression Map|Progression Target|Player Response Model|Quest response review|strategic chain|strategic driver|feasibility|receptivity|executionContract|execution contract|effectiveness/.test(message)) {
     return new WorkerError('model_output_invalid', message, true)
   }
-  if (/Player Brief is missing|Player brief changed before understanding delta persistence/.test(message)) {
+  if (/Player Brief is missing|Player brief changed before understanding delta persistence|Progression Map changed during Daily Quest decision/.test(message)) {
     return new WorkerError('stale_player_brief', message, true)
   }
   if (/backlog did not drain|same knowledge batch repeated/.test(message)) {
@@ -258,6 +265,7 @@ async function processJob(client, job) {
   const understandingRepository = createSupabaseUnderstandingRepository(client)
   const dailyQuestRepository = createSupabaseDailyQuestRepository(client)
   const materialityRepository = createSupabaseMaterialityRepository(client)
+  const progressionStore = createSupabaseProgressionIntelligenceStore(client)
 
   const heartbeatTimer = setInterval(() => {
     heartbeat(client, job.id).catch(error => console.error(`[heartbeat] ${error.message}`))
@@ -266,7 +274,7 @@ async function processJob(client, job) {
   try {
     const cutoff = job.window_cutoff_at || new Date().toISOString()
     const questsBefore = await dailyQuestRepository.findForDate(job.user_id, job.target_date)
-    const hadDailyPlan = questsBefore.length > 0
+    const hadDailyPlan = await progressionStore.hasFinalizedPlanForDate(job.user_id, job.target_date)
     let understandingDeltaActionCount = 0
     let playerBriefChangedCount = 0
     let noOpUnderstandingBatchCount = 0
@@ -279,6 +287,11 @@ async function processJob(client, job) {
     let noChangeCount = 0
     let suggestedInterruptCount = 0
     let appliedInterruptCount = 0
+    let responseEventsSynced = 0
+    let questResponsesReviewed = 0
+    let progressionMapVersion = null
+    let playerResponseModelVersion = null
+    let progressionTargetId = null
     let lastBatchSignature = ''
 
     while (true) {
@@ -316,12 +329,59 @@ async function processJob(client, job) {
     const remainingKnowledge = await pendingKnowledgeCount(client, job.user_id, cutoff)
     if (remainingKnowledge > 0) throw new Error(`backlog did not drain; ${remainingKnowledge} knowledge entries remain in the activity window`)
 
+    responseEventsSynced = await progressionStore.syncQuestResponseEvents(job.user_id, job.target_date)
+    const currentMapBeforeLearning = await progressionStore.loadCurrentProgressionMap(job.user_id)
+    const shouldRefreshStrategicState = !currentMapBeforeLearning || knowledgeBatchCount > 0 || responseEventsSynced > 0
+
+    if (shouldRefreshStrategicState) {
+      if (knowledgeBatchCount > 0) await sleep(AI_STAGE_PAUSE_MS)
+      const map = await refreshProgressionMap({ provider, contextRetriever, store: progressionStore }, {
+        playerId: job.user_id,
+        date: job.target_date,
+        limit: 32,
+      })
+      progressionMapVersion = map.version
+    } else {
+      progressionMapVersion = currentMapBeforeLearning?.version ?? null
+    }
+
+    const responseEvents = await progressionStore.loadQuestResponseEvents(job.user_id, 24)
+    const shouldLearnFromResponses = responseEvents.length > 0 && (responseEventsSynced > 0 || knowledgeBatchCount > 0)
+    if (shouldLearnFromResponses) {
+      await sleep(AI_STAGE_PAUSE_MS)
+      const reviews = await reviewQuestResponses({ provider, contextRetriever, store: progressionStore }, {
+        playerId: job.user_id,
+        date: job.target_date,
+        limit: 32,
+      })
+      questResponsesReviewed = reviews.length
+
+      await sleep(AI_STAGE_PAUSE_MS)
+      const responseModel = await refreshPlayerResponseModel({ provider, contextRetriever, store: progressionStore }, {
+        playerId: job.user_id,
+        date: job.target_date,
+        limit: 32,
+      })
+      playerResponseModelVersion = responseModel?.version ?? null
+
+      await sleep(AI_STAGE_PAUSE_MS)
+      const refreshedMap = await refreshProgressionMap({ provider, contextRetriever, store: progressionStore }, {
+        playerId: job.user_id,
+        date: job.target_date,
+        limit: 32,
+      })
+      progressionMapVersion = refreshedMap.version
+    } else {
+      const responseModel = await progressionStore.loadCurrentPlayerResponseModel(job.user_id)
+      playerResponseModelVersion = responseModel?.version ?? null
+    }
+
     if (hadDailyPlan) {
       const materialityIds = await pendingMaterialityKnowledgeIds(client, job.user_id, cutoff)
       let activityAssessment = null
 
       if (materialityIds.length > 0) {
-        if (knowledgeBatchCount > 0) await sleep(AI_STAGE_PAUSE_MS)
+        if (knowledgeBatchCount > 0 || shouldLearnFromResponses) await sleep(AI_STAGE_PAUSE_MS)
         const assessed = await assessActivityMateriality({ client, provider }, {
           playerId: job.user_id,
           knowledgeEntryIds: materialityIds,
@@ -339,7 +399,7 @@ async function processJob(client, job) {
 
       if (activityAssessment && activityAssessment.disposition !== 'no_change') {
         await sleep(AI_STAGE_PAUSE_MS)
-        const generated = await generateSystemInterrupt({
+        const generatedInterrupt = await generateSystemInterrupt({
           provider,
           contextRetriever,
           repository: materialityRepository,
@@ -349,20 +409,56 @@ async function processJob(client, job) {
           date: job.target_date,
           assessment: activityAssessment,
         })
-        if (generated.interrupt.status === 'applied') appliedInterruptCount = 1
+        if (generatedInterrupt.interrupt.status === 'applied') appliedInterruptCount = 1
         else suggestedInterruptCount = 1
       }
     }
 
-    if (!hadDailyPlan && knowledgeBatchCount > 0) await sleep(AI_STAGE_PAUSE_MS)
-    const generated = await generateDailyQuests({
-      provider,
-      contextRetriever,
-      repository: dailyQuestRepository,
-    }, {
-      playerId: job.user_id,
-      date: job.target_date,
-    })
+    let generated
+    if (!hadDailyPlan) {
+      const dailyContext = await contextStore.loadDailyContext(job.user_id, job.target_date)
+      if (dailyContext) {
+        const currentMap = await progressionStore.loadCurrentProgressionMap(job.user_id)
+        if (!currentMap) {
+          const map = await refreshProgressionMap({ provider, contextRetriever, store: progressionStore }, {
+            playerId: job.user_id,
+            date: job.target_date,
+            limit: 32,
+          })
+          progressionMapVersion = map.version
+        }
+        await sleep(AI_STAGE_PAUSE_MS)
+        const target = await chooseProgressionTarget({ provider, contextRetriever, store: progressionStore }, {
+          playerId: job.user_id,
+          date: job.target_date,
+          limit: 32,
+        })
+        progressionTargetId = target.id
+      }
+
+      if (knowledgeBatchCount > 0 || shouldLearnFromResponses) await sleep(AI_STAGE_PAUSE_MS)
+      generated = await generateDailyQuestsWithIntelligence({
+        provider,
+        contextRetriever,
+        repository: dailyQuestRepository,
+        progressionStore,
+      }, {
+        playerId: job.user_id,
+        date: job.target_date,
+      })
+    } else if (questsBefore.length > 0) {
+      const target = await progressionStore.loadProgressionTargetForDate(job.user_id, job.target_date)
+      progressionTargetId = target?.id ?? null
+      generated = { source: 'existing', quests: questsBefore }
+    } else {
+      const target = await progressionStore.loadProgressionTargetForDate(job.user_id, job.target_date)
+      progressionTargetId = target?.id ?? null
+      generated = {
+        source: 'no_quest',
+        quests: [],
+        ...(target?.noQuestReason ? { noQuestReason: target.noQuestReason } : {}),
+      }
+    }
 
     if (generated.source === 'awaiting_context') {
       const refs = provider.consumeConversationRefs()
@@ -376,6 +472,11 @@ async function processJob(client, job) {
         knowledgeBatchCount,
         knowledgeBytes,
         knowledgeBatchBudgetBytes: KNOWLEDGE_BATCH_BUDGET_BYTES,
+        questResponseEventsSynced: responseEventsSynced,
+        questResponsesReviewed,
+        progressionMapVersion,
+        playerResponseModelVersion,
+        progressionTargetId,
         materialityAssessmentCount: materialityCount,
         materialityBatchEntryCount,
         materialityNoChangeCount: noChangeCount,
@@ -387,11 +488,11 @@ async function processJob(client, job) {
         targetDate: job.target_date,
         windowCutoffAt: cutoff,
       })
-      console.log(`[job ${job.id}] succeeded: player memory updated; awaiting Daily Context before first quest generation`)
+      console.log(`[job ${job.id}] succeeded: player memory/intelligence updated; awaiting Daily Context before first plan`)
       return
     }
 
-    if (!hadDailyPlan && generated.quests.length > 0) {
+    if (!hadDailyPlan && (generated.source === 'generated' || generated.source === 'no_quest')) {
       await markBaselineKnowledgeNotRequired(client, job.user_id, cutoff)
     }
 
@@ -406,6 +507,11 @@ async function processJob(client, job) {
       knowledgeBatchCount,
       knowledgeBytes,
       knowledgeBatchBudgetBytes: KNOWLEDGE_BATCH_BUDGET_BYTES,
+      questResponseEventsSynced: responseEventsSynced,
+      questResponsesReviewed,
+      progressionMapVersion,
+      playerResponseModelVersion,
+      progressionTargetId,
       materialityAssessmentCount: materialityCount,
       materialityBatchEntryCount,
       materialityNoChangeCount: noChangeCount,
@@ -413,11 +519,13 @@ async function processJob(client, job) {
       appliedInterruptCount,
       questCount: generated.quests.length,
       questSource: generated.source,
+      noQuest: generated.source === 'no_quest',
+      ...(generated.noQuestReason ? { noQuestReason: generated.noQuestReason } : {}),
       targetDate: job.target_date,
       windowCutoffAt: cutoff,
     })
 
-    console.log(`[job ${job.id}] succeeded: ${processedKnowledgeCount} knowledge in ${knowledgeBatchCount} batches; deltaActions=${understandingDeltaActionCount}; brief=v${latestPlayerBriefVersion ?? 'unchanged'}; ${generated.quests.length} quests (${generated.source}); materiality=${materialityCount} over ${materialityBatchEntryCount} entries; interrupts=${appliedInterruptCount} applied/${suggestedInterruptCount} suggested`)
+    console.log(`[job ${job.id}] succeeded: knowledge=${processedKnowledgeCount}/${knowledgeBatchCount} batches; deltaActions=${understandingDeltaActionCount}; brief=v${latestPlayerBriefVersion ?? 'unchanged'}; map=v${progressionMapVersion ?? 'none'}; responseModel=v${playerResponseModelVersion ?? 'none'}; responseEvents=${responseEventsSynced} synced/${questResponsesReviewed} reviewed; plan=${generated.source}/${generated.quests.length} quests; materiality=${materialityCount}; interrupts=${appliedInterruptCount} applied/${suggestedInterruptCount} suggested`)
   } catch (rawError) {
     const error = classifyError(rawError)
     const refs = provider.consumeConversationRefs()
@@ -458,7 +566,7 @@ async function main() {
   const once = process.argv.includes('--once')
   console.log(`Superhuman ChatGPT consumer worker online as ${WORKER_ID}`)
   console.log(browserRuntimeSummary())
-  console.log(`Activity batching: knowledgeBudget=${KNOWLEDGE_BATCH_BUDGET_BYTES}B; materialityRawBudget=${MATERIALITY_RAW_BUDGET_BYTES}B; stagePause=${AI_STAGE_PAUSE_MS}ms; memory=${UNDERSTANDING_DELTA_VERSION}`)
+  console.log(`Activity batching: knowledgeBudget=${KNOWLEDGE_BATCH_BUDGET_BYTES}B; materialityRawBudget=${MATERIALITY_RAW_BUDGET_BYTES}B; stagePause=${AI_STAGE_PAUSE_MS}ms; memory=${UNDERSTANDING_DELTA_VERSION}; intelligence=progression-map/player-response-model/quest-policy.v2`)
 
   do {
     const job = await claimJob(client)
