@@ -1,6 +1,6 @@
 *, *::before, *::after { box-sizing: border-box; }
 body  { margin: 0; -webkit-tap-highlight-color: transparent; }
 button { font-family: inherit; cursor: pointer; }
-input::placeholder { color: #39414e; }
+input::placeholder, textarea::placeholder { color: #596270; opacity: 1; }
 :focus-visible { outline: 2px solid #ffd488; outline-offset: 3px; border-radius: 8px; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
