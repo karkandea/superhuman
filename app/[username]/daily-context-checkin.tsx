@@ -56,7 +56,7 @@ export default function DailyContextCheckin({
     return (
       <section aria-label="Daily Context confirmed" style={{ border: `1px solid ${S.line}`, borderRadius: 17, background: S.panel, padding: '16px 15px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-          <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, color: S.amber, fontWeight: 700, letterSpacing: '.14em' }}>TODAY CONTEXT LOCKED</div>
+          <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, color: S.amber, fontWeight: 700, letterSpacing: '.14em' }}>TODAY CONTEXT SAVED</div>
           {generationBusy && <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 8, color: S.gold }}>SYSTEM WORKING…</div>}
         </div>
         <div style={{ marginTop: 8, color: S.ink, fontSize: 13, lineHeight: 1.5 }}>{dailyContextSummary(context)}</div>
