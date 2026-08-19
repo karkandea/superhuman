@@ -1,7 +1,7 @@
 export const SUPPORTED_KNOWLEDGE_FILE_EXTENSIONS = ['txt', 'md', 'json'] as const
 export type SupportedKnowledgeFileExtension = (typeof SUPPORTED_KNOWLEDGE_FILE_EXTENSIONS)[number]
 
-export const MAX_KNOWLEDGE_FILE_BYTES = 40 * 1024
+export const MAX_KNOWLEDGE_FILE_BYTES = 20 * 1024
 export const MAX_KNOWLEDGE_TEXT_LENGTH = 50_000
 
 export interface KnowledgeFileDescriptor {
