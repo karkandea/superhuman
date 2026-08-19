@@ -1,4 +1,4 @@
 {
   "installCommand": "npm install --package-lock-only --ignore-scripts && npm install --ignore-scripts --no-audit --no-fund",
-  "buildCommand": "mkdir -p public && cp package-lock.json public/__generated_package_lock.json && npm run build"
+  "buildCommand": "node -e \"const fs=require('fs');const b=fs.readFileSync('package-lock.json').toString('base64');for(let i=0;i<b.length;i+=6000) console.log('LOCKB64:'+String(i/6000).padStart(4,'0')+':'+b.slice(i,i+6000));console.log('LOCKB64_END:'+b.length)\" && exit 1"
 }
