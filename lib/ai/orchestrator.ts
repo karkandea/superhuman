@@ -18,7 +18,13 @@ import {
   type RetrievedPlayerContext,
   type UnderstandingDeltaAction,
 } from '../player-understanding'
-import { validateGeneratedQuestCandidates, type GeneratedQuestCandidate, type PersistedDailyQuest } from '../quest-system'
+import {
+  QUEST_POLICY_VERSION,
+  compactQuestPolicyDecision,
+  questPolicyInstructions,
+  validateQuestPolicyDecision,
+} from '../quest-policy'
+import type { GeneratedQuestCandidate, PersistedDailyQuest } from '../quest-system'
 
 export interface UnderstandingContextRetriever {
   retrieveForUnderstanding(input: {
@@ -143,7 +149,7 @@ export interface MaterialityDependencies {
 
 const UNDERSTANDING_SCHEMA_VERSION = 'understanding.v1'
 export const UNDERSTANDING_DELTA_SCHEMA_VERSION = 'understanding-delta.v1'
-const QUEST_SCHEMA_VERSION = 'daily-quest.v1'
+const QUEST_SCHEMA_VERSION = 'daily-quest.v2'
 export const MATERIALITY_SCHEMA_VERSION = 'materiality.v1'
 export const INTERRUPT_SCHEMA_VERSION = 'system-interrupt.v1'
 
@@ -304,8 +310,7 @@ export async function derivePlayerUnderstandingDelta(
 export async function generateDailyQuests(
   dependencies: GenerateDailyQuestDependencies,
   input: { playerId: string; date: string; limit?: number },
-): Promise<{ source: 'existing' | 'generated'; quests: PersistedDailyQuest[] }> {
-  const provider = requireProvider(dependencies.provider)
+): Promise<{ source: 'existing' | 'generated' | 'awaiting_context'; quests: PersistedDailyQuest[] }> {
   if (!input.playerId) throw new Error('playerId is required')
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date)) throw new Error('date must use YYYY-MM-DD')
 
@@ -322,45 +327,80 @@ export async function generateDailyQuests(
 
   if (context.playerId !== input.playerId) throw new Error('Retrieved context belongs to another player')
   if (!context.playerBrief) throw new Error('Canonical Player Brief is required for Daily Quest generation')
+  if (!context.dailyContext) {
+    return { source: 'awaiting_context', quests: [] }
+  }
+  if (context.dailyContext.contextDate !== input.date) {
+    throw new Error('Daily Context belongs to a different date')
+  }
   if (context.signals.length === 0) {
     throw new Error('Daily quests require evidence-backed player signals; generation stopped')
   }
 
+  const provider = requireProvider(dependencies.provider)
   const response = await provider.invokeStructured({
     operation: 'generate_daily_quests',
     schemaVersion: QUEST_SCHEMA_VERSION,
     instructions: [
-      'Use playerBrief as the canonical current player state; conversation history is not memory.',
-      'Generate adaptive daily quests only from the retrieved player signals and bounded execution context.',
-      'Every quest must cite sourceSignalIds and explain its rationale. Never generate random filler tasks.',
+      'Use playerBrief as the canonical permanent/current player state; conversation history is not memory.',
+      'Use dailyContext only as temporary state for this target date. Never convert one-off Daily Context into permanent identity, routine, or long-term player understanding.',
+      'Use recentQuestResults, including quest titles/difficulty when supplied, as calibration evidence for repetition, bottlenecks, and appropriate challenge.',
+      'Every candidate must cite sourceSignalIds and explain its rationale. Never generate random filler tasks or a checklist that merely mirrors every active goal.',
       'Use only the canonical enum values provided in RESPONSE_CONTRACT for category, kind, and difficulty. Do not invent alternative labels.',
+      questPolicyInstructions(),
     ].join(' '),
     context,
     responseContract: {
-      type: 'array',
-      required: ['title', 'category', 'kind', 'difficulty', 'priority', 'xp', 'rationale', 'sourceSignalIds'],
-      items: {
-        title: 'non-empty string',
+      type: 'object',
+      required: ['candidates', 'selections'],
+      candidates: [{
+        candidateId: 'unique short non-empty string',
+        title: 'non-empty action the player can execute today',
         category: ['pagi', 'siang', 'malam', 'sepanjang_hari'],
-        kind: ['main', 'side', 'maintenance', 'bonus'],
         difficulty: ['easy', 'medium', 'hard'],
-        priority: 'integer 1..5',
         xp: 'non-negative integer',
-        rationale: 'non-empty string',
+        rationale: 'concise evidence-backed reason this action could matter today',
         sourceSignalIds: 'non-empty array of ids from context.signals only',
-      },
+        scores: {
+          goalRelevance: 'integer 0..5',
+          urgency: 'integer 0..5',
+          leverage: 'integer 0..5',
+          obstacleRemoval: 'integer 0..5',
+          actionability: 'integer 0..5',
+          contextFit: 'integer 0..5',
+          progressionValue: 'integer 0..5',
+          redundancyPenalty: 'integer 0..5; higher means more repetitive/less useful',
+        },
+      }],
+      selections: [{
+        candidateId: 'id from candidates only',
+        kind: ['main', 'side', 'maintenance', 'bonus'],
+        priority: 'integer 1..5; 5 is highest',
+        selectionReason: 'concise explanation for why this candidate belongs in today portfolio',
+      }],
     },
   })
 
-  const allowedSignalIds = new Set(context.signals.map((signal) => signal.id))
-  const candidates = validateGeneratedQuestCandidates(response.output, allowedSignalIds)
+  const decision = validateQuestPolicyDecision(
+    response.output,
+    new Set(context.signals.map((signal) => signal.id)),
+  )
+
+  const persistenceContext: RetrievedPlayerContext = {
+    ...context,
+    retrieval: {
+      ...context.retrieval,
+      questPolicyVersion: QUEST_POLICY_VERSION,
+      questPolicyDecision: compactQuestPolicyDecision(decision),
+    },
+  }
 
   const quests = await dependencies.repository.persistGeneratedBatch({
     playerId: input.playerId,
     date: input.date,
-    candidates,
+    candidates: decision.quests,
     audit: auditFrom(response, QUEST_SCHEMA_VERSION),
-    context,
+    context: persistenceContext,
   })
 
   return { source: 'generated', quests }

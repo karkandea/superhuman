@@ -21,6 +21,13 @@ function playerBrief() {
   }
 }
 
+function dailyContext() {
+  return {
+    id: 'dc-1', userId: 'p1', contextDate: '2026-08-18', mode: 'normal', text: '',
+    createdAt: '2026-08-18T00:00:00Z', updatedAt: '2026-08-18T00:00:00Z',
+  }
+}
+
 test('manual knowledge normalization preserves natural text and validates boundaries', () => {
   const normalized = normalizeManualKnowledge({ entryType: 'life_update', text: '  Interview gue tadi gagal karena system design.  ', title: '  Interview update  ' })
   assert.equal(normalized.text, 'Interview gue tadi gagal karena system design.')
@@ -69,20 +76,23 @@ test('bounded understanding retrieval only loads selected raw entries', async ()
   assert.match(context.retrieval.reason, /without scanning the full Life Vault/)
 })
 
-test('daily quest context consumes canonical brief, derived signals and results without loading raw Vault', async () => {
+test('daily quest context consumes canonical brief, Daily Context, derived signals and results without loading raw Vault', async () => {
   let rawLoads = 0
   const retriever = new BoundedPlayerContextRetriever({
     async loadKnowledgeEntries() { rawLoads += 1; return [] },
     async loadSignals() { return [{ id: 's1', userId: 'p1', type: 'obstacle', summary: 'System design gap', importance: 5, confidence: 0.9, observedAt: '2026-08-18T00:00:00Z' }] },
-    async loadRecentQuestResults() { return [{ id: 'r0', questId: 'q0', outcome: 'failed', recordedAt: '2026-08-17T12:00:00Z' }] },
+    async loadRecentQuestResults() { return [{ id: 'r0', questId: 'q0', outcome: 'failed', recordedAt: '2026-08-17T12:00:00Z', questTitle: 'System design drill', questDifficulty: 'hard' }] },
     async loadCurrentPlayerBrief() { return playerBrief() },
+    async loadDailyContext() { return dailyContext() },
   })
   const context = await retriever.retrieveForDailyQuest({ playerId: 'p1', date: '2026-08-18', limit: 32 })
   assert.equal(rawLoads, 0)
   assert.equal(context.playerBrief.id, 'brief-1')
+  assert.equal(context.dailyContext.id, 'dc-1')
   assert.equal(context.signals[0].id, 's1')
   assert.equal(context.recentQuestResults[0].id, 'r0')
   assert.equal(context.recentQuestResults[0].outcome, 'failed')
+  assert.equal(context.recentQuestResults[0].questDifficulty, 'hard')
 })
 
 test('quest validation rejects random/untraceable output', () => {
@@ -103,16 +113,16 @@ test('daily quest generation is stable on refresh and skips provider when persis
   assert.equal(providerCalls, 0)
 })
 
-test('daily quest generation requires evidence-backed signals after canonical brief is present', async () => {
+test('daily quest generation requires evidence-backed signals after canonical brief and Daily Context are present', async () => {
   const deps = {
     provider: { id: 'test', async invokeStructured() { throw new Error('provider must not run') } },
-    contextRetriever: { async retrieveForDailyQuest() { return { playerId: 'p1', purpose: 'daily_quest', generatedAt: new Date().toISOString(), playerBrief: playerBrief(), knowledgeEntries: [], signals: [], recentQuestResults: [], retrieval: { strategy: 'signals', limit: 32, reason: 'daily quest' } } } },
+    contextRetriever: { async retrieveForDailyQuest() { return { playerId: 'p1', purpose: 'daily_quest', generatedAt: new Date().toISOString(), playerBrief: playerBrief(), dailyContext: dailyContext(), knowledgeEntries: [], signals: [], recentQuestResults: [], retrieval: { strategy: 'signals', limit: 32, reason: 'daily quest' } } } },
     repository: { async findForDate() { return [] }, async persistGeneratedBatch() { throw new Error('must not persist') } },
   }
   await assert.rejects(() => generateDailyQuests(deps, { playerId: 'p1', date: '2026-08-18' }), /evidence-backed player signals/)
 })
 
-test('consumer ChatGPT prompt isolates bounded context as untrusted data', () => {
+test('consumer ChatGPT prompt isolates bounded context as untrusted player data', () => {
   const prompt = buildConsumerChatPrompt({
     operation: 'generate_daily_quests',
     schemaVersion: 'daily-quest.v1',

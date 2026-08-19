@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import type { DailyContextSnapshot } from '../daily-context'
 import type { PlayerContextStore } from '../context-retrieval'
 import type { MaterialityRepository, UnderstandingRepository, DailyQuestRepository } from '../ai/orchestrator'
 import type { ActiveQuestContext, PersistedMaterialityAssessment, PersistedQuestInterrupt } from '../materiality'
@@ -78,6 +79,18 @@ function mapPlayerBrief(row: Record<string, unknown>): PlayerBriefSnapshot {
   }
 }
 
+function mapDailyContext(row: Record<string, unknown>): DailyContextSnapshot {
+  return {
+    id: String(row.id),
+    userId: String(row.user_id),
+    contextDate: String(row.context_date),
+    mode: row.mode === 'normal' ? 'normal' : 'context',
+    text: String(row.context_text ?? ''),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+  }
+}
+
 function retrievalWithBrief(context: { retrieval: Record<string, unknown>; playerBrief?: PlayerBriefSnapshot }) {
   return {
     ...context.retrieval,
@@ -87,6 +100,10 @@ function retrievalWithBrief(context: { retrieval: Record<string, unknown>; playe
       playerBriefSchemaVersion: context.playerBrief.schemaVersion,
     } : {}),
   }
+}
+
+function persistedQuestResultIds(results: RecentQuestResult[]) {
+  return results.filter(result => !result.id.startsWith('history:')).map(result => result.id)
 }
 
 export function createSupabasePlayerContextStore(client: SupabaseClient): PlayerContextStore {
@@ -132,22 +149,84 @@ export function createSupabasePlayerContextStore(client: SupabaseClient): Player
       })) as PlayerSignal[]
     },
 
-    async loadRecentQuestResults(playerId, limit) {
+    async loadRecentQuestResults(playerId, limit, beforeDate) {
       const { data, error } = await client
         .from('quest_results')
         .select('id,quest_id,outcome,note,recorded_at')
         .eq('user_id', playerId)
         .order('recorded_at', { ascending: false })
-        .limit(limit)
+        .limit(Math.max(limit, limit * 2))
       fail(error, 'load quest results')
 
-      return (data ?? []).map((row) => ({
-        id: row.id,
-        questId: row.quest_id,
-        outcome: row.outcome,
-        ...(row.note ? { note: row.note } : {}),
-        recordedAt: row.recorded_at,
-      })) as RecentQuestResult[]
+      const rows = data ?? []
+      const resultQuestIds = [...new Set(rows.map((row) => row.quest_id).filter(Boolean))]
+      const questById = new Map<string, { title: string; kind: string; difficulty: string; quest_date: string }>()
+
+      if (resultQuestIds.length > 0) {
+        const { data: quests, error: questError } = await client
+          .from('daily_quests')
+          .select('id,title,kind,difficulty,quest_date')
+          .eq('user_id', playerId)
+          .in('id', resultQuestIds)
+        fail(questError, 'load quest result calibration context')
+        for (const quest of quests ?? []) {
+          questById.set(quest.id, {
+            title: quest.title,
+            kind: quest.kind,
+            difficulty: quest.difficulty,
+            quest_date: quest.quest_date,
+          })
+        }
+      }
+
+      const persisted = rows.map((row) => {
+        const quest = questById.get(row.quest_id)
+        return {
+          id: row.id,
+          questId: row.quest_id,
+          outcome: row.outcome,
+          ...(row.note ? { note: row.note } : {}),
+          recordedAt: row.recorded_at,
+          ...(quest ? {
+            questTitle: quest.title,
+            questKind: quest.kind,
+            questDifficulty: quest.difficulty,
+            questDate: quest.quest_date,
+          } : {}),
+        }
+      }) as RecentQuestResult[]
+
+      if (!beforeDate) return persisted.slice(0, limit)
+
+      const { data: historical, error: historyError } = await client
+        .from('daily_quests')
+        .select('id,title,kind,difficulty,quest_date,status,created_at')
+        .eq('user_id', playerId)
+        .lt('quest_date', beforeDate)
+        .in('status', ['pending', 'partial', 'skipped', 'failed'])
+        .order('quest_date', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(Math.max(limit, limit * 2))
+      fail(historyError, 'load prior quest calibration history')
+
+      const persistedQuestIds = new Set(rows.map(row => String(row.quest_id)))
+      const historicalCalibration = (historical ?? [])
+        .filter(quest => !persistedQuestIds.has(String(quest.id)))
+        .map((quest) => ({
+          id: `history:${quest.id}:${quest.quest_date}`,
+          questId: String(quest.id),
+          outcome: quest.status === 'pending' ? 'skipped' : quest.status,
+          note: quest.status === 'pending' ? 'Quest remained incomplete when its day ended.' : undefined,
+          recordedAt: `${quest.quest_date}T23:59:59Z`,
+          questTitle: String(quest.title),
+          questKind: String(quest.kind),
+          questDifficulty: String(quest.difficulty),
+          questDate: String(quest.quest_date),
+        })) as RecentQuestResult[]
+
+      return [...persisted, ...historicalCalibration]
+        .sort((left, right) => String(right.questDate ?? right.recordedAt).localeCompare(String(left.questDate ?? left.recordedAt)))
+        .slice(0, limit)
     },
 
     async loadActiveQuests(playerId, date) {
@@ -157,7 +236,7 @@ export function createSupabasePlayerContextStore(client: SupabaseClient): Player
         .eq('user_id', playerId)
         .eq('quest_date', date)
         .in('status', ['pending', 'partial'])
-        .order('priority', { ascending: true })
+        .order('priority', { ascending: false })
         .order('created_at', { ascending: true })
       fail(error, 'load active daily quests')
 
@@ -196,6 +275,17 @@ export function createSupabasePlayerContextStore(client: SupabaseClient): Player
       fail(error, 'load current player brief')
       return data ? mapPlayerBrief(data as Record<string, unknown>) : null
     },
+
+    async loadDailyContext(playerId, date) {
+      const { data, error } = await client
+        .from('daily_contexts')
+        .select('id,user_id,context_date,mode,context_text,created_at,updated_at')
+        .eq('user_id', playerId)
+        .eq('context_date', date)
+        .maybeSingle()
+      fail(error, 'load Daily Context')
+      return data ? mapDailyContext(data as Record<string, unknown>) : null
+    },
   }
 }
 
@@ -226,7 +316,7 @@ export function createSupabaseUnderstandingRepository(client: SupabaseClient): U
         p_actions: actions,
         p_knowledge_entry_ids: context.knowledgeEntries.map((entry) => entry.id),
         p_signal_ids: context.signals.map((signal) => signal.id),
-        p_quest_result_ids: context.recentQuestResults.map((result) => result.id),
+        p_quest_result_ids: persistedQuestResultIds(context.recentQuestResults),
         p_active_quest_ids: (context.activeQuests ?? []).map((quest) => quest.id),
         p_player_brief_id: context.playerBrief.id,
         p_batch_key: batchKey,
@@ -286,7 +376,7 @@ export function createSupabaseDailyQuestRepository(client: SupabaseClient): Dail
         .select('*,quest_signal_sources(signal_id)')
         .eq('user_id', playerId)
         .eq('quest_date', date)
-        .order('priority', { ascending: true })
+        .order('priority', { ascending: false })
         .order('created_at', { ascending: true })
       fail(error, 'find daily quests')
 
@@ -301,7 +391,7 @@ export function createSupabaseDailyQuestRepository(client: SupabaseClient): Dail
         p_user_id: playerId,
         p_quest_date: date,
         p_signal_ids: context.signals.map((signal) => signal.id),
-        p_quest_result_ids: context.recentQuestResults.map((result) => result.id),
+        p_quest_result_ids: persistedQuestResultIds(context.recentQuestResults),
         p_quests: candidates,
         p_provider_id: audit.providerId,
         p_model_id: audit.modelId,

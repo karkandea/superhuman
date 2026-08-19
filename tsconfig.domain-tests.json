@@ -11,10 +11,13 @@
   },
   "include": [
     "lib/checklist-data.ts",
+    "lib/daily-context.ts",
+    "lib/daily-context-service.ts",
     "lib/player-knowledge.ts",
     "lib/player-knowledge-service.ts",
     "lib/player-understanding.ts",
     "lib/quest-system.ts",
+    "lib/quest-policy.ts",
     "lib/materiality.ts",
     "lib/activity-orchestration.ts",
     "lib/system-ux.ts",

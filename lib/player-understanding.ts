@@ -1,3 +1,5 @@
+import type { DailyContextSnapshot } from './daily-context'
+
 export const UNDERSTANDING_TYPES = [
   'goal',
   'obstacle',
@@ -51,6 +53,10 @@ export interface RecentQuestResult {
   outcome: 'completed' | 'partial' | 'skipped' | 'failed'
   note?: string
   recordedAt: string
+  questTitle?: string
+  questKind?: string
+  questDifficulty?: string
+  questDate?: string
 }
 
 export interface PlayerBriefUnderstandingItem {
@@ -147,6 +153,7 @@ export interface RetrievedPlayerContext {
   generatedAt: string
   summary?: string
   playerBrief?: PlayerBriefSnapshot
+  dailyContext?: DailyContextSnapshot | null
   knowledgeEntries: Array<{
     id: string
     type: string
@@ -160,6 +167,10 @@ export interface RetrievedPlayerContext {
     strategy: string
     limit: number
     reason: string
+    dailyContextId?: string
+    dailyContextMode?: string
+    questPolicyVersion?: string
+    questPolicyDecision?: Record<string, unknown>
   }
 }
 
