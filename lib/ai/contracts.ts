@@ -1,8 +1,19 @@
 import type { MaterialityContext } from '../materiality'
+import type { ProgressionIntelligenceContext } from '../progression-intelligence'
 import type { RetrievedPlayerContext } from '../player-understanding'
 
-export type AiOperation = 'derive_understanding' | 'derive_understanding_delta' | 'generate_daily_quests' | 'assess_materiality' | 'generate_system_interrupt'
-export type AiRequestContext = RetrievedPlayerContext | MaterialityContext
+export type AiOperation =
+  | 'derive_understanding'
+  | 'derive_understanding_delta'
+  | 'derive_progression_map'
+  | 'review_quest_responses'
+  | 'derive_player_response_model'
+  | 'choose_progression_target'
+  | 'generate_daily_quests'
+  | 'assess_materiality'
+  | 'generate_system_interrupt'
+
+export type AiRequestContext = RetrievedPlayerContext | MaterialityContext | ProgressionIntelligenceContext
 
 export interface StructuredModelRequest {
   operation: AiOperation
