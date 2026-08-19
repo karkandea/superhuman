@@ -44,11 +44,11 @@ test('quest result capture separates compliance storage from effectiveness learn
 
 test('worker runs response learning and strategic target before new quest generation', () => {
   const worker = read('workers/chatgpt-consumer/worker-v2.mjs')
-  const syncAt = worker.indexOf('syncQuestResponseEvents')
-  const reviewAt = worker.indexOf('reviewQuestResponses')
-  const responseModelAt = worker.indexOf('refreshPlayerResponseModel')
-  const targetAt = worker.lastIndexOf('chooseProgressionTarget')
-  const generationAt = worker.lastIndexOf('generateDailyQuestsWithIntelligence')
+  const syncAt = worker.indexOf('responseEventsSynced = await progressionStore.syncQuestResponseEvents')
+  const reviewAt = worker.indexOf('const reviews = await reviewQuestResponses')
+  const responseModelAt = worker.indexOf('const responseModel = await refreshPlayerResponseModel')
+  const targetAt = worker.indexOf('const target = await chooseProgressionTarget')
+  const generationAt = worker.indexOf('generated = await generateDailyQuestsWithIntelligence')
   assert.ok(syncAt > 0)
   assert.ok(reviewAt > syncAt)
   assert.ok(responseModelAt > reviewAt)
