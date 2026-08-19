@@ -21,7 +21,7 @@ test('System update upload accepts only bounded TXT, MD and JSON files', () => {
   )
   assert.throws(
     () => validateKnowledgeFileDescriptor({ name: 'huge.txt', size: MAX_KNOWLEDGE_FILE_BYTES + 1 }),
-    /under 40 KB/,
+    /under 20 KB/,
   )
   assert.throws(
     () => validateKnowledgeFileDescriptor({ name: 'empty.md', size: 0 }),
