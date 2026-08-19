@@ -60,14 +60,14 @@ The dimensions are a consistent reasoning frame, not a hardcoded weighted formul
 
 ## Portfolio invariants
 
-Initial Daily Quest contains **2–5** quests:
+Initial Daily Quest contains **1–5** quests:
 
 - exactly **1 Main Quest**
 - at most **2 Side Quests**
 - at most **1 Maintenance Quest**
 - at most **1 Bonus Quest**
 
-Fewer quests are correct when capacity is low or one action deserves concentrated attention. Never invent filler to occupy a slot. Not every life domain needs representation every day.
+A single focused Main Quest is valid when capacity is very low or one action deserves concentrated attention. Never invent filler to occupy a slot. Not every life domain needs representation every day.
 
 Priority uses **5 = highest** and **1 = lowest**.
 
