@@ -4,6 +4,7 @@ const assert = require('node:assert/strict')
 
 const {
   MAX_KNOWLEDGE_FILE_BYTES,
+  MAX_KNOWLEDGE_FILE_UPDATE_BYTES,
   composeKnowledgeText,
   deriveSystemFreshness,
   validateKnowledgeFileDescriptor,
@@ -40,6 +41,15 @@ test('System update composer merges optional message and text file into one know
   assert.equal(composeKnowledgeText('', 'only file text', 'notes.txt'), 'only file text')
   assert.throws(() => composeKnowledgeText('   '), /Tell the System something or attach a file/)
   assert.throws(() => composeKnowledgeText('x'.repeat(50_001)), /too large/)
+})
+
+test('text plus attachment stays below the bounded reasoning payload budget', () => {
+  assert.equal(MAX_KNOWLEDGE_FILE_UPDATE_BYTES, 22 * 1024)
+  assert.throws(
+    () => composeKnowledgeText('caption '.repeat(500), 'x'.repeat(20 * 1024), 'context.txt'),
+    /note plus attached file under 22 KB total/,
+  )
+  assert.doesNotThrow(() => composeKnowledgeText('short note', 'x'.repeat(18 * 1024), 'context.txt'))
 })
 
 test('queued progression is presented as collecting updates', () => {
