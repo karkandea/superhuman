@@ -1,9 +1,8 @@
 name: System UX CI Probe
 
 on:
-  push:
-    branches:
-      - agent/system-ux-ci-probe
+  pull_request:
+    types: [opened, reopened, synchronize]
 
 permissions:
   contents: read
