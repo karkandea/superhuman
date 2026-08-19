@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { CATEGORY_LABEL, CATEGORY_ORDER, type Category, toDateStr } from '@/lib/checklist-data'
+import { dailyContextSummary, type DailyContextSnapshot } from '@/lib/daily-context'
 import { questKindLabel } from '@/lib/quest-system'
 
 const S = {
@@ -98,6 +99,7 @@ export default function DayDetailPage() {
   const [quests, setQuests] = useState<QuestRow[]>([])
   const [interrupts, setInterrupts] = useState<InterruptRow[]>([])
   const [interruptActions, setInterruptActions] = useState<InterruptActionRow[]>([])
+  const [dailyContext, setDailyContext] = useState<DailyContextSnapshot | null>(null)
   const [legacyChecked, setLegacyChecked] = useState<string[]>([])
   const [legacyItems, setLegacyItems] = useState<LegacyItem[]>([])
   const [legacyFound, setLegacyFound] = useState(false)
@@ -111,7 +113,7 @@ export default function DayDetailPage() {
       const { data: user } = await supabase.from('users').select('id').eq('name', username).single()
       if (!user) { router.push('/'); return }
 
-      const [questResult, interruptResult, legacyResult, itemResult] = await Promise.all([
+      const [questResult, interruptResult, dailyContextResult, legacyResult, itemResult] = await Promise.all([
         supabase
           .from('daily_quests')
           .select('id,title,category,kind,difficulty,priority,xp,rationale,source,status,created_at,completed_at,revision,interrupt_id,interrupt_reason')
@@ -125,6 +127,12 @@ export default function DayDetailPage() {
           .eq('user_id', user.id)
           .eq('quest_date', date)
           .order('created_at', { ascending: true }),
+        supabase
+          .from('daily_contexts')
+          .select('id,user_id,context_date,mode,context_text,created_at,updated_at')
+          .eq('user_id', user.id)
+          .eq('context_date', date)
+          .maybeSingle(),
         supabase
           .from('daily_logs')
           .select('checked_ids')
@@ -141,6 +149,7 @@ export default function DayDetailPage() {
 
       if (questResult.error) throw questResult.error
       if (interruptResult.error) throw interruptResult.error
+      if (dailyContextResult.error) throw dailyContextResult.error
       if (legacyResult.error) throw legacyResult.error
       if (itemResult.error) throw itemResult.error
 
@@ -161,6 +170,15 @@ export default function DayDetailPage() {
       setQuests((questResult.data ?? []) as QuestRow[])
       setInterrupts(interruptRows)
       setInterruptActions(actions)
+      setDailyContext(dailyContextResult.data ? {
+        id: dailyContextResult.data.id,
+        userId: dailyContextResult.data.user_id,
+        contextDate: dailyContextResult.data.context_date,
+        mode: dailyContextResult.data.mode === 'normal' ? 'normal' : 'context',
+        text: dailyContextResult.data.context_text ?? '',
+        createdAt: dailyContextResult.data.created_at,
+        updatedAt: dailyContextResult.data.updated_at,
+      } : null)
       setLegacyChecked(legacyResult.data?.checked_ids ?? [])
       setLegacyFound(Boolean(legacyResult.data))
       setLegacyItems((itemResult.data ?? []) as LegacyItem[])
@@ -213,6 +231,14 @@ export default function DayDetailPage() {
           <div role="status" style={{ border: `1px solid ${S.line}`, borderRadius: 14, background: S.panel2, padding: '14px', color: S.muted, fontSize: 12, lineHeight: 1.5 }}>
             Progression for this day could not load. No data was changed.
           </div>
+        )}
+
+        {!loadFailed && dailyContext && (
+          <section style={{ border: `1px solid ${S.line}`, borderRadius: 14, background: S.panel2, padding: '13px 14px', marginBottom: quests.length > 0 ? 12 : 16 }}>
+            <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.muted, fontSize: 8.5, letterSpacing: '.12em' }}>DAILY CONTEXT</div>
+            <div style={{ marginTop: 6, color: S.ink, fontSize: 12.5, lineHeight: 1.5 }}>{dailyContextSummary(dailyContext)}</div>
+            <div style={{ marginTop: 5, color: S.muted2, fontSize: 10, lineHeight: 1.45 }}>Temporary input used for this day’s first quest selection. It did not become permanent player memory by itself.</div>
+          </section>
         )}
 
         {!loadFailed && quests.length > 0 && (
