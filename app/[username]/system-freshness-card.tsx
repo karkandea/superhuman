@@ -64,7 +64,8 @@ export default function SystemFreshnessCard({
 
   useEffect(() => {
     if (!playerId) return
-    void refresh()
+    const first = window.setTimeout(() => { void refresh() }, 0)
+    return () => window.clearTimeout(first)
   }, [playerId, refresh, refreshToken])
 
   useEffect(() => {
