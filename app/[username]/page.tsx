@@ -209,17 +209,9 @@ export default function DailyQuestPage() {
     return () => { cancelled = true }
   }, [username, router, refreshStreak, loadGeneratedQuests, syncAutomaticGeneration, applyJobState, watchGenerationJob])
 
-  function toggle(id: string) {
-    if (!questReady || mutatingQuestIds.has(id)) return
-    const before = checkedRef.current
-    const willComplete = !before.includes(id)
-    const next = willComplete ? [...before, id] : before.filter(value => value !== id)
-    checkedRef.current = next
-    setChecked(next)
-    setSaveStatus('saving')
-    setMutatingQuestIds(current => new Set(current).add(id))
-
-    void supabase.rpc('set_daily_quest_completion', { p_quest_id: id, p_completed: willComplete }).then(({ error }) => {
+  async function persistQuestCompletion(id: string, before: string[], willComplete: boolean) {
+    try {
+      const { error } = await supabase.rpc('set_daily_quest_completion', { p_quest_id: id, p_completed: willComplete })
       if (error) {
         checkedRef.current = before
         setChecked(before)
@@ -230,13 +222,25 @@ export default function DailyQuestPage() {
       setAllQuests(current => current.map(quest => quest.id === id ? { ...quest, status: willComplete ? 'completed' : 'pending' } : quest))
       setSaveStatus('saved')
       window.setTimeout(() => setSaveStatus('idle'), 1400)
-    }).finally(() => {
+    } finally {
       setMutatingQuestIds(current => {
         const nextSet = new Set(current)
         nextSet.delete(id)
         return nextSet
       })
-    })
+    }
+  }
+
+  function toggle(id: string) {
+    if (!questReady || mutatingQuestIds.has(id)) return
+    const before = checkedRef.current
+    const willComplete = !before.includes(id)
+    const next = willComplete ? [...before, id] : before.filter(value => value !== id)
+    checkedRef.current = next
+    setChecked(next)
+    setSaveStatus('saving')
+    setMutatingQuestIds(current => new Set(current).add(id))
+    void persistQuestCompletion(id, before, willComplete)
   }
 
   async function retryGeneration() {
