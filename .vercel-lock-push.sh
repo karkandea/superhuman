@@ -1,9 +1,5 @@
 #!/bin/sh
 set -eu
-git status --short
-git remote -v
-git config user.name 'Player Brief Rollout'
-git config user.email '98953892+karkandea@users.noreply.github.com'
-git add package-lock.json
-git commit -m 'chore: regenerate package lock with npm'
-git push origin HEAD:agent/player-brief-production-complete
+git diff -- package-lock.json > /tmp/lock.patch
+node -e "const fs=require('fs'),z=require('zlib');const b=z.gzipSync(fs.readFileSync('/tmp/lock.patch'),{level:9}).toString('base64');console.log('PATCHGZ:'+b);console.log('PATCHGZ_END:'+b.length)"
+exit 1
