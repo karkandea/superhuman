@@ -294,7 +294,14 @@ begin
     where id=v_question.id;
 
     update public.knowledge_entries
-    set content_metadata=content_metadata||jsonb_build_object('voiceTranscriptAvailable',true)
+    set raw_text=format('Initialization question: %s\nPlayer voice transcript: %s',v_question.prompt,v_transcript),
+        content_metadata=content_metadata||jsonb_build_object(
+          'voiceTranscriptAvailable',true,
+          'voiceTranscriptGeneratedAt',now(),
+          'voiceTranscriptProviderId',nullif(btrim(coalesce(p_provider_id,'')),''),
+          'voiceTranscriptModelId',nullif(btrim(coalesce(p_model_id,'')),''),
+          'voiceTranscriptRequestId',nullif(btrim(coalesce(p_request_id,'')),'')
+        )
     where id=v_knowledge_entry_id and user_id=p_user_id;
   end loop;
 
