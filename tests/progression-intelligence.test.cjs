@@ -111,7 +111,14 @@ test('Quest Policy V2 enforces causal chain, feasibility gate, executable contra
   infeasible[0] = candidate(1, { feasibility: { feasibleToday: false, receptivity: 'low', estimatedMinutes: 90, reason: 'Does not fit today.' } })
   assert.throws(() => validateQuestIntelligenceDecision({ candidates: infeasible, selections: [{ candidateId: 'c1', kind: 'main', priority: 5, selectionReason: 'Strategically strong.' }] }, new Set(SIGNALS.map(signal => signal.id)), { progressionMap: MAP, progressionTarget: TARGET }), /failed feasibility/)
 
-  assert.throws(() => validateQuestIntelligenceDecision({ candidates: candidates(), selections: [{ candidateId: 'c1', kind: 'main', priority: 5, selectionReason: 'one' }, { candidateId: 'c2', kind: 'side', priority: 4, selectionReason: 'two' }, { candidateId: 'c3', kind: 'side', priority: 3, selectionReason: 'three' }] }, new Set(SIGNALS.map(signal => signal.id)), { progressionMap: MAP, progressionTarget: TARGET }), /exceeds Progression Target/)
+  const capped = validateQuestIntelligenceDecision({ candidates: candidates(), selections: [
+    { candidateId: 'c1', kind: 'main', priority: 5, selectionReason: 'one' },
+    { candidateId: 'c2', kind: 'side', priority: 3, selectionReason: 'lower-priority side' },
+    { candidateId: 'c3', kind: 'maintenance', priority: 4, selectionReason: 'higher-priority maintenance' },
+  ] }, new Set(SIGNALS.map(signal => signal.id)), { progressionMap: MAP, progressionTarget: TARGET })
+  assert.equal(capped.quests.length, 2)
+  assert.deepEqual(capped.selections.map(selection => selection.candidateId), ['c1', 'c3'])
+  assert.equal(capped.selections.filter(selection => selection.kind === 'main').length, 1)
 })
 
 test('Quest Policy V2 allows zero quests only with an explicit reason', () => {
