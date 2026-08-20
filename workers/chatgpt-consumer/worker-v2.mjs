@@ -4,10 +4,7 @@ import { hostname } from 'node:os'
 
 import { ChatGptConsumerWebProvider } from '../../lib/ai/chatgpt-consumer-provider.ts'
 import { BoundedPlayerContextRetriever } from '../../lib/context-retrieval.ts'
-import {
-  derivePlayerUnderstandingDelta,
-  generateSystemInterrupt,
-} from '../../lib/ai/orchestrator.ts'
+import { generateSystemInterrupt } from '../../lib/ai/orchestrator.ts'
 import { generateDailyQuestsWithIntelligence } from '../../lib/ai/daily-quest-intelligence.ts'
 import {
   chooseProgressionTarget,
@@ -33,6 +30,7 @@ import {
   browserRuntimeSummary,
   loginMode,
 } from './browser-transport.mjs'
+import { deriveActivityUnderstandingDelta } from './voice-knowledge-runtime.mjs'
 
 const WORKER_ID = process.env.SUPERHUMAN_WORKER_ID || process.env.AI_WORKER_ID || `${hostname()}:${process.pid}:${randomUUID().slice(0, 8)}`
 const POLL_MS = Number(process.env.SUPERHUMAN_WORKER_POLL_MS || 2500)
@@ -208,7 +206,7 @@ function classifyError(error) {
   if (/evidence-backed player signals|No player knowledge was retrieved|At least one knowledge entry/.test(message)) {
     return new WorkerError('insufficient_context', message, false)
   }
-  if (/correlation mismatch|operation mismatch|schema version mismatch|malformed JSON|parseable JSON|sourceSignalIds|sourceKnowledgeEntryIds|targetUnderstandingId|outside retrieved context|outside current Player Brief|Understanding delta|Materiality|materiality|System Interrupt|Interrupt action|interrupt plan|affectedQuestIds|urgency|recommendedAction|Quest Policy|Quest candidate|Quest selection|Quest portfolio|Progression Map|Progression Target|Player Response Model|Quest response review|strategic chain|strategic driver|feasibility|receptivity|executionContract|execution contract|effectiveness/.test(message)) {
+  if (/correlation mismatch|operation mismatch|schema version mismatch|malformed JSON|parseable JSON|sourceSignalIds|sourceKnowledgeEntryIds|targetUnderstandingId|outside retrieved context|outside current Player Brief|Understanding delta|Activity voice transcript|Materiality|materiality|System Interrupt|Interrupt action|interrupt plan|affectedQuestIds|urgency|recommendedAction|Quest Policy|Quest candidate|Quest selection|Quest portfolio|Progression Map|Progression Target|Player Response Model|Quest response review|strategic chain|strategic driver|feasibility|receptivity|executionContract|execution contract|effectiveness/.test(message)) {
     return new WorkerError('model_output_invalid', message, true)
   }
   if (/Player Brief is missing|Player brief changed before understanding delta persistence|Progression Map changed during Daily Quest decision/.test(message)) {
@@ -301,7 +299,8 @@ async function processJob(client, job) {
       if (signature === lastBatchSignature) throw new Error('same knowledge batch repeated; backlog did not drain')
       lastBatchSignature = signature
 
-      const delta = await derivePlayerUnderstandingDelta({
+      const delta = await deriveActivityUnderstandingDelta({
+        client,
         provider,
         contextRetriever,
         repository: understandingRepository,
