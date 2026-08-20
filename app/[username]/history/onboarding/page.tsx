@@ -40,14 +40,19 @@ export default function OnboardingHistoryPage() {
 
   useEffect(() => {
     let cancelled = false
-    void load()
-      .catch(cause => {
-        if (!cancelled) setError(cause instanceof Error ? cause.message : 'Player origin could not load.')
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => { cancelled = true }
+    const timer = window.setTimeout(() => {
+      void load()
+        .catch(cause => {
+          if (!cancelled) setError(cause instanceof Error ? cause.message : 'Player origin could not load.')
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false)
+        })
+    }, 0)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
   }, [load])
 
   async function saveTranscript(answer: InitializationHistoryAnswer) {
