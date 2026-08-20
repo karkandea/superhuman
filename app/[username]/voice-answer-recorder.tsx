@@ -43,6 +43,7 @@ export default function VoiceAnswerRecorder({
   const recorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const chunksRef = useRef<Blob[]>([])
+  const recordedUrlRef = useRef<string | null>(null)
   const startedAtRef = useRef(0)
   const timerRef = useRef<number | null>(null)
 
@@ -55,7 +56,8 @@ export default function VoiceAnswerRecorder({
   }
 
   function clearRecorded() {
-    if (recorded?.url) URL.revokeObjectURL(recorded.url)
+    if (recordedUrlRef.current) URL.revokeObjectURL(recordedUrlRef.current)
+    recordedUrlRef.current = null
     setRecorded(null)
     setElapsedMs(0)
     onActiveChange(false)
@@ -63,9 +65,10 @@ export default function VoiceAnswerRecorder({
 
   useEffect(() => () => {
     cleanupStream()
-    if (recorded?.url) URL.revokeObjectURL(recorded.url)
+    if (recordedUrlRef.current) URL.revokeObjectURL(recordedUrlRef.current)
+    recordedUrlRef.current = null
     onActiveChange(false)
-  }, [onActiveChange, recorded?.url])
+  }, [onActiveChange])
 
   async function startRecording() {
     if (disabled || textPresent || recording) return
@@ -91,6 +94,7 @@ export default function VoiceAnswerRecorder({
         const durationMs = Math.min(MAX_INITIALIZATION_AUDIO_DURATION_MS, Date.now() - startedAtRef.current)
         const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' })
         const url = URL.createObjectURL(blob)
+        recordedUrlRef.current = url
         setRecorded({ blob, durationMs, url })
         setElapsedMs(durationMs)
         setRecording(false)
