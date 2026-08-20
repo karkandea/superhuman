@@ -1,0 +1,35 @@
+name: Update Next lockfile
+
+on:
+  push:
+    branches:
+      - chore/next-16-2-11
+
+permissions:
+  contents: write
+
+jobs:
+  update-lock:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: chore/next-16-2-11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Regenerate package lock
+        run: npm install --package-lock-only --ignore-scripts next@16.2.11 eslint-config-next@16.2.11
+      - name: Commit dependency patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- package.json package-lock.json
+          if git diff --cached --quiet; then
+            echo "No dependency changes"
+            exit 0
+          fi
+          git commit -m "chore: upgrade Next.js to 16.2.11"
+          git push origin HEAD:chore/next-16-2-11
