@@ -81,3 +81,20 @@ export async function getAiInferenceJobForDate(
   if (error) throw new Error(`load inference job for date: ${error.message}`)
   return data ? mapJob(data as Record<string, unknown>) : null
 }
+
+export async function getLatestAiInferenceJob(
+  client: SupabaseClient,
+  playerId: string,
+): Promise<AiInferenceJob | null> {
+  if (!playerId) throw new Error('playerId is required')
+  const { data, error } = await client
+    .from('ai_inference_jobs')
+    .select(JOB_COLUMNS)
+    .eq('user_id', playerId)
+    .eq('operation', 'progression_cycle')
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) throw new Error(`load latest inference job: ${error.message}`)
+  return data ? mapJob(data as Record<string, unknown>) : null
+}
