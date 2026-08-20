@@ -20,12 +20,22 @@ export type AiRequestContext =
   | ProgressionIntelligenceContext
   | (RetrievedPlayerContext & { initialization: unknown })
 
+export interface StructuredModelAttachment {
+  id: string
+  kind: 'audio'
+  fileName: string
+  mimeType: string
+  sourceUrl: string
+  label?: string
+}
+
 export interface StructuredModelRequest {
   operation: AiOperation
   schemaVersion: string
   instructions: string
   context: AiRequestContext
   responseContract: Record<string, unknown>
+  attachments?: StructuredModelAttachment[]
 }
 
 export interface AiProviderResponse {
