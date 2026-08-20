@@ -47,6 +47,7 @@ export default function PlayerInitialization({
   const [answer, setAnswer] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [voiceActive, setVoiceActive] = useState(false)
   const [jobStatus, setJobStatus] = useState<AiInferenceJobStatus | 'idle'>('idle')
   const [error, setError] = useState<string | null>(null)
   const watchedJobRef = useRef<string | null>(null)
@@ -84,10 +85,9 @@ export default function PlayerInitialization({
   const answeredThisCycle = questions.filter(item => item.status === 'answered' && item.calibrationVersion === currentCalibrationVersion).length
   const skippedThisCycle = questions.filter(item => item.status === 'skipped' && item.calibrationVersion === currentCalibrationVersion).length
   const progress = totalBasic ? Math.round((addressedBasic / totalBasic) * 100) : 0
-  const busy = saving || jobStatus === 'queued' || jobStatus === 'running'
+  const systemBusy = saving || jobStatus === 'queued' || jobStatus === 'running'
+  const busy = systemBusy || voiceActive
   const calibrating = question?.origin === 'adaptive' || state?.stage === 'calibrating'
-
-  useEffect(() => { setAnswer('') }, [question?.id])
 
   const watchJob = useCallback(async (jobId: string) => {
     if (watchedJobRef.current === jobId) return
@@ -244,10 +244,12 @@ export default function PlayerInitialization({
               key={question.id}
               playerId={playerId}
               questionId={question.id}
-              disabled={busy}
+              disabled={systemBusy}
               textPresent={Boolean(answer.trim())}
+              onActiveChange={setVoiceActive}
               onSaved={async () => {
                 setAnswer('')
+                setVoiceActive(false)
                 await reload()
               }}
             />
