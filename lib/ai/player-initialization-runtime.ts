@@ -38,16 +38,17 @@ function client(): SupabaseClient | null {
   return runtimeClient
 }
 
-export async function isPlayerInitializationReady(playerId: string): Promise<boolean> {
+export async function shouldDeferProgressionMapForInitialization(playerId: string): Promise<boolean> {
   const supabase = client()
-  if (!supabase) return true
+  if (!supabase) return false
   const { data, error } = await supabase
     .from('player_initializations')
-    .select('readiness')
+    .select('readiness,strategic_activation_pending')
     .eq('user_id', playerId)
     .maybeSingle()
-  if (error) throw new Error(`load Player Initialization readiness: ${error.message}`)
-  return data?.readiness === 'ready'
+  if (error) throw new Error(`load Player Initialization strategic gate: ${error.message}`)
+  if (!data) return false
+  return data.readiness !== 'ready' || Boolean(data.strategic_activation_pending)
 }
 
 export async function loadInitializationRuntimeContext(
