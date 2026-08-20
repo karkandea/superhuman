@@ -10,6 +10,7 @@ const CHROME_BIN = process.env.CHATGPT_CHROME_BIN || '/Applications/Google Chrom
 const CDP_PORT = Number(process.env.CHATGPT_CDP_PORT || 9222)
 const CDP_URL = process.env.CHATGPT_CDP_URL || `http://127.0.0.1:${CDP_PORT}`
 const HEADLESS = process.env.CHATGPT_HEADLESS !== 'false'
+const MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024
 
 export class WorkerError extends Error {
   constructor(code, message, retryable = true) {
@@ -106,6 +107,79 @@ async function waitForAssistantResponse(page, previousCount, deadline) {
   throw new WorkerError('generation_timeout', 'ChatGPT response did not finish before timeout', true)
 }
 
+function safeAttachmentName(value, index) {
+  const base = path.basename(String(value || `attachment-${index}`)).replace(/[^A-Za-z0-9._-]/g, '_')
+  return base.slice(0, 180) || `attachment-${index}`
+}
+
+async function materializeAttachments(attachments = []) {
+  if (!attachments.length) return { paths: [], cleanup: async () => {} }
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'superhuman-ai-attachments-'))
+  const paths = []
+
+  try {
+    for (let index = 0; index < attachments.length; index += 1) {
+      const attachment = attachments[index]
+      if (attachment.kind !== 'audio') throw new WorkerError('attachment_type_unsupported', 'Only audio model attachments are supported', false)
+      const response = await fetch(attachment.sourceUrl)
+      if (!response.ok) throw new WorkerError('attachment_download_failed', `Audio evidence could not be loaded (${response.status})`, true)
+      const declaredSize = Number(response.headers.get('content-length') || 0)
+      if (declaredSize > MAX_ATTACHMENT_BYTES) throw new WorkerError('attachment_too_large', 'Audio evidence exceeds the 15 MB worker limit', false)
+      const bytes = Buffer.from(await response.arrayBuffer())
+      if (bytes.length < 1 || bytes.length > MAX_ATTACHMENT_BYTES) throw new WorkerError('attachment_too_large', 'Audio evidence is empty or exceeds the 15 MB worker limit', false)
+      const filePath = path.join(tempDir, `${index}-${safeAttachmentName(attachment.fileName, index)}`)
+      await fs.writeFile(filePath, bytes, { mode: 0o600 })
+      paths.push(filePath)
+    }
+  } catch (error) {
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {})
+    throw error
+  }
+
+  return {
+    paths,
+    cleanup: async () => { await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {}) },
+  }
+}
+
+async function waitForFileInput(page, deadline) {
+  while (Date.now() < deadline) {
+    const input = page.locator('input[type="file"]').first()
+    if (await input.count().catch(() => 0)) return input
+    await sleep(200)
+  }
+  return null
+}
+
+async function attachFiles(page, filePaths, deadline) {
+  if (!filePaths.length) return
+
+  let fileInput = await waitForFileInput(page, Date.now() + 750)
+  if (!fileInput) {
+    const attachButton = await firstVisible(page, [
+      'button[data-testid="composer-plus-btn"]',
+      'button[aria-label*="Attach"]',
+      'button[aria-label*="Add photos"]',
+      'button[aria-label*="Add files"]',
+      'button[aria-label*="Upload"]',
+    ])
+    if (attachButton) await attachButton.click()
+
+    const uploadMenuItem = await firstVisible(page, [
+      '[role="menuitem"]:has-text("Upload from computer")',
+      '[role="menuitem"]:has-text("Upload files")',
+      'button:has-text("Upload from computer")',
+    ])
+    if (uploadMenuItem) await uploadMenuItem.click().catch(() => {})
+    fileInput = await waitForFileInput(page, Math.min(deadline, Date.now() + 5000))
+  }
+
+  if (!fileInput) throw new WorkerError('attachment_upload_unavailable', 'ChatGPT file attachment input was not available', true)
+  await fileInput.setInputFiles(filePaths)
+  await sleep(1200)
+  await throwIfProviderRateLimited(page)
+}
+
 let connectedBrowser = null
 let spawnedChrome = null
 
@@ -163,7 +237,8 @@ async function chatGptContext() {
 }
 
 export class PlaywrightChatGptTransport {
-  async execute({ prompt, timeoutMs }) {
+  async execute({ prompt, timeoutMs, attachments = [] }) {
+    const materialized = await materializeAttachments(attachments)
     const context = await chatGptContext()
     const page = await context.newPage()
 
@@ -176,6 +251,7 @@ export class PlaywrightChatGptTransport {
       const assistantMessages = page.locator('[data-message-author-role="assistant"]')
       const previousCount = await assistantMessages.count()
 
+      await attachFiles(page, materialized.paths, deadline)
       await composer.fill(prompt)
       await throwIfProviderRateLimited(page)
 
@@ -197,6 +273,7 @@ export class PlaywrightChatGptTransport {
       }
     } finally {
       await page.close().catch(() => {})
+      await materialized.cleanup()
     }
   }
 }
