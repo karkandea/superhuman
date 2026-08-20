@@ -8,4 +8,7 @@ export {
   assessKnowledgeMateriality,
   generateSystemInterrupt,
 } from './orchestrator-core'
-export { derivePlayerUnderstandingDelta } from './player-initialization-orchestrator'
+export {
+  VOICE_UNDERSTANDING_DELTA_SCHEMA_VERSION,
+  derivePlayerUnderstandingDelta,
+} from './activity-understanding-orchestrator'
