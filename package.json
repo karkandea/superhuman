@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test": "npm run test:domain",
-    "test:domain": "rm -rf .domain-test-dist && tsc -p tsconfig.domain-tests.json && node --test tests/*.test.cjs"
+    "test:ai-safety": "node scripts/assert-no-live-ai-tests.mjs",
+    "test:domain": "npm run test:ai-safety && rm -rf .domain-test-dist && tsc -p tsconfig.domain-tests.json && SUPERHUMAN_TEST_MODE=1 node --test tests/*.test.cjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
