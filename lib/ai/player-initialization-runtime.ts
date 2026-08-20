@@ -1,6 +1,8 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import type { InitializationCalibrationDecision } from '../player-initialization'
 
+const INITIALIZATION_AUDIO_BUCKET = 'player-initialization-audio'
+
 export interface InitializationRuntimeQuestion {
   id: string
   origin: 'basic' | 'adaptive'
@@ -8,9 +10,21 @@ export interface InitializationRuntimeQuestion {
   dimension: string
   prompt: string
   status: 'pending' | 'answered' | 'skipped' | 'superseded'
+  answerMode: 'text' | 'audio'
   answer: string | null
   answerKnowledgeEntryId: string | null
+  voiceAttachmentId: string | null
   calibrationVersion: number
+}
+
+export interface InitializationRuntimeAttachment {
+  id: string
+  questionId: string
+  sourceKnowledgeEntryId: string
+  kind: 'audio'
+  fileName: string
+  mimeType: string
+  sourceUrl: string
 }
 
 export interface InitializationRuntimeContext {
@@ -20,6 +34,13 @@ export interface InitializationRuntimeContext {
   previousDimensions: Record<string, unknown>
   previousReason: string | null
   questions: InitializationRuntimeQuestion[]
+  attachments: InitializationRuntimeAttachment[]
+}
+
+export interface InitializationVoiceTranscript {
+  questionId: string
+  sourceKnowledgeEntryId: string
+  transcript: string
 }
 
 let runtimeClient: SupabaseClient | null | undefined
@@ -66,7 +87,7 @@ export async function loadInitializationRuntimeContext(
       .maybeSingle(),
     supabase
       .from('player_initialization_questions')
-      .select('id,origin,question_key,dimension,prompt,status,answer_text,answer_knowledge_entry_id,calibration_version')
+      .select('id,origin,question_key,dimension,prompt,status,answer_mode,answer_text,answer_knowledge_entry_id,answer_audio_storage_path,answer_audio_file_name,answer_audio_mime_type,transcript_text,calibration_version')
       .eq('user_id', playerId)
       .order('created_at', { ascending: true }),
   ])
@@ -74,6 +95,31 @@ export async function loadInitializationRuntimeContext(
   if (questionError) throw new Error(`load Player Initialization runtime questions: ${questionError.message}`)
   if (!state || state.readiness === 'ready') return null
 
+  const attachmentRows = (rows ?? []).filter(row =>
+    row.status === 'answered'
+    && row.answer_mode === 'audio'
+    && !row.transcript_text
+    && row.answer_audio_storage_path
+    && row.answer_knowledge_entry_id,
+  )
+
+  const attachments: InitializationRuntimeAttachment[] = []
+  for (const row of attachmentRows) {
+    const storagePath = String(row.answer_audio_storage_path)
+    const { data, error } = await supabase.storage.from(INITIALIZATION_AUDIO_BUCKET).createSignedUrl(storagePath, 600)
+    if (error || !data?.signedUrl) throw new Error(`load initialization audio evidence: ${error?.message ?? 'signed URL missing'}`)
+    attachments.push({
+      id: `initialization-audio:${String(row.id)}`,
+      questionId: String(row.id),
+      sourceKnowledgeEntryId: String(row.answer_knowledge_entry_id),
+      kind: 'audio',
+      fileName: String(row.answer_audio_file_name || `voice-${String(row.id)}.webm`),
+      mimeType: String(row.answer_audio_mime_type || 'audio/webm'),
+      sourceUrl: data.signedUrl,
+    })
+  }
+
+  const attachmentByQuestion = new Map(attachments.map(attachment => [attachment.questionId, attachment.id]))
   const questions = (rows ?? []).map(row => ({
     id: String(row.id),
     origin: row.origin as 'basic' | 'adaptive',
@@ -81,8 +127,10 @@ export async function loadInitializationRuntimeContext(
     dimension: String(row.dimension),
     prompt: String(row.prompt),
     status: row.status as InitializationRuntimeQuestion['status'],
+    answerMode: row.answer_mode === 'audio' ? 'audio' as const : 'text' as const,
     answer: row.answer_text ? String(row.answer_text) : null,
     answerKnowledgeEntryId: row.answer_knowledge_entry_id ? String(row.answer_knowledge_entry_id) : null,
+    voiceAttachmentId: attachmentByQuestion.get(String(row.id)) ?? null,
     calibrationVersion: Number(row.calibration_version ?? 0),
   }))
 
@@ -105,12 +153,14 @@ export async function loadInitializationRuntimeContext(
       : {},
     previousReason: state.readiness_reason ? String(state.readiness_reason) : null,
     questions,
+    attachments,
   }
 }
 
 export async function persistInitializationRuntimeDecision(
   playerId: string,
   decision: InitializationCalibrationDecision,
+  voiceTranscripts: InitializationVoiceTranscript[],
   audit: {
     providerId: string
     modelId: string
@@ -121,12 +171,13 @@ export async function persistInitializationRuntimeDecision(
   const supabase = client()
   if (!supabase) throw new Error('Player Initialization runtime persistence requires Supabase worker credentials')
 
-  const { error } = await supabase.rpc('persist_player_initialization_calibration_internal', {
+  const { error } = await supabase.rpc('persist_player_initialization_calibration_v2_internal', {
     p_user_id: playerId,
     p_readiness: decision.readiness,
     p_reason: decision.reason,
     p_dimensions: decision.dimensions,
     p_questions: decision.questions,
+    p_voice_transcripts: voiceTranscripts,
     p_provider_id: audit.providerId,
     p_model_id: audit.modelId,
     p_request_id: audit.requestId ?? null,
