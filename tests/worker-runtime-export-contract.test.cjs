@@ -38,5 +38,5 @@ test('worker-facing TypeScript wrappers expose runtime names explicitly across p
       `${name} must be an explicit runtime re-export; export * is not safe through the root CommonJS package boundary`,
     )
   }
-  assert.match(orchestrator, /export \{ derivePlayerUnderstandingDelta \} from '\.\/player-initialization-orchestrator'/)
+  assert.match(orchestrator, /derivePlayerUnderstandingDelta[\s\S]*?from '\.\/activity-understanding-orchestrator'/)
 })
