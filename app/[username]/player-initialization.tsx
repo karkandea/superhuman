@@ -13,7 +13,10 @@ import {
   type PlayerInitializationState,
 } from '@/lib/player-initialization-service'
 import { supabase } from '@/lib/supabase'
-import VoiceAnswerRecorder from './voice-answer-recorder'
+import VoiceAnswerRecorder, {
+  type VoiceAnswerRecorderHandle,
+  type VoiceRecorderState,
+} from './voice-answer-recorder'
 
 const S = {
   bg: '#0c0f14', panel: '#13171f', panel2: '#10141b', line: '#232a35',
@@ -35,7 +38,6 @@ function nextQuestion(questions: PlayerInitializationQuestion[]) {
 
 export default function PlayerInitialization({
   playerId,
-  playerName,
   onReady,
 }: {
   playerId: string
@@ -47,10 +49,13 @@ export default function PlayerInitialization({
   const [answer, setAnswer] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [voiceActive, setVoiceActive] = useState(false)
+  const [introDismissed, setIntroDismissed] = useState(false)
+  const [voiceState, setVoiceState] = useState<VoiceRecorderState>('idle')
+  const [feedback, setFeedback] = useState<string | null>(null)
   const [jobStatus, setJobStatus] = useState<AiInferenceJobStatus | 'idle'>('idle')
   const [error, setError] = useState<string | null>(null)
   const watchedJobRef = useRef<string | null>(null)
+  const voiceRef = useRef<VoiceAnswerRecorderHandle | null>(null)
 
   const reload = useCallback(async () => {
     await ensurePlayerInitialization(supabase)
@@ -84,10 +89,16 @@ export default function PlayerInitialization({
   const currentCalibrationVersion = state?.calibrationVersion ?? 0
   const answeredThisCycle = questions.filter(item => item.status === 'answered' && item.calibrationVersion === currentCalibrationVersion).length
   const skippedThisCycle = questions.filter(item => item.status === 'skipped' && item.calibrationVersion === currentCalibrationVersion).length
+  const isBasicQuestion = question?.origin === 'basic'
+  const questionNumber = isBasicQuestion ? Math.min(addressedBasic + 1, Math.max(totalBasic, 1)) : null
   const progress = totalBasic ? Math.round((addressedBasic / totalBasic) * 100) : 0
   const systemBusy = saving || jobStatus === 'queued' || jobStatus === 'running'
-  const busy = systemBusy || voiceActive
-  const calibrating = question?.origin === 'adaptive' || state?.stage === 'calibrating'
+  const voiceBusy = voiceState === 'privacy' || voiceState === 'recording' || voiceState === 'saving'
+  const hasVoiceDraft = voiceState === 'ready'
+  const hasTextAnswer = Boolean(answer.trim())
+  const canContinue = !systemBusy && !voiceBusy && (hasTextAnswer || hasVoiceDraft)
+  const canSkip = !systemBusy && voiceState === 'idle'
+  const showIntro = !introDismissed && addressedBasic === 0 && currentCalibrationVersion === 0 && isBasicQuestion
 
   const watchJob = useCallback(async (jobId: string) => {
     if (watchedJobRef.current === jobId) return
@@ -118,15 +129,34 @@ export default function PlayerInitialization({
     }
   }, [reload])
 
+  async function acknowledge(message: string) {
+    setFeedback(message)
+    await sleep(420)
+  }
+
   async function submit() {
-    if (!question || !answer.trim() || busy) return
-    setSaving(true)
+    if (!question || !canContinue) return
     setError(null)
-    try {
-      await answerPlayerInitializationQuestion(supabase, question.id, answer)
+
+    if (hasVoiceDraft) {
+      const saved = await voiceRef.current?.save()
+      if (!saved) return
+      await acknowledge('✓ Got it.')
       setAnswer('')
       await reload()
+      setFeedback(null)
+      return
+    }
+
+    setSaving(true)
+    try {
+      await answerPlayerInitializationQuestion(supabase, question.id, answer)
+      await acknowledge('✓ Got it.')
+      setAnswer('')
+      await reload()
+      setFeedback(null)
     } catch (cause) {
+      setFeedback(null)
       setError(cause instanceof Error ? cause.message : 'Answer could not be saved.')
     } finally {
       setSaving(false)
@@ -134,14 +164,17 @@ export default function PlayerInitialization({
   }
 
   async function skip() {
-    if (!question || busy) return
+    if (!question || !canSkip) return
     setSaving(true)
     setError(null)
     try {
       await skipPlayerInitializationQuestion(supabase, question.id)
+      await acknowledge('✓ Skipped.')
       setAnswer('')
       await reload()
+      setFeedback(null)
     } catch (cause) {
+      setFeedback(null)
       setError(cause instanceof Error ? cause.message : 'Question could not be skipped.')
     } finally {
       setSaving(false)
@@ -149,7 +182,7 @@ export default function PlayerInitialization({
   }
 
   async function calibrate() {
-    if (busy) return
+    if (systemBusy || voiceState !== 'idle') return
     setSaving(true)
     setError(null)
     try {
@@ -167,7 +200,7 @@ export default function PlayerInitialization({
   }
 
   async function reviewSkipped() {
-    if (busy) return
+    if (systemBusy || voiceState !== 'idle') return
     setSaving(true)
     setError(null)
     try {
@@ -183,131 +216,132 @@ export default function PlayerInitialization({
   if (loading || !state) {
     return (
       <div style={{ minHeight: '100dvh', background: S.bg, color: S.muted, display: 'grid', placeItems: 'center', fontFamily: '"IBM Plex Mono", monospace', fontSize: 10, letterSpacing: '.12em' }}>
-        INITIALIZING PLAYER…
+        SYSTEM CALIBRATION…
+      </div>
+    )
+  }
+
+  if (showIntro) {
+    return (
+      <div style={{ minHeight: '100dvh', background: S.bg, color: S.ink, display: 'grid', placeItems: 'center', fontFamily: '"IBM Plex Sans", sans-serif', padding: '24px 18px 72px' }}>
+        <main style={{ width: '100%', maxWidth: 560 }}>
+          <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.amber, fontSize: 9, fontWeight: 700, letterSpacing: '.17em' }}>SYSTEM CALIBRATION</div>
+          <div aria-hidden="true" style={{ marginTop: 14, width: 44, height: 2, background: S.amber, boxShadow: '0 0 18px rgba(246,178,75,.35)' }} />
+          <h1 style={{ margin: '26px 0 0', fontFamily: '"Space Grotesk", sans-serif', fontSize: 'clamp(38px,10vw,58px)', lineHeight: .98, letterSpacing: '-.05em', maxWidth: 520 }}>
+            Let the System understand you.
+          </h1>
+          <p style={{ margin: '16px 0 0', maxWidth: 430, color: S.muted, fontSize: 14, lineHeight: 1.65 }}>
+            Jawab {totalBasic || 5} pertanyaan singkat. Bisa ketik atau ngomong.
+          </p>
+          <button type="button" onClick={() => setIntroDismissed(true)} style={{ width: '100%', minHeight: 50, marginTop: 30, border: 0, borderRadius: 13, background: S.amber, color: '#17120a', fontFamily: '"IBM Plex Mono", monospace', fontSize: 9.5, fontWeight: 800, letterSpacing: '.08em', cursor: 'pointer' }}>
+            BEGIN CALIBRATION →
+          </button>
+        </main>
       </div>
     )
   }
 
   return (
     <div style={{ minHeight: '100dvh', background: S.bg, color: S.ink, fontFamily: '"IBM Plex Sans", sans-serif', padding: '0 18px 72px' }}>
-      <main style={{ width: '100%', maxWidth: 620, margin: '0 auto', paddingTop: 46 }}>
-        <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.amber, fontSize: 9.5, fontWeight: 700, letterSpacing: '.18em' }}>
-          {calibrating ? 'CALIBRATING' : 'INITIALIZING PLAYER'}
-        </div>
-        <div style={{ marginTop: 5, fontFamily: '"IBM Plex Mono", monospace', color: S.muted, fontSize: 10 }}>
-          PLAYER · {playerName.toUpperCase()}
-        </div>
-
-        <h1 style={{ margin: '24px 0 0', maxWidth: 560, fontFamily: '"Space Grotesk", sans-serif', fontSize: 'clamp(32px,8vw,46px)', lineHeight: 1, letterSpacing: '-.045em' }}>
-          {calibrating ? 'The System only asks for what changes the decision.' : 'Give the System enough reality to work with.'}
-        </h1>
-        <p style={{ maxWidth: 520, margin: '13px 0 0', color: S.muted, fontSize: 13, lineHeight: 1.65 }}>
-          {calibrating
-            ? 'One question at a time. It stops when Direction, Current State, leverage, and realistic capacity are clear enough.'
-            : 'Type it or talk it out. Voice stays raw until the calibration cycle reads it together with your other answers.'}
-        </p>
-
-        {question?.origin === 'basic' && totalBasic > 0 && (
-          <div style={{ marginTop: 26 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, color: S.muted2 }}>
-              <span>BASE CONTEXT</span><span>{addressedBasic}/{totalBasic}</span>
+      <main style={{ width: '100%', maxWidth: 620, margin: '0 auto', paddingTop: 34 }}>
+        {question && (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 }}>
+              <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.amber, fontSize: 8.5, fontWeight: 700, letterSpacing: '.15em' }}>SYSTEM CALIBRATION</div>
+              <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: question.origin === 'adaptive' ? S.gold : S.muted, fontSize: 8.5, fontWeight: 700, letterSpacing: '.08em' }}>
+                {questionNumber ? `${questionNumber} / ${totalBasic}` : 'FOLLOW-UP'}
+              </div>
             </div>
-            <div style={{ height: 4, marginTop: 7, borderRadius: 99, overflow: 'hidden', background: '#1c222c' }}>
-              <div style={{ width: `${progress}%`, height: '100%', background: S.amber, transition: 'width 220ms ease' }} />
+            <div style={{ height: 4, marginTop: 11, borderRadius: 99, overflow: 'hidden', background: '#1b212a' }}>
+              <div style={{ width: `${question.origin === 'adaptive' ? 100 : progress}%`, height: '100%', borderRadius: 99, background: S.amber, boxShadow: '0 0 15px rgba(246,178,75,.3)', transition: 'width 280ms ease' }} />
             </div>
-          </div>
+          </>
         )}
 
         {question ? (
-          <section style={{ marginTop: 28, padding: '20px 18px', background: S.panel, border: `1px solid ${S.line}`, borderRadius: 18 }}>
-            <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: question.origin === 'adaptive' ? S.gold : S.muted, fontSize: 8.5, letterSpacing: '.13em' }}>
-              {question.origin === 'adaptive' ? 'SYSTEM QUESTION' : 'PLAYER CONTEXT'}
-            </div>
-            <div style={{ marginTop: 10, fontFamily: '"Space Grotesk", sans-serif', fontSize: 22, fontWeight: 650, lineHeight: 1.22, letterSpacing: '-.025em' }}>
-              {question.prompt}
-            </div>
-            <textarea
-              value={answer}
-              onChange={event => setAnswer(event.target.value)}
-              disabled={busy}
-              placeholder="Jawab dengan bahasa lo sendiri…"
-              rows={5}
-              maxLength={5000}
-              style={{ width: '100%', boxSizing: 'border-box', resize: 'vertical', minHeight: 126, marginTop: 18, border: `1px solid ${S.line}`, borderRadius: 13, background: S.panel2, color: S.ink, padding: '13px 14px', outline: 'none', fontFamily: '"IBM Plex Sans", sans-serif', fontSize: 13.5, lineHeight: 1.55 }}
-            />
-            <div style={{ marginTop: 9, display: 'flex', alignItems: 'center', gap: 9 }}>
-              <div style={{ height: 1, flex: 1, background: S.line }} />
-              <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 8, color: S.muted2, letterSpacing: '.08em' }}>OR TALK TO THE SYSTEM</div>
-              <div style={{ height: 1, flex: 1, background: S.line }} />
-            </div>
-            <VoiceAnswerRecorder
-              key={question.id}
-              playerId={playerId}
-              questionId={question.id}
-              disabled={systemBusy}
-              textPresent={Boolean(answer.trim())}
-              onActiveChange={setVoiceActive}
-              onSaved={async () => {
-                setAnswer('')
-                setVoiceActive(false)
-                await reload()
-              }}
-            />
-            <div style={{ display: 'flex', gap: 9, marginTop: 12, flexWrap: 'wrap' }}>
-              <button type="button" onClick={() => { void submit() }} disabled={busy || !answer.trim()} style={{ minHeight: 42, border: 0, borderRadius: 11, padding: '0 16px', background: busy || !answer.trim() ? '#2a2f37' : S.amber, color: busy || !answer.trim() ? S.muted2 : '#17120a', fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, fontWeight: 800, letterSpacing: '.08em', cursor: busy || !answer.trim() ? 'default' : 'pointer' }}>
-                {saving ? 'SAVING…' : 'CONTINUE WITH TEXT'}
-              </button>
-              <button type="button" onClick={() => { void skip() }} disabled={busy} style={{ minHeight: 42, border: `1px solid ${S.line}`, borderRadius: 11, padding: '0 14px', background: 'transparent', color: busy ? S.muted2 : S.muted, fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, fontWeight: 700, letterSpacing: '.06em', cursor: busy ? 'default' : 'pointer' }}>
-                SKIP
-              </button>
-            </div>
-            <div style={{ marginTop: 12, color: S.muted2, fontSize: 10.5, lineHeight: 1.5 }}>
-              Text or raw audio becomes Life Vault evidence. Saving alone does not trigger AI reasoning; calibration reads the saved batch once.
-            </div>
+          <section style={{ marginTop: 'clamp(46px,9vh,82px)' }}>
+            {feedback ? (
+              <div aria-live="polite" style={{ minHeight: 280, display: 'grid', placeItems: 'center', textAlign: 'center' }}>
+                <div>
+                  <div style={{ width: 48, height: 48, margin: '0 auto', display: 'grid', placeItems: 'center', border: `1px solid ${S.line}`, borderRadius: 16, color: S.amber, background: S.panel, fontSize: 20 }}>✓</div>
+                  <div style={{ marginTop: 15, color: S.ink, fontFamily: '"Space Grotesk", sans-serif', fontSize: 23, fontWeight: 700 }}>{feedback.replace('✓ ', '')}</div>
+                </div>
+              </div>
+            ) : (
+              <>
+                <h1 style={{ margin: 0, maxWidth: 590, fontFamily: '"Space Grotesk", sans-serif', fontSize: 'clamp(30px,7.4vw,44px)', fontWeight: 700, lineHeight: 1.08, letterSpacing: '-.04em' }}>
+                  {question.prompt}
+                </h1>
+                <p style={{ margin: '12px 0 0', color: S.muted, fontSize: 12.5, lineHeight: 1.55 }}>
+                  Ceritain dengan bahasa lo sendiri. Nggak perlu dirapihin.
+                </p>
+
+                <div style={{ position: 'relative', minHeight: 132, marginTop: 26, border: `1px solid ${voiceState === 'recording' ? '#4a3a23' : S.line}`, borderRadius: 16, background: S.panel2, overflow: 'hidden', transition: 'border-color 180ms ease, box-shadow 180ms ease', boxShadow: voiceState === 'recording' ? '0 0 0 1px rgba(246,178,75,.08), 0 16px 42px rgba(0,0,0,.16)' : 'none' }}>
+                  {voiceState === 'idle' && (
+                    <textarea
+                      value={answer}
+                      onChange={event => setAnswer(event.target.value)}
+                      disabled={systemBusy}
+                      placeholder="Ceritain di sini…"
+                      rows={5}
+                      maxLength={5000}
+                      autoFocus
+                      style={{ width: '100%', minHeight: 132, boxSizing: 'border-box', resize: 'none', border: 0, background: 'transparent', color: S.ink, padding: '15px 58px 15px 15px', outline: 'none', fontFamily: '"IBM Plex Sans", sans-serif', fontSize: 14, lineHeight: 1.6 }}
+                    />
+                  )}
+                  <VoiceAnswerRecorder
+                    key={question.id}
+                    ref={voiceRef}
+                    playerId={playerId}
+                    questionId={question.id}
+                    disabled={systemBusy}
+                    textPresent={hasTextAnswer}
+                    onStateChange={setVoiceState}
+                  />
+                </div>
+
+                {!voiceBusy && (
+                  <button type="button" onClick={() => { void submit() }} disabled={!canContinue} style={{ width: '100%', minHeight: 49, marginTop: 14, border: 0, borderRadius: 13, background: canContinue ? S.amber : '#252b34', color: canContinue ? '#17120a' : S.muted2, fontFamily: '"IBM Plex Mono", monospace', fontSize: 9.5, fontWeight: 800, letterSpacing: '.08em', cursor: canContinue ? 'pointer' : 'default', transition: 'background 160ms ease, color 160ms ease, transform 160ms ease' }}>
+                    {saving ? 'SAVING…' : 'LANJUT →'}
+                  </button>
+                )}
+                {voiceState === 'idle' && (
+                  <button type="button" onClick={() => { void skip() }} disabled={!canSkip} style={{ display: 'block', margin: '13px auto 0', border: 0, padding: '4px 8px', background: 'transparent', color: canSkip ? S.muted : S.muted2, fontFamily: '"IBM Plex Sans", sans-serif', fontSize: 11.5, cursor: canSkip ? 'pointer' : 'default' }}>
+                    Lewati
+                  </button>
+                )}
+              </>
+            )}
           </section>
         ) : state.readiness !== 'ready' ? (
-          <section style={{ marginTop: 28, padding: '20px 18px', background: S.panel, border: `1px solid ${S.line}`, borderRadius: 18 }}>
-            <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.amber, fontSize: 8.5, letterSpacing: '.13em' }}>
-              {jobStatus === 'queued' || jobStatus === 'running' ? 'CALIBRATING' : 'DECISION READINESS'}
-            </div>
-            <div style={{ marginTop: 9, fontFamily: '"Space Grotesk", sans-serif', fontSize: 21, fontWeight: 700, lineHeight: 1.25 }}>
-              {jobStatus === 'queued' || jobStatus === 'running'
-                ? 'The System is deciding whether it knows enough.'
-                : answeredThisCycle === 0
-                  ? 'The System still needs one useful answer before it can reason again.'
-                  : 'Your saved context is ready for one reasoning cycle.'}
-            </div>
-            <div style={{ marginTop: 8, color: S.muted, fontSize: 12.5, lineHeight: 1.6 }}>
-              {jobStatus === 'queued' || jobStatus === 'running'
-                ? 'Text and voice answers are understood together. Voice transcription, when needed, is produced inside this same calibration call.'
-                : answeredThisCycle === 0
-                  ? 'Skipped questions stay skipped. Reopen them only when you want to add evidence; the System will not call AI just because a cycle exists.'
-                  : 'This is the decision point: evidence may now be assimilated and the System can return ASK or READY. No quest is generated here.'}
-            </div>
-            {jobStatus !== 'queued' && jobStatus !== 'running' && answeredThisCycle > 0 && (
-              <button type="button" onClick={() => { void calibrate() }} disabled={busy} style={{ minHeight: 44, marginTop: 15, border: 0, borderRadius: 11, padding: '0 16px', background: busy ? '#2a2f37' : S.amber, color: busy ? S.muted2 : '#17120a', fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, fontWeight: 800, letterSpacing: '.08em', cursor: busy ? 'default' : 'pointer' }}>
-                {saving ? 'STARTING…' : state.calibrationVersion > 0 ? 'RE-CALIBRATE SYSTEM' : 'CALIBRATE SYSTEM'}
-              </button>
-            )}
-            {answeredThisCycle === 0 && skippedThisCycle > 0 && (
-              <button type="button" onClick={() => { void reviewSkipped() }} disabled={busy} style={{ minHeight: 42, marginTop: 15, border: `1px solid ${S.line}`, borderRadius: 11, padding: '0 14px', background: 'transparent', color: S.gold, fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, fontWeight: 700, letterSpacing: '.06em', cursor: busy ? 'default' : 'pointer' }}>
-                REVIEW SKIPPED QUESTIONS
-              </button>
-            )}
+          <section style={{ marginTop: 'clamp(62px,12vh,110px)', textAlign: 'center' }}>
+            <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.amber, fontSize: 8.5, fontWeight: 700, letterSpacing: '.15em' }}>SYSTEM CALIBRATION</div>
+            {jobStatus === 'queued' || jobStatus === 'running' ? (
+              <>
+                <div aria-hidden="true" style={{ width: 48, height: 48, margin: '24px auto 0', borderRadius: 16, border: `1px solid ${S.line}`, background: S.panel, display: 'grid', placeItems: 'center', color: S.amber, boxShadow: '0 0 28px rgba(246,178,75,.08)' }}>◌</div>
+                <h1 style={{ margin: '17px auto 0', maxWidth: 500, fontFamily: '"Space Grotesk", sans-serif', fontSize: 'clamp(30px,7vw,42px)', lineHeight: 1.05, letterSpacing: '-.04em' }}>Connecting the dots…</h1>
+                <p style={{ margin: '11px auto 0', color: S.muted, fontSize: 12.5 }}>The System is calibrating.</p>
+              </>
+            ) : answeredThisCycle > 0 ? (
+              <>
+                <h1 style={{ margin: '18px auto 0', maxWidth: 500, fontFamily: '"Space Grotesk", sans-serif', fontSize: 'clamp(30px,7vw,42px)', lineHeight: 1.05, letterSpacing: '-.04em' }}>Let the System connect the dots.</h1>
+                <p style={{ margin: '11px auto 0', maxWidth: 420, color: S.muted, fontSize: 12.5, lineHeight: 1.55 }}>Jawaban lo udah siap. Lanjut saat lo siap.</p>
+                <button type="button" onClick={() => { void calibrate() }} disabled={systemBusy} style={{ width: '100%', minHeight: 49, marginTop: 25, border: 0, borderRadius: 13, background: systemBusy ? '#252b34' : S.amber, color: systemBusy ? S.muted2 : '#17120a', fontFamily: '"IBM Plex Mono", monospace', fontSize: 9.5, fontWeight: 800, letterSpacing: '.08em', cursor: systemBusy ? 'default' : 'pointer' }}>
+                  {saving ? 'STARTING…' : 'CONTINUE →'}
+                </button>
+              </>
+            ) : skippedThisCycle > 0 ? (
+              <>
+                <h1 style={{ margin: '18px auto 0', maxWidth: 500, fontFamily: '"Space Grotesk", sans-serif', fontSize: 'clamp(30px,7vw,42px)', lineHeight: 1.05, letterSpacing: '-.04em' }}>One useful answer is still missing.</h1>
+                <button type="button" onClick={() => { void reviewSkipped() }} disabled={systemBusy} style={{ width: '100%', minHeight: 49, marginTop: 25, border: 0, borderRadius: 13, background: systemBusy ? '#252b34' : S.amber, color: systemBusy ? S.muted2 : '#17120a', fontFamily: '"IBM Plex Mono", monospace', fontSize: 9.5, fontWeight: 800, letterSpacing: '.08em', cursor: systemBusy ? 'default' : 'pointer' }}>
+                  REVIEW QUESTIONS →
+                </button>
+              </>
+            ) : null}
           </section>
         ) : null}
 
-        {state.readinessReason && state.calibrationVersion > 0 && (
-          <div style={{ marginTop: 13, padding: '12px 13px', border: `1px solid ${S.line}`, borderRadius: 13, background: S.panel2 }}>
-            <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.muted2, fontSize: 8, letterSpacing: '.1em' }}>LAST SYSTEM ASSESSMENT</div>
-            <div style={{ marginTop: 5, color: S.muted, fontSize: 11.5, lineHeight: 1.55 }}>{state.readinessReason}</div>
-          </div>
-        )}
-
-        {error && <div role="alert" style={{ marginTop: 13, padding: '11px 12px', border: '1px solid #482631', borderRadius: 12, background: '#171116', color: S.red, fontSize: 11.5, lineHeight: 1.5 }}>{error}</div>}
-        <div style={{ marginTop: 18, color: S.muted2, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, lineHeight: 1.55 }}>
-          PROGRESS IS SAVED · YOU CAN CONTINUE LATER
-        </div>
+        {error && <div role="alert" style={{ marginTop: 18, padding: '11px 12px', border: '1px solid #482631', borderRadius: 12, background: '#171116', color: S.red, fontSize: 11.5, lineHeight: 1.5 }}>{error}</div>}
       </main>
     </div>
   )
