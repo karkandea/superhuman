@@ -16,9 +16,11 @@ import {
 import {
   loadInitializationRuntimeContext,
   persistInitializationRuntimeDecision,
+  type InitializationRuntimeAttachment,
+  type InitializationVoiceTranscript,
 } from './player-initialization-runtime'
 
-export const PLAYER_INITIALIZATION_CALIBRATION_SCHEMA_VERSION = 'player-initialization-calibration.v1'
+export const PLAYER_INITIALIZATION_CALIBRATION_SCHEMA_VERSION = 'player-initialization-calibration.v2'
 
 function requireProvider(provider: AiProvider | undefined): AiProvider {
   if (!provider || typeof provider.invokeStructured !== 'function') {
@@ -38,6 +40,51 @@ function auditFrom(providerResponse: {
     requestId: providerResponse.requestId,
     schemaVersion: PLAYER_INITIALIZATION_CALIBRATION_SCHEMA_VERSION,
   }
+}
+
+function validateVoiceTranscripts(
+  value: unknown,
+  attachments: InitializationRuntimeAttachment[],
+): InitializationVoiceTranscript[] {
+  if (!Array.isArray(value)) throw new Error('Initialization voiceTranscripts must be an array')
+  if (value.length !== attachments.length) {
+    throw new Error('Initialization voiceTranscripts must cover every attached audio answer exactly once')
+  }
+
+  const attachmentByQuestion = new Map(attachments.map(attachment => [attachment.questionId, attachment]))
+  const seen = new Set<string>()
+  const transcripts: InitializationVoiceTranscript[] = []
+
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      throw new Error('Initialization voice transcript must be an object')
+    }
+    const row = item as Record<string, unknown>
+    const questionId = String(row.questionId ?? '').trim()
+    const sourceKnowledgeEntryId = String(row.sourceKnowledgeEntryId ?? '').trim()
+    const transcript = String(row.transcript ?? '').trim()
+    const attachment = attachmentByQuestion.get(questionId)
+
+    if (!attachment) throw new Error('Initialization voice transcript references an unattached question')
+    if (seen.has(questionId)) throw new Error('Initialization voice transcript question is duplicated')
+    if (sourceKnowledgeEntryId !== attachment.sourceKnowledgeEntryId) {
+      throw new Error('Initialization voice transcript knowledge provenance mismatch')
+    }
+    if (transcript.length < 1 || transcript.length > 12000) {
+      throw new Error('Initialization voice transcript must be between 1 and 12000 characters')
+    }
+
+    seen.add(questionId)
+    transcripts.push({ questionId, sourceKnowledgeEntryId, transcript })
+  }
+
+  for (const attachment of attachments) {
+    if (!seen.has(attachment.questionId)) {
+      throw new Error('Initialization voice transcript is missing for attached audio evidence')
+    }
+  }
+
+  return transcripts
 }
 
 export async function derivePlayerUnderstandingDelta(
@@ -66,13 +113,17 @@ export async function derivePlayerUnderstandingDelta(
   if (context.knowledgeEntries.length === 0) throw new Error('No player knowledge was retrieved')
   if (!context.playerBrief) throw new Error('Canonical Player Brief is required for initialization calibration')
 
+  const { attachments, ...initializationContext } = initialization
   const response = await provider.invokeStructured({
     operation: 'calibrate_player_initialization',
     schemaVersion: PLAYER_INITIALIZATION_CALIBRATION_SCHEMA_VERSION,
     instructions: [
       'This is Player Initialization / Decision Readiness, not Daily Quest generation. Never generate quests or candidate actions here.',
       'Treat playerBrief as canonical current persistent state. Compare the supplied new knowledgeEntries against it and return the smallest evidence-backed understanding delta.',
-      'Use only supplied player answers, Life Vault evidence, playerBrief, signals, quest history, and active quests as facts about this player.',
+      'Use only supplied player answers, attached raw voice answers, Life Vault evidence, playerBrief, signals, quest history, and active quests as facts about this player.',
+      'For an initialization question whose voiceAttachmentId is non-null, the matching attached audio file is the authoritative raw player answer for that question. Understand that audio together with all text answers in this same calibration reasoning cycle.',
+      'Do not require or assume a separate transcription step. For every audio file attached to this request, return exactly one faithful voiceTranscripts item in this same response. Preserve the player meaning and language; transcript is evidence representation, not a creative summary.',
+      'If audio is only partly understandable, transcribe only what is supportable and reflect unresolved uncertainty in readiness or ASK questions. Never invent missing speech.',
       'Do not infer a goal from occupation, demographics, hobbies, or domain stereotypes. A software engineer does not imply a goal to work abroad. A runner does not imply a marathon goal.',
       'Web research is not default onboarding. Never search for the player identity or personal facts. General domain knowledge/research may be used only to understand a domain the player explicitly introduced and only when it materially improves question quality.',
       'Decide readiness across exactly four dimensions: direction, current_state, bottleneck_opportunity, capacity_constraints.',
@@ -84,15 +135,23 @@ export async function derivePlayerUnderstandingDelta(
       'Valid persistent understanding actions are create, update, resolve, supersede. Return actions: [] when the batch does not materially change persistent understanding.',
       'Use update/supersede/resolve for contradictory or changed knowledge instead of keeping two incompatible truths. Temporary evidence must not become permanent identity.',
       `For create/update/supersede, understanding type must be exactly one of: ${UNDERSTANDING_TYPES.join(', ')}.`,
-      'targetUnderstandingId may only reference playerBrief.activeUnderstandingIds. Every understanding action must cite sourceKnowledgeEntryIds from knowledgeEntries only.',
+      'targetUnderstandingId may only reference playerBrief.activeUnderstandingIds. Every understanding action must cite sourceKnowledgeEntryIds from knowledgeEntries only, including the marker knowledge entry associated with an attached voice answer.',
     ].join(' '),
     context: {
       ...context,
-      initialization,
+      initialization: initializationContext,
     },
+    attachments: attachments.map(attachment => ({
+      id: attachment.id,
+      kind: 'audio' as const,
+      fileName: attachment.fileName,
+      mimeType: attachment.mimeType,
+      sourceUrl: attachment.sourceUrl,
+      label: `Initialization voice answer for question ${attachment.questionId}; source knowledge ${attachment.sourceKnowledgeEntryId}`,
+    })),
     responseContract: {
       type: 'object',
-      required: ['actions', 'readiness', 'reason', 'dimensions', 'questions'],
+      required: ['actions', 'readiness', 'reason', 'dimensions', 'questions', 'voiceTranscripts'],
       actions: [{
         action: ['create', 'update', 'resolve', 'supersede'],
         targetUnderstandingId: 'required for update/resolve/supersede; id from playerBrief.activeUnderstandingIds only; forbidden for create',
@@ -120,6 +179,11 @@ export async function derivePlayerUnderstandingDelta(
         priority: 'integer 1..5',
         sequence: 'integer 0..100; lower renders earlier when priorities tie',
       }],
+      voiceTranscripts: [{
+        questionId: 'exact id of an answered audio initialization question whose voiceAttachmentId matches an attached audio id',
+        sourceKnowledgeEntryId: 'exact answerKnowledgeEntryId for that same audio question',
+        transcript: 'faithful non-empty transcript of the attached player speech; preserve language and meaning; do not summarize or invent',
+      }],
     },
   })
 
@@ -135,6 +199,7 @@ export async function derivePlayerUnderstandingDelta(
     dimensions: raw.dimensions,
     questions: raw.questions,
   })
+  const voiceTranscripts = validateVoiceTranscripts(raw.voiceTranscripts, attachments)
   const audit = auditFrom(response)
 
   const persistence = await dependencies.repository.persistDelta({
@@ -145,7 +210,7 @@ export async function derivePlayerUnderstandingDelta(
     context,
   })
 
-  await persistInitializationRuntimeDecision(input.playerId, decision, audit)
+  await persistInitializationRuntimeDecision(input.playerId, decision, voiceTranscripts, audit)
 
   return { actions, persistence }
 }
