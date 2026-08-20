@@ -20,14 +20,14 @@ test('voice onboarding migration keeps raw audio private and evidence-backed', (
   assert.match(sql, /Player initialization transcript correction/)
 })
 
-test('onboarding recorder saves voice without a transcription service call', () => {
+test('onboarding recorder saves raw voice without invoking an AI provider', () => {
   const recorder = source('app/[username]/voice-answer-recorder.tsx')
   const service = source('lib/player-initialization-voice-service.ts')
   assert.match(recorder, /MediaRecorder/)
   assert.match(recorder, /USE VOICE ANSWER/)
   assert.match(service, /player-initialization-audio/)
   assert.match(service, /submit_player_initialization_voice_answer/)
-  assert.doesNotMatch(service, /transcrib|speech[-_]?to[-_]?text|whisper/i)
+  assert.doesNotMatch(service, /invokeStructured|AiProvider|ChatGptConsumerWebProvider/)
 })
 
 test('calibration v2 binds raw audio and transcript to the same reasoning invocation', () => {
