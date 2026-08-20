@@ -5,6 +5,7 @@ import type { RetrievedPlayerContext } from '../player-understanding'
 export type AiOperation =
   | 'derive_understanding'
   | 'derive_understanding_delta'
+  | 'calibrate_player_initialization'
   | 'derive_progression_map'
   | 'review_quest_responses'
   | 'derive_player_response_model'
@@ -13,7 +14,11 @@ export type AiOperation =
   | 'assess_materiality'
   | 'generate_system_interrupt'
 
-export type AiRequestContext = RetrievedPlayerContext | MaterialityContext | ProgressionIntelligenceContext
+export type AiRequestContext =
+  | RetrievedPlayerContext
+  | MaterialityContext
+  | ProgressionIntelligenceContext
+  | (RetrievedPlayerContext & { initialization: unknown })
 
 export interface StructuredModelRequest {
   operation: AiOperation
