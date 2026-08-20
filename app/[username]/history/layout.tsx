@@ -17,7 +17,7 @@ export default function PlayerHistoryLayout({ children }: { children: ReactNode 
       {!onOnboarding && (
         <Link
           href={onboardingPath}
-          style={{ position: 'fixed', right: 18, bottom: 74, zIndex: 30, border: '1px solid #303946', borderRadius: 999, background: 'rgba(16,20,27,.94)', padding: '9px 12px', color: '#ffd488', textDecoration: 'none', fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, fontWeight: 700, letterSpacing: '.08em', boxShadow: '0 8px 24px rgba(0,0,0,.24)', backdropFilter: 'blur(10px)' }}
+          style={{ position: 'fixed', left: 14, top: 'max(12px, env(safe-area-inset-top))', zIndex: 45, border: '1px solid #232a35', borderRadius: 999, background: 'rgba(12,15,20,.78)', padding: '7px 10px', color: '#7e8795', textDecoration: 'none', fontFamily: '"IBM Plex Mono", monospace', fontSize: 8, fontWeight: 700, letterSpacing: '.06em', backdropFilter: 'blur(10px)' }}
         >
           PLAYER ORIGIN
         </Link>
