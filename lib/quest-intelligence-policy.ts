@@ -162,6 +162,28 @@ function strategicChain(value: unknown, index: number, validation: QuestPolicyVa
   }
 }
 
+function enforceProgressionTargetCeiling(
+  selections: QuestPolicySelection[],
+  maxQuestCount: number,
+): QuestPolicySelection[] {
+  if (selections.length <= maxQuestCount) return selections
+  if (maxQuestCount < 1) throw new Error('Progression Target permits no Daily Quest selections')
+
+  const main = selections.find(selection => selection.kind === 'main')
+  if (!main) return selections
+
+  const otherSlots = Math.max(0, maxQuestCount - 1)
+  const rankedOthers = selections
+    .map((selection, index) => ({ selection, index }))
+    .filter(item => item.selection.kind !== 'main')
+    .sort((left, right) => right.selection.priority - left.selection.priority || left.index - right.index)
+    .slice(0, otherSlots)
+    .map(item => item.selection.candidateId)
+
+  const kept = new Set([main.candidateId, ...rankedOthers])
+  return selections.filter(selection => kept.has(selection.candidateId))
+}
+
 export function questIntelligencePolicyInstructions() {
   return [
     'QUEST POLICY / CONSTITUTION V2:',
@@ -233,7 +255,7 @@ export function validateQuestIntelligenceDecision(
 
   const candidateById = new Map(candidates.map(candidate => [candidate.candidateId, candidate]))
   const selectedIds = new Set<string>()
-  const selections: QuestPolicySelection[] = value.selections.map((raw, index) => {
+  const parsedSelections: QuestPolicySelection[] = value.selections.map((raw, index) => {
     if (!isRecord(raw)) throw new Error(`Quest selection ${index} must be an object`)
     const candidateId = nonEmptyString(raw.candidateId, `Quest selection ${index} candidateId`, 120)
     const candidate = candidateById.get(candidateId)
@@ -254,12 +276,15 @@ export function validateQuestIntelligenceDecision(
     }
   })
 
-  if (selections.length > validation.progressionTarget.maxQuestCount) throw new Error('Quest portfolio exceeds Progression Target maxQuestCount')
+  const rawCount = (kind: QuestKind) => parsedSelections.filter(selection => selection.kind === kind).length
+  if (parsedSelections.length > 0 && rawCount('main') !== 1) throw new Error('Quest portfolio with quests must contain exactly one Main Quest')
+  if (rawCount('side') > 2) throw new Error('Quest portfolio may contain at most two Side Quests')
+  if (rawCount('maintenance') > 1) throw new Error('Quest portfolio may contain at most one Maintenance Quest')
+  if (rawCount('bonus') > 1) throw new Error('Quest portfolio may contain at most one Bonus Quest')
+
+  const selections = enforceProgressionTargetCeiling(parsedSelections, validation.progressionTarget.maxQuestCount)
   const count = (kind: QuestKind) => selections.filter(selection => selection.kind === kind).length
   if (selections.length > 0 && count('main') !== 1) throw new Error('Quest portfolio with quests must contain exactly one Main Quest')
-  if (count('side') > 2) throw new Error('Quest portfolio may contain at most two Side Quests')
-  if (count('maintenance') > 1) throw new Error('Quest portfolio may contain at most one Maintenance Quest')
-  if (count('bonus') > 1) throw new Error('Quest portfolio may contain at most one Bonus Quest')
 
   const noQuestReason = optionalString(value.noQuestReason, 'Quest Policy noQuestReason')
   if (selections.length === 0 && !noQuestReason) throw new Error('Quest Policy selecting zero quests requires noQuestReason')
