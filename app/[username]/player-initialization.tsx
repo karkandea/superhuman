@@ -61,21 +61,27 @@ export default function PlayerInitialization({
 
   useEffect(() => {
     let cancelled = false
-    void reload()
-      .catch(cause => {
-        if (!cancelled) setError(cause instanceof Error ? cause.message : 'Player initialization could not load.')
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => { cancelled = true }
+    const timer = window.setTimeout(() => {
+      void reload()
+        .catch(cause => {
+          if (!cancelled) setError(cause instanceof Error ? cause.message : 'Player initialization could not load.')
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false)
+        })
+    }, 0)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
   }, [reload])
 
   const question = useMemo(() => nextQuestion(questions), [questions])
   const totalBasic = questions.filter(item => item.origin === 'basic').length
   const addressedBasic = questions.filter(item => item.origin === 'basic' && item.status !== 'pending').length
-  const answeredCount = questions.filter(item => item.status === 'answered').length
-  const skippedBasicCount = questions.filter(item => item.origin === 'basic' && item.status === 'skipped').length
+  const currentCalibrationVersion = state?.calibrationVersion ?? 0
+  const answeredThisCycle = questions.filter(item => item.status === 'answered' && item.calibrationVersion === currentCalibrationVersion).length
+  const skippedThisCycle = questions.filter(item => item.status === 'skipped' && item.calibrationVersion === currentCalibrationVersion).length
   const progress = totalBasic ? Math.round((addressedBasic / totalBasic) * 100) : 0
   const busy = saving || jobStatus === 'queued' || jobStatus === 'running'
   const calibrating = question?.origin === 'adaptive' || state?.stage === 'calibrating'
@@ -246,23 +252,23 @@ export default function PlayerInitialization({
             <div style={{ marginTop: 9, fontFamily: '"Space Grotesk", sans-serif', fontSize: 21, fontWeight: 700, lineHeight: 1.25 }}>
               {jobStatus === 'queued' || jobStatus === 'running'
                 ? 'The System is deciding whether it knows enough.'
-                : answeredCount === 0
-                  ? 'The System still has no evidence it can safely reason from.'
+                : answeredThisCycle === 0
+                  ? 'The System still needs one useful answer before it can reason again.'
                   : 'Your saved context is ready for one reasoning cycle.'}
             </div>
             <div style={{ marginTop: 8, color: S.muted, fontSize: 12.5, lineHeight: 1.6 }}>
               {jobStatus === 'queued' || jobStatus === 'running'
                 ? 'It can return READY, or a small batch of follow-up questions if critical uncertainty still blocks progression.'
-                : answeredCount === 0
-                  ? 'Continue later, or reopen the skipped basics when you are ready.'
+                : answeredThisCycle === 0
+                  ? 'Skipped questions stay skipped. Reopen them only when you want to add evidence; the System will not call AI just because a cycle exists.'
                   : 'This is the decision point: evidence may now be assimilated and the System can return ASK or READY. No quest is generated here.'}
             </div>
-            {jobStatus !== 'queued' && jobStatus !== 'running' && answeredCount > 0 && (
+            {jobStatus !== 'queued' && jobStatus !== 'running' && answeredThisCycle > 0 && (
               <button type="button" onClick={() => { void calibrate() }} disabled={busy} style={{ minHeight: 44, marginTop: 15, border: 0, borderRadius: 11, padding: '0 16px', background: busy ? '#2a2f37' : S.amber, color: busy ? S.muted2 : '#17120a', fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, fontWeight: 800, letterSpacing: '.08em', cursor: busy ? 'default' : 'pointer' }}>
                 {saving ? 'STARTING…' : state.calibrationVersion > 0 ? 'RE-CALIBRATE SYSTEM' : 'CALIBRATE SYSTEM'}
               </button>
             )}
-            {answeredCount === 0 && skippedBasicCount > 0 && (
+            {answeredThisCycle === 0 && skippedThisCycle > 0 && (
               <button type="button" onClick={() => { void reviewSkipped() }} disabled={busy} style={{ minHeight: 42, marginTop: 15, border: `1px solid ${S.line}`, borderRadius: 11, padding: '0 14px', background: 'transparent', color: S.gold, fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, fontWeight: 700, letterSpacing: '.06em', cursor: busy ? 'default' : 'pointer' }}>
                 REVIEW SKIPPED QUESTIONS
               </button>
