@@ -13,6 +13,7 @@ import {
   type PlayerInitializationState,
 } from '@/lib/player-initialization-service'
 import { supabase } from '@/lib/supabase'
+import VoiceAnswerRecorder from './voice-answer-recorder'
 
 const S = {
   bg: '#0c0f14', panel: '#13171f', panel2: '#10141b', line: '#232a35',
@@ -85,6 +86,8 @@ export default function PlayerInitialization({
   const progress = totalBasic ? Math.round((addressedBasic / totalBasic) * 100) : 0
   const busy = saving || jobStatus === 'queued' || jobStatus === 'running'
   const calibrating = question?.origin === 'adaptive' || state?.stage === 'calibrating'
+
+  useEffect(() => { setAnswer('') }, [question?.id])
 
   const watchJob = useCallback(async (jobId: string) => {
     if (watchedJobRef.current === jobId) return
@@ -201,7 +204,7 @@ export default function PlayerInitialization({
         <p style={{ maxWidth: 520, margin: '13px 0 0', color: S.muted, fontSize: 13, lineHeight: 1.65 }}>
           {calibrating
             ? 'One question at a time. It stops when Direction, Current State, leverage, and realistic capacity are clear enough.'
-            : 'This is not a profile form. Share only context that changes what is realistic or worth moving.'}
+            : 'Type it or talk it out. Voice stays raw until the calibration cycle reads it together with your other answers.'}
         </p>
 
         {question?.origin === 'basic' && totalBasic > 0 && (
@@ -232,16 +235,32 @@ export default function PlayerInitialization({
               maxLength={5000}
               style={{ width: '100%', boxSizing: 'border-box', resize: 'vertical', minHeight: 126, marginTop: 18, border: `1px solid ${S.line}`, borderRadius: 13, background: S.panel2, color: S.ink, padding: '13px 14px', outline: 'none', fontFamily: '"IBM Plex Sans", sans-serif', fontSize: 13.5, lineHeight: 1.55 }}
             />
+            <div style={{ marginTop: 9, display: 'flex', alignItems: 'center', gap: 9 }}>
+              <div style={{ height: 1, flex: 1, background: S.line }} />
+              <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 8, color: S.muted2, letterSpacing: '.08em' }}>OR TALK TO THE SYSTEM</div>
+              <div style={{ height: 1, flex: 1, background: S.line }} />
+            </div>
+            <VoiceAnswerRecorder
+              key={question.id}
+              playerId={playerId}
+              questionId={question.id}
+              disabled={busy}
+              textPresent={Boolean(answer.trim())}
+              onSaved={async () => {
+                setAnswer('')
+                await reload()
+              }}
+            />
             <div style={{ display: 'flex', gap: 9, marginTop: 12, flexWrap: 'wrap' }}>
               <button type="button" onClick={() => { void submit() }} disabled={busy || !answer.trim()} style={{ minHeight: 42, border: 0, borderRadius: 11, padding: '0 16px', background: busy || !answer.trim() ? '#2a2f37' : S.amber, color: busy || !answer.trim() ? S.muted2 : '#17120a', fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, fontWeight: 800, letterSpacing: '.08em', cursor: busy || !answer.trim() ? 'default' : 'pointer' }}>
-                {saving ? 'SAVING…' : 'CONTINUE'}
+                {saving ? 'SAVING…' : 'CONTINUE WITH TEXT'}
               </button>
               <button type="button" onClick={() => { void skip() }} disabled={busy} style={{ minHeight: 42, border: `1px solid ${S.line}`, borderRadius: 11, padding: '0 14px', background: 'transparent', color: busy ? S.muted2 : S.muted, fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, fontWeight: 700, letterSpacing: '.06em', cursor: busy ? 'default' : 'pointer' }}>
                 SKIP
               </button>
             </div>
             <div style={{ marginTop: 12, color: S.muted2, fontSize: 10.5, lineHeight: 1.5 }}>
-              Saved answers become Life Vault evidence. Saving alone does not trigger AI reasoning.
+              Text or raw audio becomes Life Vault evidence. Saving alone does not trigger AI reasoning; calibration reads the saved batch once.
             </div>
           </section>
         ) : state.readiness !== 'ready' ? (
@@ -258,7 +277,7 @@ export default function PlayerInitialization({
             </div>
             <div style={{ marginTop: 8, color: S.muted, fontSize: 12.5, lineHeight: 1.6 }}>
               {jobStatus === 'queued' || jobStatus === 'running'
-                ? 'It can return READY, or a small batch of follow-up questions if critical uncertainty still blocks progression.'
+                ? 'Text and voice answers are understood together. Voice transcription, when needed, is produced inside this same calibration call.'
                 : answeredThisCycle === 0
                   ? 'Skipped questions stay skipped. Reopen them only when you want to add evidence; the System will not call AI just because a cycle exists.'
                   : 'This is the decision point: evidence may now be assimilated and the System can return ASK or READY. No quest is generated here.'}
