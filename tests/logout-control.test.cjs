@@ -13,5 +13,6 @@ test('player routes expose a local-session logout that returns to auth entry', (
   assert.match(layout, /LOG OUT/)
   assert.match(layout, /LOGGING OUT/)
   assert.match(home, /type AuthMode = 'login' \| 'register'/)
-  assert.match(home, /registerWithPassword/)
+  assert.match(home, /signInWithOtp/)
+  assert.match(home, /shouldCreateUser: authMode === 'register'/)
 })
