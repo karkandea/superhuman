@@ -20,14 +20,33 @@ test('voice onboarding migration keeps raw audio private and evidence-backed', (
   assert.match(sql, /Player initialization transcript correction/)
 })
 
-test('onboarding recorder saves raw voice without invoking an AI provider', () => {
+test('onboarding recorder keeps raw voice inside one answer composer without invoking AI', () => {
   const recorder = source('app/[username]/voice-answer-recorder.tsx')
   const service = source('lib/player-initialization-voice-service.ts')
   assert.match(recorder, /MediaRecorder/)
-  assert.match(recorder, /USE VOICE ANSWER/)
+  assert.match(recorder, /LISTENING/)
+  assert.match(recorder, /VOICE ANSWER/)
+  assert.match(recorder, /RE-RECORD/)
+  assert.match(recorder, /VOICE PRIVACY/)
   assert.match(service, /player-initialization-audio/)
   assert.match(service, /submit_player_initialization_voice_answer/)
   assert.doesNotMatch(service, /invokeStructured|AiProvider|ChatGptConsumerWebProvider/)
+})
+
+test('player calibration screen is single-task and hides architecture copy', () => {
+  const page = source('app/[username]/player-initialization.tsx')
+  assert.match(page, /SYSTEM CALIBRATION/)
+  assert.match(page, /BEGIN CALIBRATION →/)
+  assert.match(page, /LANJUT →/)
+  assert.match(page, /✓ Got it\./)
+  assert.match(page, /Ceritain di sini…/)
+  assert.doesNotMatch(page, /PLAYER CONTEXT/)
+  assert.doesNotMatch(page, /BASE CONTEXT/)
+  assert.doesNotMatch(page, /OR TALK TO THE SYSTEM/)
+  assert.doesNotMatch(page, /Text or raw audio becomes Life Vault evidence/)
+  assert.doesNotMatch(page, /PROGRESS IS SAVED/)
+  assert.doesNotMatch(page, /LAST SYSTEM ASSESSMENT/)
+  assert.doesNotMatch(page, /Give the System enough reality to work with/)
 })
 
 test('calibration v2 binds raw audio and transcript to the same reasoning invocation', () => {
