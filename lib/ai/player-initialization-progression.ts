@@ -3,7 +3,7 @@ import { refreshProgressionMap as refreshCoreProgressionMap } from './progressio
 import type { DailyQuestContextRetriever } from './orchestrator'
 import type { ProgressionMapSnapshot } from '../progression-intelligence'
 import type { ProgressionIntelligenceStore } from '../supabase/progression-intelligence-store'
-import { isPlayerInitializationReady } from './player-initialization-runtime'
+import { shouldDeferProgressionMapForInitialization } from './player-initialization-runtime'
 
 export async function refreshProgressionMap(
   dependencies: {
@@ -13,8 +13,8 @@ export async function refreshProgressionMap(
   },
   input: { playerId: string; date: string; limit?: number },
 ): Promise<ProgressionMapSnapshot> {
-  const ready = await isPlayerInitializationReady(input.playerId)
-  if (ready) return refreshCoreProgressionMap(dependencies, input)
+  const deferForInitialization = await shouldDeferProgressionMapForInitialization(input.playerId)
+  if (!deferForInitialization) return refreshCoreProgressionMap(dependencies, input)
 
   const existing = await dependencies.store.loadCurrentProgressionMap(input.playerId)
   if (existing) return existing
@@ -24,13 +24,13 @@ export async function refreshProgressionMap(
     id: `initialization-pending:${input.playerId}`,
     version: 0,
     schemaVersion: 'progression-map.v1',
-    reason: 'player_initialization_not_ready',
+    reason: 'player_initialization_strategic_activation_deferred',
     generatedAt: now,
     createdAt: now,
     goals: [],
     proximalOutcomes: [],
     bottlenecks: [],
     opportunities: [],
-    uncertainties: ['Player Initialization is not READY; strategic map derivation is intentionally deferred.'],
+    uncertainties: ['Strategic map derivation is intentionally deferred until the first post-initialization progression decision.'],
   }
 }
