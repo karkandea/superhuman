@@ -75,3 +75,14 @@ test('database policy keeps raw evidence WAIT and blocks date-rollover reasoning
   assert.match(sql, /Player Initialization is not READY; Daily Quest decision is blocked/i)
   assert.match(sql, /grant execute on function public\.persist_player_initialization_calibration_internal[\s\S]*?to service_role/i)
 })
+
+test('new player initialization bootstraps an empty canonical Player Brief before any AI call', () => {
+  const sql = fs.readFileSync(path.join(process.cwd(), 'supabase/sql/bootstrap_player_brief_before_initialization.sql'), 'utf8')
+  assert.match(sql, /ensure_player_brief_bootstrap_internal/i)
+  assert.match(sql, /'player_initialization_bootstrap'/i)
+  assert.match(sql, /'activeUnderstandingIds','\[\]'::jsonb/i)
+  assert.match(sql, /'activeSignals','\[\]'::jsonb/i)
+  assert.match(sql, /perform public\.ensure_player_brief_bootstrap_internal\(v_user_id\)/i)
+  assert.match(sql, /revoke all on function public\.ensure_player_brief_bootstrap_internal\(uuid\) from public, anon, authenticated/i)
+  assert.match(sql, /grant execute on function public\.ensure_player_brief_bootstrap_internal\(uuid\) to service_role/i)
+})
