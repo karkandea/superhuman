@@ -25,6 +25,7 @@
     "lib/activity-orchestration.ts",
     "lib/system-ux.ts",
     "lib/ai/contracts.ts",
+    "lib/ai/fake-ai-provider.ts",
     "lib/ai/orchestrator.ts",
     "lib/ai/progression-intelligence.ts",
     "lib/ai/daily-quest-intelligence.ts",
