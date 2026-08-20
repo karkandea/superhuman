@@ -106,7 +106,7 @@ export default function UpdateSystemComposer({
       setFile(null)
       setNotice({
         tone: 'success',
-        text: 'Saved to Life Vault. System will collect nearby updates before processing.',
+        text: 'Saved to Life Vault. The System will use this evidence when a progression decision needs it.',
       })
       if (variant === 'compact') setExpanded(false)
 
