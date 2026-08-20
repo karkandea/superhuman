@@ -25,12 +25,14 @@ export default function VoiceAnswerRecorder({
   questionId,
   disabled,
   textPresent,
+  onActiveChange,
   onSaved,
 }: {
   playerId: string
   questionId: string
   disabled: boolean
   textPresent: boolean
+  onActiveChange: (active: boolean) => void
   onSaved: () => Promise<void>
 }) {
   const [recording, setRecording] = useState(false)
@@ -56,12 +58,14 @@ export default function VoiceAnswerRecorder({
     if (recorded?.url) URL.revokeObjectURL(recorded.url)
     setRecorded(null)
     setElapsedMs(0)
+    onActiveChange(false)
   }
 
   useEffect(() => () => {
     cleanupStream()
     if (recorded?.url) URL.revokeObjectURL(recorded.url)
-  }, [recorded?.url])
+    onActiveChange(false)
+  }, [onActiveChange, recorded?.url])
 
   async function startRecording() {
     if (disabled || textPresent || recording) return
@@ -95,6 +99,7 @@ export default function VoiceAnswerRecorder({
 
       recorder.start(1000)
       setRecording(true)
+      onActiveChange(true)
       timerRef.current = window.setInterval(() => {
         const next = Date.now() - startedAtRef.current
         setElapsedMs(next)
@@ -103,6 +108,7 @@ export default function VoiceAnswerRecorder({
     } catch (cause) {
       cleanupStream()
       setRecording(false)
+      onActiveChange(false)
       setError(cause instanceof Error ? cause.message : 'Microphone could not start.')
     }
   }
