@@ -39,8 +39,8 @@ export default function DailyContextCheckin({
     try {
       const saved = await submitDailyContext(supabase, date, { mode, text: mode === 'context' ? text : '' })
       await onConfirmed(saved)
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Couldn’t save today context.')
+    } catch {
+      setError('Belum kesimpan. Coba sekali lagi.')
     } finally {
       setSaving(false)
       guardRef.current = false
@@ -56,9 +56,9 @@ export default function DailyContextCheckin({
 
   return (
     <section aria-label="Today check-in" style={{ border: `1px solid ${telling ? '#413821' : S.line}`, borderRadius: 18, background: 'linear-gradient(145deg,#15140f,#11161e)', padding: '18px 16px' }}>
-      <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, color: S.amber, fontWeight: 700, letterSpacing: '.14em' }}>TODAY CHECK-IN</div>
-      <h2 style={{ margin: '7px 0 0', fontFamily: '"Space Grotesk", sans-serif', fontSize: 21, lineHeight: 1.18, letterSpacing: '-.025em' }}>Anything different today?</h2>
-      <p style={{ margin: '7px 0 0', color: S.muted, fontSize: 12, lineHeight: 1.5 }}>Only tell the System what could change what’s realistic today.</p>
+      <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, color: S.amber, fontWeight: 700, letterSpacing: '.14em' }}>TODAY</div>
+      <h2 style={{ margin: '7px 0 0', fontFamily: '"Space Grotesk", sans-serif', fontSize: 21, lineHeight: 1.18, letterSpacing: '-.025em' }}>Ada yang beda hari ini?</h2>
+      <p style={{ margin: '7px 0 0', color: S.muted, fontSize: 12, lineHeight: 1.5 }}>Kalau ada yang bikin waktu, tenaga, atau prioritas berubah, kasih tahu.</p>
 
       {!telling ? (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,minmax(0,1fr))', gap: 9, marginTop: 14 }}>
@@ -68,7 +68,7 @@ export default function DailyContextCheckin({
             onClick={() => { void persist('normal') }}
             style={{ minHeight: 45, border: 'none', borderRadius: 11, background: saving ? '#3a3328' : S.amber, color: saving ? S.muted : S.bg, padding: '0 12px', fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, fontWeight: 700, cursor: saving ? 'default' : 'pointer' }}
           >
-            {saving ? 'SAVING…' : 'NORMAL DAY'}
+            {saving ? 'NYIMPEN…' : 'NGGAK ADA'}
           </button>
           <button
             type="button"
@@ -76,12 +76,12 @@ export default function DailyContextCheckin({
             onClick={() => { setTelling(true); setError(null) }}
             style={{ minHeight: 45, border: `1px solid ${S.lineStrong}`, borderRadius: 11, background: S.input, color: S.gold, padding: '0 12px', fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, fontWeight: 700, cursor: saving ? 'default' : 'pointer' }}
           >
-            SOMETHING CHANGED
+            ADA
           </button>
         </div>
       ) : (
         <form onSubmit={submit} style={{ marginTop: 14 }}>
-          <label htmlFor="daily-context-text" style={{ position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0,0,0,0)', whiteSpace: 'nowrap', border: 0 }}>What is different today?</label>
+          <label htmlFor="daily-context-text" style={{ position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0,0,0,0)', whiteSpace: 'nowrap', border: 0 }}>Apa yang beda hari ini?</label>
           <textarea
             id="daily-context-text"
             autoFocus
@@ -93,8 +93,8 @@ export default function DailyContextCheckin({
             style={{ boxSizing: 'border-box', width: '100%', minHeight: 96, maxHeight: 220, resize: 'vertical', border: `1px solid ${S.lineStrong}`, borderRadius: 11, outline: 'none', background: S.input, color: S.ink, padding: '11px 12px', fontFamily: '"IBM Plex Sans", sans-serif', fontSize: 15.5, lineHeight: 1.5 }}
           />
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 9 }}>
-            <button type="button" disabled={saving} onClick={() => { setTelling(false); setText(''); setError(null) }} style={{ minHeight: 39, border: 0, background: 'transparent', color: S.muted, padding: '0 10px', fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, cursor: 'pointer' }}>CANCEL</button>
-            <button type="submit" disabled={saving || generationBusy || !text.trim() || bytes(text) > DAILY_CONTEXT_MAX_BYTES} style={{ minHeight: 39, border: 'none', borderRadius: 10, background: saving || !text.trim() || bytes(text) > DAILY_CONTEXT_MAX_BYTES ? '#3a3328' : S.amber, color: saving || !text.trim() || bytes(text) > DAILY_CONTEXT_MAX_BYTES ? S.muted : S.bg, padding: '0 13px', fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, fontWeight: 700, cursor: saving ? 'default' : 'pointer' }}>{saving ? 'SAVING…' : 'CONTINUE'}</button>
+            <button type="button" disabled={saving} onClick={() => { setTelling(false); setText(''); setError(null) }} style={{ minHeight: 39, border: 0, background: 'transparent', color: S.muted, padding: '0 10px', fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, cursor: 'pointer' }}>BATAL</button>
+            <button type="submit" disabled={saving || generationBusy || !text.trim() || bytes(text) > DAILY_CONTEXT_MAX_BYTES} style={{ minHeight: 39, border: 'none', borderRadius: 10, background: saving || !text.trim() || bytes(text) > DAILY_CONTEXT_MAX_BYTES ? '#3a3328' : S.amber, color: saving || !text.trim() || bytes(text) > DAILY_CONTEXT_MAX_BYTES ? S.muted : S.bg, padding: '0 13px', fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, fontWeight: 700, cursor: saving ? 'default' : 'pointer' }}>{saving ? 'NYIMPEN…' : 'LANJUT'}</button>
           </div>
         </form>
       )}
