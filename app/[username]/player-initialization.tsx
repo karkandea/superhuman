@@ -26,6 +26,12 @@ const S = {
 
 const sleep = (ms: number) => new Promise(resolve => window.setTimeout(resolve, ms))
 
+const BASIC_QUESTION_HELPERS: Record<string, string> = {
+  life_context: 'Lagi kerja, kuliah, ngurus sesuatu, atau ada hal lain yang paling banyak makan waktu lo?',
+  current_direction: 'Pilih satu yang paling pengen lo dorong dulu.',
+  major_constraint: 'Bisa waktu, tenaga, uang, bingung mulai dari mana, atau hal lain.',
+}
+
 function nextQuestion(questions: PlayerInitializationQuestion[]) {
   return [...questions]
     .filter(question => question.status === 'pending')
@@ -99,6 +105,11 @@ export default function PlayerInitialization({
   const canContinue = !systemBusy && !voiceBusy && (hasTextAnswer || hasVoiceDraft)
   const canSkip = !systemBusy && voiceState === 'idle'
   const showIntro = !introDismissed && addressedBasic === 0 && currentCalibrationVersion === 0 && isBasicQuestion
+  const questionHelper = question
+    ? question.origin === 'basic'
+      ? BASIC_QUESTION_HELPERS[question.questionKey] ?? null
+      : 'Ceritain dengan bahasa lo sendiri. Nggak perlu dirapihin.'
+    : null
 
   const watchJob = useCallback(async (jobId: string) => {
     if (watchedJobRef.current === jobId) return
@@ -272,9 +283,11 @@ export default function PlayerInitialization({
                 <h1 style={{ margin: 0, maxWidth: 590, fontFamily: '"Space Grotesk", sans-serif', fontSize: 'clamp(30px,7.4vw,44px)', fontWeight: 700, lineHeight: 1.08, letterSpacing: '-.04em' }}>
                   {question.prompt}
                 </h1>
-                <p style={{ margin: '12px 0 0', color: S.muted, fontSize: 12.5, lineHeight: 1.55 }}>
-                  Ceritain dengan bahasa lo sendiri. Nggak perlu dirapihin.
-                </p>
+                {questionHelper && (
+                  <p style={{ margin: '12px 0 0', maxWidth: 520, color: S.muted, fontSize: 12.5, lineHeight: 1.55 }}>
+                    {questionHelper}
+                  </p>
+                )}
 
                 <div style={{ position: 'relative', minHeight: 132, marginTop: 26, border: `1px solid ${voiceState === 'recording' ? '#4a3a23' : S.line}`, borderRadius: 16, background: S.panel2, overflow: 'hidden', transition: 'border-color 180ms ease, box-shadow 180ms ease', boxShadow: voiceState === 'recording' ? '0 0 0 1px rgba(246,178,75,.08), 0 16px 42px rgba(0,0,0,.16)' : 'none' }}>
                   {voiceState === 'idle' && (
