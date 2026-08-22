@@ -9,10 +9,10 @@ const MIN_PLAYER_NAME_LENGTH = 2
 const MAX_PLAYER_NAME_LENGTH = 32
 
 type AuthMode = 'login' | 'register'
+type AuthMethod = 'magic' | 'password'
 
 function authRedirectUrl() {
-  const configured = process.env.NEXT_PUBLIC_SITE_URL?.trim()
-  return configured ? configured.replace(/\/+$/, '') : PRODUCTION_SITE_URL
+  return PRODUCTION_SITE_URL
 }
 
 function normalizedPlayerName(value: string) {
@@ -45,7 +45,9 @@ const S = {
 export default function HomePage() {
   const router = useRouter()
   const [authMode, setAuthMode] = useState<AuthMode>('login')
+  const [authMethod, setAuthMethod] = useState<AuthMethod>('magic')
   const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [playerName, setPlayerName] = useState('')
   const [checking, setChecking] = useState(true)
   const [submitting, setSubmitting] = useState(false)
@@ -147,6 +149,26 @@ export default function HomePage() {
     setSent(true)
   }
 
+  async function signInWithPassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (submitting) return
+    const normalizedEmail = email.trim().toLowerCase()
+    if (!normalizedEmail || !password) return
+
+    setSubmitting(true)
+    setError(null)
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email: normalizedEmail,
+      password,
+    })
+    setSubmitting(false)
+
+    if (signInError) {
+      setError('Email atau password nggak cocok.')
+      return
+    }
+  }
+
   async function createPlayerProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (submitting) return
@@ -188,6 +210,15 @@ export default function HomePage() {
 
   function switchMode(mode: AuthMode) {
     setAuthMode(mode)
+    setAuthMethod('magic')
+    setPassword('')
+    setSent(false)
+    setError(null)
+  }
+
+  function switchMethod(method: AuthMethod) {
+    setAuthMethod(method)
+    setPassword('')
     setSent(false)
     setError(null)
   }
@@ -228,6 +259,16 @@ export default function HomePage() {
               <p style={{ margin: '8px 0 0', color: S.muted, fontSize: 13, lineHeight: 1.55 }}>We sent you a secure sign-in link.</p>
               <button type="button" onClick={() => { setSent(false); setError(null) }} style={{ minHeight: 38, marginTop: 14, border: 0, background: 'transparent', color: S.gold, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, fontWeight: 700, cursor: 'pointer' }}>USE ANOTHER EMAIL</button>
             </div>
+          ) : authMode === 'login' && authMethod === 'password' ? (
+            <form onSubmit={signInWithPassword}>
+              <div style={{ marginBottom: 13, color: S.muted, fontSize: 12.5, lineHeight: 1.5 }}>Sign in with your existing password.</div>
+              <input type="email" autoComplete="email" required value={email} onChange={event => setEmail(event.target.value)} placeholder="Email" style={inputStyle} />
+              <input type="password" autoComplete="current-password" required value={password} onChange={event => setPassword(event.target.value)} placeholder="Password" style={{ ...inputStyle, marginTop: 10 }} />
+              {error && <div role="alert" style={{ color: S.red, fontSize: 11.5, lineHeight: 1.45, marginTop: 9 }}>{error}</div>}
+              <button type="submit" disabled={submitting || !email.trim() || !password} style={{ width: '100%', minHeight: 48, marginTop: 12, border: 0, borderRadius: 12, background: submitting || !email.trim() || !password ? '#3a3328' : S.amber, color: submitting || !email.trim() || !password ? S.muted : S.bg, fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, fontWeight: 800, cursor: submitting ? 'default' : 'pointer' }}>{submitting ? 'SIGNING IN…' : 'SIGN IN'}</button>
+              <button type="button" disabled={submitting} onClick={() => switchMethod('magic')} style={{ width: '100%', minHeight: 40, marginTop: 8, border: 0, background: 'transparent', color: S.gold, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, fontWeight: 700, cursor: submitting ? 'default' : 'pointer' }}>EMAIL ME A SIGN-IN LINK</button>
+              <button type="button" disabled={submitting} onClick={() => switchMode('register')} style={{ width: '100%', minHeight: 38, border: 0, background: 'transparent', color: S.muted, fontSize: 12, cursor: submitting ? 'default' : 'pointer' }}>New here? Create your System</button>
+            </form>
           ) : (
             <form onSubmit={sendMagicLink}>
               {authMode === 'register' && (
@@ -236,7 +277,10 @@ export default function HomePage() {
               <input type="email" autoComplete="email" required value={email} onChange={event => setEmail(event.target.value)} placeholder="Email" style={{ ...inputStyle, marginTop: authMode === 'register' ? 10 : 0 }} />
               {error && <div role="alert" style={{ color: S.red, fontSize: 11.5, lineHeight: 1.45, marginTop: 9 }}>{error}</div>}
               <button type="submit" disabled={submitting || !email.trim()} style={{ width: '100%', minHeight: 48, marginTop: 12, border: 0, borderRadius: 12, background: submitting || !email.trim() ? '#3a3328' : S.amber, color: submitting || !email.trim() ? S.muted : S.bg, fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, fontWeight: 800, cursor: submitting ? 'default' : 'pointer' }}>{submitting ? 'SENDING…' : authMode === 'register' ? 'CREATE SYSTEM' : 'CONTINUE'}</button>
-              <button type="button" disabled={submitting} onClick={() => switchMode(authMode === 'login' ? 'register' : 'login')} style={{ width: '100%', minHeight: 40, marginTop: 8, border: 0, background: 'transparent', color: S.muted, fontSize: 12, cursor: submitting ? 'default' : 'pointer' }}>
+              {authMode === 'login' && (
+                <button type="button" disabled={submitting} onClick={() => switchMethod('password')} style={{ width: '100%', minHeight: 40, marginTop: 8, border: 0, background: 'transparent', color: S.gold, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, fontWeight: 700, cursor: submitting ? 'default' : 'pointer' }}>USE PASSWORD</button>
+              )}
+              <button type="button" disabled={submitting} onClick={() => switchMode(authMode === 'login' ? 'register' : 'login')} style={{ width: '100%', minHeight: 40, border: 0, background: 'transparent', color: S.muted, fontSize: 12, cursor: submitting ? 'default' : 'pointer' }}>
                 {authMode === 'login' ? 'New here? Create your System' : 'Already have a System? Sign in'}
               </button>
             </form>
