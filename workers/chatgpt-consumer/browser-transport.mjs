@@ -259,7 +259,7 @@ async function chatGptContext() {
 }
 
 export class PlaywrightChatGptTransport {
-  async execute({ prompt, timeoutMs, attachments = [] }) {
+  async execute({ prompt, correlationId, timeoutMs, attachments = [] }) {
     const materialized = await materializeAttachments(attachments)
     const context = await chatGptContext()
     const page = await context.newPage()
@@ -309,6 +309,11 @@ export class PlaywrightChatGptTransport {
         conversationRef: match?.[1],
         modelLabel: 'chatgpt-consumer-auto',
       }
+    } catch (error) {
+      if (error instanceof WorkerError && correlationId) {
+        error.message = `[requestId=${correlationId}] ${error.message}`
+      }
+      throw error
     } finally {
       await page.close().catch(() => {})
       await materialized.cleanup()
