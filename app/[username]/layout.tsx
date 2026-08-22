@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useState, type ReactNode } from 'react'
 import { useParams, usePathname, useRouter } from 'next/navigation'
+import FirstQuestReveal from './first-quest-reveal'
 import PlayerInitialization from './player-initialization'
 import UpdateSystemComposer from './update-system-composer'
 import { ensurePlayerInitialization } from '@/lib/player-initialization-service'
@@ -124,6 +125,8 @@ export default function PlayerRouteLayout({ children }: { children: ReactNode })
   return (
     <div style={{ minHeight: '100dvh', background: S.bg }}>
       <div style={{ paddingBottom: showComposer ? 164 : 76 }}>{children}</div>
+
+      <FirstQuestReveal playerId={player.id} active={pathname === todayPath} />
 
       {showComposer && (
         <div style={{ position: 'fixed', left: 0, right: 0, bottom: 'calc(62px + env(safe-area-inset-bottom))', zIndex: 55, pointerEvents: 'none' }}>
