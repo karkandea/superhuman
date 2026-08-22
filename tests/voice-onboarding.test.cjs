@@ -33,13 +33,28 @@ test('onboarding recorder keeps raw voice inside one answer composer without inv
   assert.doesNotMatch(service, /invokeStructured|AiProvider|ChatGptConsumerWebProvider/)
 })
 
-test('player calibration screen is single-task and hides architecture copy', () => {
+test('player onboarding has a concise emotional arc without exposing architecture', () => {
   const page = source('app/[username]/player-initialization.tsx')
-  assert.match(page, /SYSTEM CALIBRATION/)
-  assert.match(page, /BEGIN CALIBRATION →/)
-  assert.match(page, /LANJUT →/)
-  assert.match(page, /✓ Got it\./)
+  const moment = source('app/[username]/system-moment.tsx')
+
+  assert.match(page, /SYSTEM ONLINE/)
+  assert.match(page, /Semua progression punya titik awal/)
+  assert.match(page, /Nggak perlu punya semua jawaban/)
+  assert.match(page, /MULAI →/)
+  assert.match(page, /Masih ada satu yang belum kebaca\./)
+  assert.match(page, /Gue lagi nyambungin semua yang lo ceritain\./)
+  assert.match(page, /PLAYER IDENTIFIED/)
+  assert.match(page, /Mulai sekarang, System yang jaga arahnya\./)
+  assert.match(page, /MASUK →/)
   assert.match(page, /Ceritain di sini…/)
+  assert.match(moment, /Agak lebih lama dari biasanya\. Jawaban lo aman\./)
+  assert.match(moment, /superhuman-system-pulse/)
+  assert.match(moment, /superhuman-system-scan/)
+
+  assert.doesNotMatch(page, /SYSTEM CALIBRATION/)
+  assert.doesNotMatch(page, /BEGIN CALIBRATION/)
+  assert.doesNotMatch(page, /Connecting the dots/)
+  assert.doesNotMatch(page, /The System is calibrating/)
   assert.doesNotMatch(page, /PLAYER CONTEXT/)
   assert.doesNotMatch(page, /BASE CONTEXT/)
   assert.doesNotMatch(page, /OR TALK TO THE SYSTEM/)
@@ -47,6 +62,13 @@ test('player calibration screen is single-task and hides architecture copy', () 
   assert.doesNotMatch(page, /PROGRESS IS SAVED/)
   assert.doesNotMatch(page, /LAST SYSTEM ASSESSMENT/)
   assert.doesNotMatch(page, /Give the System enough reality to work with/)
+})
+
+test('ready payoff appears only after this session actually went through initialization', () => {
+  const page = source('app/[username]/player-initialization.tsx')
+  assert.match(page, /participatedRef\.current/)
+  assert.match(page, /if \(participatedRef\.current\) setIdentified\(true\)/)
+  assert.match(page, /else onReady\(\)/)
 })
 
 test('calibration v2 binds raw audio and transcript to the same reasoning invocation', () => {
