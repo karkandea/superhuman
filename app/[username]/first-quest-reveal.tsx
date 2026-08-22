@@ -38,21 +38,9 @@ export default function FirstQuestReveal({
     let cancelled = false
     let pollCount = 0
     let timer: number | null = null
+    const date = todayStr()
 
-    async function inspect() {
-      const date = todayStr()
-      const { count: priorCount, error: priorError } = await supabase
-        .from('daily_quests')
-        .select('id', { count: 'exact', head: true })
-        .eq('user_id', playerId)
-        .lt('quest_date', date)
-
-      if (cancelled || priorError) return
-      if ((priorCount ?? 0) > 0) {
-        window.localStorage.setItem(storageKey, 'seen')
-        return
-      }
-
+    async function inspectToday() {
       const { data, error } = await supabase
         .from('daily_quests')
         .select('id,title,kind,status')
@@ -74,10 +62,26 @@ export default function FirstQuestReveal({
       }
 
       pollCount += 1
-      if (pollCount < MAX_POLLS) timer = window.setTimeout(() => { void inspect() }, POLL_MS)
+      if (pollCount < MAX_POLLS) timer = window.setTimeout(() => { void inspectToday() }, POLL_MS)
     }
 
-    void inspect()
+    async function start() {
+      const { count: priorCount, error: priorError } = await supabase
+        .from('daily_quests')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', playerId)
+        .lt('quest_date', date)
+
+      if (cancelled || priorError) return
+      if ((priorCount ?? 0) > 0) {
+        window.localStorage.setItem(storageKey, 'seen')
+        return
+      }
+
+      await inspectToday()
+    }
+
+    void start()
 
     return () => {
       cancelled = true
