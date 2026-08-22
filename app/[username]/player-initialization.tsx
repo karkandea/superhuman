@@ -107,10 +107,7 @@ export default function PlayerInitialization({
   }, [reload])
 
   useEffect(() => {
-    if (jobStatus !== 'queued' && jobStatus !== 'running') {
-      setWaitingSeconds(0)
-      return
-    }
+    if (jobStatus !== 'queued' && jobStatus !== 'running') return
 
     const startedAt = Date.now()
     const timer = window.setInterval(() => {
@@ -230,6 +227,7 @@ export default function PlayerInitialization({
 
   async function calibrate() {
     if (systemBusy || voiceState !== 'idle') return
+    setWaitingSeconds(0)
     setSaving(true)
     setError(null)
     try {
