@@ -52,16 +52,20 @@ test('Today and Life Vault hide architecture dashboards behind consumer surfaces
   assert.doesNotMatch(vault, /LATEST 40/)
 })
 
-test('authentication is email-first magic link instead of password dashboard', () => {
+test('authentication defaults to magic link while preserving password sign-in and production redirect', () => {
   const home = source('app/page.tsx')
   assert.match(home, /Your System is waiting\./)
+  assert.match(home, /const PRODUCTION_SITE_URL = 'https:\/\/superhuman\.dualangka\.com'/)
+  assert.match(home, /function authRedirectUrl\(\) \{\s*return PRODUCTION_SITE_URL\s*\}/)
+  assert.doesNotMatch(home, /NEXT_PUBLIC_SITE_URL/)
   assert.match(home, /signInWithOtp/)
+  assert.match(home, /emailRedirectTo: authRedirectUrl\(\)/)
   assert.match(home, /shouldCreateUser: authMode === 'register'/)
   assert.match(home, /Check your email\./)
   assert.match(home, /We sent you a secure sign-in link\./)
-  assert.doesNotMatch(home, /signInWithPassword/)
-  assert.doesNotMatch(home, /registerWithPassword/)
-  assert.doesNotMatch(home, /SET \/ RESET PASSWORD/)
+  assert.match(home, /signInWithPassword/)
+  assert.match(home, /USE PASSWORD/)
+  assert.match(home, /EMAIL ME A SIGN-IN LINK/)
 })
 
 test('generic voice evidence stays private and save-only until a reasoning cycle', () => {
