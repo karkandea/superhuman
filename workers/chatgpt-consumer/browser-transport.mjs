@@ -23,6 +23,10 @@ export class WorkerError extends Error {
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
 
+function timeoutUntil(deadline, cap = 30_000) {
+  return Math.max(1_000, Math.min(cap, deadline - Date.now()))
+}
+
 async function firstVisible(page, selectors) {
   for (const selector of selectors) {
     const locator = page.locator(selector).first()
@@ -163,21 +167,39 @@ async function attachFiles(page, filePaths, deadline) {
       'button[aria-label*="Add files"]',
       'button[aria-label*="Upload"]',
     ])
-    if (attachButton) await attachButton.click()
+    if (attachButton) await attachButton.click({ timeout: timeoutUntil(deadline) })
 
     const uploadMenuItem = await firstVisible(page, [
       '[role="menuitem"]:has-text("Upload from computer")',
       '[role="menuitem"]:has-text("Upload files")',
       'button:has-text("Upload from computer")',
     ])
-    if (uploadMenuItem) await uploadMenuItem.click().catch(() => {})
+    if (uploadMenuItem) await uploadMenuItem.click({ timeout: timeoutUntil(deadline) }).catch(() => {})
     fileInput = await waitForFileInput(page, Math.min(deadline, Date.now() + 5000))
   }
 
   if (!fileInput) throw new WorkerError('attachment_upload_unavailable', 'ChatGPT file attachment input was not available', true)
-  await fileInput.setInputFiles(filePaths)
-  await sleep(1200)
+  try {
+    await fileInput.setInputFiles(filePaths, { timeout: timeoutUntil(deadline, 60_000) })
+  } catch {
+    throw new WorkerError('attachment_upload_timeout', 'ChatGPT attachment upload did not accept the selected files before timeout', true)
+  }
   await throwIfProviderRateLimited(page)
+}
+
+async function waitForSendReady(page, deadline) {
+  const selectors = [
+    'button[data-testid="send-button"]',
+    'button[aria-label*="Send"]',
+  ]
+
+  while (Date.now() < deadline) {
+    await throwIfProviderRateLimited(page)
+    const sendButton = await firstVisible(page, selectors)
+    if (sendButton && await sendButton.isEnabled().catch(() => false)) return sendButton
+    await sleep(300)
+  }
+  return null
 }
 
 let connectedBrowser = null
@@ -251,17 +273,33 @@ export class PlaywrightChatGptTransport {
       const assistantMessages = page.locator('[data-message-author-role="assistant"]')
       const previousCount = await assistantMessages.count()
 
+      // Fill text before adding large audio evidence. ChatGPT temporarily locks or
+      // replaces composer state while attachments are being processed; filling after
+      // a multi-file upload can time out even though the composer locator is visible.
+      try {
+        await composer.fill(prompt, { timeout: timeoutUntil(deadline) })
+      } catch {
+        throw new WorkerError('composer_fill_timeout', 'ChatGPT composer did not accept the request before timeout', true)
+      }
+
       await attachFiles(page, materialized.paths, deadline)
-      await composer.fill(prompt)
       await throwIfProviderRateLimited(page)
 
-      const sendButton = await firstVisible(page, [
-        'button[data-testid="send-button"]',
-        'button[aria-label*="Send"]',
-      ])
-
-      if (sendButton) await sendButton.click()
-      else await composer.press('Enter')
+      const sendButton = await waitForSendReady(page, deadline)
+      if (!sendButton) {
+        throw new WorkerError(
+          materialized.paths.length > 0 ? 'attachment_upload_timeout' : 'composer_send_unavailable',
+          materialized.paths.length > 0
+            ? 'ChatGPT attachments did not become ready to send before timeout'
+            : 'ChatGPT send control did not become ready before timeout',
+          true,
+        )
+      }
+      try {
+        await sendButton.click({ timeout: timeoutUntil(deadline) })
+      } catch {
+        throw new WorkerError('composer_send_timeout', 'ChatGPT send action did not complete before timeout', true)
+      }
 
       const text = await waitForAssistantResponse(page, previousCount, deadline)
       const match = page.url().match(/\/c\/([^/?#]+)/)
