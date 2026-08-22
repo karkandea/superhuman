@@ -129,7 +129,7 @@ test('consumer provider forwards audio attachments once while keeping signed URL
 
 test('browser transport has bounded file attachment support but ordinary tests never invoke it', () => {
   const transport = source('workers/chatgpt-consumer/browser-transport.mjs')
-  assert.match(transport, /setInputFiles\(filePaths\)/)
+  assert.match(transport, /setInputFiles\(filePaths/)
   assert.match(transport, /MAX_ATTACHMENT_BYTES = 15 \* 1024 \* 1024/)
   assert.match(transport, /superhuman-ai-attachments-/)
   assert.match(transport, /materialized\.cleanup\(\)/)
