@@ -44,9 +44,17 @@ test('Today and Life Vault hide architecture dashboards behind consumer surfaces
   assert.doesNotMatch(today, /UpdateSystemComposer/)
   assert.doesNotMatch(today, /STRATEGIC TARGET · EXECUTABLE PLAN/)
 
-  assert.match(vault, /Everything the System knows from what you’ve shared\./)
-  assert.match(vault, /RECENT KNOWLEDGE/)
-  assert.match(vault, /🎙 Voice update/)
+  assert.match(vault, /Your private memory for the System\./)
+  assert.match(vault, /RECENT UPDATES/)
+  assert.match(vault, /INITIALIZATION INTERVIEW/)
+  assert.match(vault, /VIEW ANSWERS →/)
+  assert.match(vault, /VIEW TRANSCRIPT →/)
+  assert.match(vault, /SEE UNDERSTANDING →/)
+  assert.match(vault, /CHECK STATUS/)
+  assert.match(vault, /understanding_sources/)
+  assert.doesNotMatch(vault, /requestDailyQuestGeneration/)
+  assert.doesNotMatch(vault, /RECENT KNOWLEDGE/)
+  assert.doesNotMatch(vault, /Everything the System knows from what you’ve shared\./)
   assert.doesNotMatch(vault, /SystemFreshnessCard/)
   assert.doesNotMatch(vault, /UpdateSystemComposer/)
   assert.doesNotMatch(vault, /LATEST 40/)
@@ -104,8 +112,7 @@ test('one FakeAiProvider call understands raw activity audio and returns its tra
   let deltaPersisted = false
   const playerBrief = {
     id: 'brief-1', version: 1, schemaVersion: 'player-brief.v1', reason: 'test', createdAt: '2026-08-20T00:00:00Z', generatedAt: '2026-08-20T00:00:00Z',
-    player: { id: 'player-1', name: 'Player', timezone: 'Asia/Jakarta' },
-    activeUnderstandingIds: [], highlights: [],
+    player: { id: 'player-1', name: 'Player', timezone: 'Asia/Jakarta' }, activeUnderstandingIds: [], highlights: [],
     sections: { goals: [], obstacles: [], opportunities: [], constraints: [], preferences: [], relationships: [], events: [], priorities: [] },
     activeSignals: [], counts: { activeUnderstanding: 0, activeSignals: 0 },
   }
