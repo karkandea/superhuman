@@ -9,6 +9,7 @@ import { validateGeneratedQuestCandidates, type GeneratedQuestCandidate, type Qu
 
 export const QUEST_INTELLIGENCE_POLICY_VERSION = 'quest-policy.v2'
 export const QUEST_CANDIDATE_MIN = 8
+export const QUEST_CANDIDATE_ACCEPT_MIN = 4
 export const QUEST_CANDIDATE_MAX = 15
 export const QUEST_SELECTION_MAX = 5
 
@@ -73,6 +74,30 @@ function nonEmptyString(value: unknown, field: string, max = 1600) {
 function optionalString(value: unknown, field: string) {
   if (value === undefined || value === null || value === '') return undefined
   return nonEmptyString(value, field, 240)
+}
+
+function normalizeQuestCategory(value: unknown): GeneratedQuestCandidate['category'] | unknown {
+  if (typeof value !== 'string') return value
+  const normalized = value.trim().toLocaleLowerCase().replace(/[\s-]+/g, '_')
+  const aliases: Record<string, GeneratedQuestCandidate['category']> = {
+    pagi: 'pagi',
+    morning: 'pagi',
+    siang: 'siang',
+    noon: 'siang',
+    midday: 'siang',
+    afternoon: 'siang',
+    malam: 'malam',
+    sore: 'malam',
+    evening: 'malam',
+    night: 'malam',
+    sepanjang_hari: 'sepanjang_hari',
+    all_day: 'sepanjang_hari',
+    allday: 'sepanjang_hari',
+    anytime: 'sepanjang_hari',
+    any_time: 'sepanjang_hari',
+    throughout_day: 'sepanjang_hari',
+  }
+  return aliases[normalized] ?? value
 }
 
 function signalIds(value: unknown, field: string, allowedSignalIds: ReadonlySet<string>) {
@@ -192,6 +217,7 @@ export function questIntelligencePolicyInstructions() {
     'Apply feasibility/receptivity before scoring. A strategically attractive option that cannot realistically be executed today must be feasibleToday=false and cannot be selected.',
     'Every candidate needs an executable contract: concrete action, observable completion condition, appropriate context, and reasonable dose. Avoid vague tasks without a bounded done condition.',
     'Create 8–15 distinct evidence-backed candidates when today’s Progression Target calls for intervention.',
+    'Use category exactly as one of pagi, siang, malam, sepanjang_hari. Do not translate or invent category values.',
     'Score every candidate 0–5 on goalRelevance, urgency, leverage, obstacleRemoval, actionability, contextFit, progressionValue, and redundancyPenalty. Do not collapse these into a blind weighted formula.',
     'Select a portfolio rather than top-N. If any quest is selected: exactly 1 Main, at most 2 Side, at most 1 Maintenance, at most 1 Bonus, and never exceed Progression Target maxQuestCount.',
     'Selecting zero quests is valid when every option fails feasibility/receptivity, critical progress is already covered, uncertainty is too high, or another quest would mainly add burden. Provide noQuestReason.',
@@ -209,8 +235,8 @@ export function validateQuestIntelligenceDecision(
   validation: QuestPolicyValidationContext,
 ): QuestPolicyDecision {
   if (!isRecord(value)) throw new Error('Quest Policy V2 output must be an object')
-  if (!Array.isArray(value.candidates) || value.candidates.length < QUEST_CANDIDATE_MIN || value.candidates.length > QUEST_CANDIDATE_MAX) {
-    throw new Error(`Quest Policy V2 must produce ${QUEST_CANDIDATE_MIN}–${QUEST_CANDIDATE_MAX} candidates`)
+  if (!Array.isArray(value.candidates) || value.candidates.length < QUEST_CANDIDATE_ACCEPT_MIN || value.candidates.length > QUEST_CANDIDATE_MAX) {
+    throw new Error(`Quest Policy V2 must produce at least ${QUEST_CANDIDATE_ACCEPT_MIN} usable candidates (${QUEST_CANDIDATE_MIN}–${QUEST_CANDIDATE_MAX} requested)`)
   }
   if (!Array.isArray(value.selections) || value.selections.length > QUEST_SELECTION_MAX) {
     throw new Error(`Quest Policy V2 must select 0–${QUEST_SELECTION_MAX} quests`)
@@ -226,7 +252,7 @@ export function validateQuestIntelligenceDecision(
 
     const [validated] = validateGeneratedQuestCandidates([{
       title: raw.title,
-      category: raw.category,
+      category: normalizeQuestCategory(raw.category),
       kind: 'side',
       difficulty: raw.difficulty,
       priority: 3,
@@ -314,6 +340,8 @@ export function compactQuestIntelligenceDecision(decision: QuestPolicyDecision) 
   return {
     version: QUEST_INTELLIGENCE_POLICY_VERSION,
     candidateCount: decision.candidates.length,
+    requestedCandidateMin: QUEST_CANDIDATE_MIN,
+    degradedCandidatePool: decision.candidates.length < QUEST_CANDIDATE_MIN,
     candidates: decision.candidates.map(candidate => ({
       id: candidate.candidateId,
       scores: candidate.scores,
