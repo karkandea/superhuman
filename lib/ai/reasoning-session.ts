@@ -12,6 +12,7 @@ export interface ConsumerConversationHint {
 let sessionClient: SupabaseClient | null | undefined
 
 function client(): SupabaseClient | null {
+  if (process.env.SUPERHUMAN_TEST_MODE === '1') return null
   if (sessionClient !== undefined) return sessionClient
   const url = process.env.SUPABASE_URL
   const key = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -65,13 +66,14 @@ export async function persistInitializationReasoningSession(input: {
   if (!supabase) return
 
   if (input.readiness === 'ready') {
+    const now = new Date().toISOString()
     const { error } = await supabase
       .from('ai_reasoning_sessions')
       .update({
         status: 'closed',
-        closed_at: new Date().toISOString(),
-        last_used_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        closed_at: now,
+        last_used_at: now,
+        updated_at: now,
       })
       .eq('user_id', input.playerId)
       .eq('phase_key', INITIALIZATION_PHASE_KEY)
