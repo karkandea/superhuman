@@ -11,7 +11,12 @@ function source(relativePath) {
 test('player shell exposes one composer on Today and Vault with mobile bottom navigation', () => {
   const layout = source('app/[username]/layout.tsx')
   assert.match(layout, /showComposer = pathname === todayPath \|\| pathname === vaultPath/)
-  assert.match(layout, /<UpdateSystemComposer playerId=\{player\.id\}/)
+  assert.match(layout, /<UpdateSystemComposer[\s\S]*playerId=\{player\.id\}/)
+  assert.match(layout, /starterPrompts=\{pathname === vaultPath \? VAULT_STARTER_PROMPTS : undefined\}/)
+  assert.match(layout, /A goal changed:/)
+  assert.match(layout, /Something happened:/)
+  assert.match(layout, /I’m stuck on something:/)
+  assert.match(layout, /About my life:/)
   assert.match(layout, /label: 'Today'/)
   assert.match(layout, /label: 'Vault'/)
   assert.match(layout, /label: 'Progression'/)
@@ -19,9 +24,12 @@ test('player shell exposes one composer on Today and Vault with mobile bottom na
   assert.match(layout, /bottom: 'calc\(62px \+ env\(safe-area-inset-bottom\)\)'/)
 })
 
-test('universal composer unifies text file and responsive raw voice capture', () => {
+test('universal composer unifies text file, contextual starters and responsive raw voice capture', () => {
   const composer = source('app/[username]/update-system-composer.tsx')
   assert.match(composer, /Tell the System anything…/)
+  assert.match(composer, /starterPrompts/)
+  assert.match(composer, /chooseStarter/)
+  assert.match(composer, /Update starters/)
   assert.match(composer, /MediaRecorder/)
   assert.match(composer, /createAnalyser\(\)/)
   assert.match(composer, /ingestVoiceKnowledge/)
