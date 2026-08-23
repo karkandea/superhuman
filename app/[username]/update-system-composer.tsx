@@ -66,10 +66,12 @@ export default function UpdateSystemComposer({
   playerId,
   onSaved,
   starterPrompts = [],
+  placeholder = 'Ceritain apa pun ke System…',
 }: {
   playerId: string
   onSaved?: (entryId: string) => void | Promise<void>
   starterPrompts?: readonly string[]
+  placeholder?: string
 }) {
   const [text, setText] = useState('')
   const [file, setFile] = useState<AttachedKnowledgeFile | null>(null)
@@ -214,10 +216,10 @@ export default function UpdateSystemComposer({
         setElapsedMs(next)
         if (next >= MAX_KNOWLEDGE_AUDIO_DURATION_MS && recorder.state === 'recording') recorder.stop()
       }, 250)
-    } catch (error) {
+    } catch {
       cleanupStream()
       setVoiceState('idle')
-      setNotice({ tone: 'error', text: error instanceof Error ? error.message : 'Microphone belum bisa digunakan.' })
+      setNotice({ tone: 'error', text: 'Microphone belum bisa digunakan. Cek izin browser lalu coba lagi.' })
     }
   }
 
@@ -300,13 +302,13 @@ export default function UpdateSystemComposer({
       setText('')
       setFile(null)
       clearVoice()
-      setNotice({ tone: 'success', text: '✓ Saved' })
+      setNotice({ tone: 'success', text: 'Tersimpan. System akan mempertimbangkannya saat perlu.' })
       setExpanded(false)
       window.dispatchEvent(new CustomEvent('superhuman:knowledge-saved', { detail: { entryId } }))
       try { await onSaved?.(entryId) } catch {}
-      window.setTimeout(() => setNotice(current => current?.tone === 'success' ? null : current), 1400)
-    } catch (error) {
-      setNotice({ tone: 'error', text: error instanceof Error ? error.message : 'Update belum bisa disimpan.' })
+      window.setTimeout(() => setNotice(current => current?.tone === 'success' ? null : current), 2600)
+    } catch {
+      setNotice({ tone: 'error', text: 'Belum tersimpan. Coba lagi.' })
       setExpanded(true)
     } finally {
       setSaving(false)
@@ -335,7 +337,7 @@ export default function UpdateSystemComposer({
   const showStarters = showExpanded && starterPrompts.length > 0 && !text.trim() && !file && voiceState === 'idle' && !voiceDraft && !notice
 
   return (
-    <section aria-label="Tell the System anything" style={{ width: '100%' }}>
+    <section aria-label="Update untuk System" style={{ width: '100%' }}>
       <form
         onSubmit={submit}
         style={{
@@ -350,37 +352,37 @@ export default function UpdateSystemComposer({
       >
         {voiceState === 'privacy' ? (
           <div style={{ padding: '7px 6px 5px' }}>
-            <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.gold, fontSize: 8.5, fontWeight: 700, letterSpacing: '.1em' }}>VOICE PRIVACY</div>
-            <div style={{ marginTop: 6, color: S.ink, fontSize: 12.5, lineHeight: 1.5 }}>Voice updates disimpan dengan aman dan dipakai untuk mempersonalisasi System lo.</div>
+            <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.gold, fontSize: 8.5, fontWeight: 700, letterSpacing: '.1em' }}>VOICE UPDATE</div>
+            <div style={{ marginTop: 6, color: S.ink, fontSize: 12.5, lineHeight: 1.5 }}>Audio lo disimpan privat dan dipakai sebagai konteks saat System perlu memahaminya.</div>
             <div style={{ display: 'flex', gap: 8, marginTop: 11 }}>
-              <button type="button" onClick={acceptVoicePrivacy} style={{ minHeight: 36, border: 0, borderRadius: 9, padding: '0 12px', background: S.amber, color: S.bg, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, fontWeight: 800, cursor: 'pointer' }}>CONTINUE</button>
-              <button type="button" onClick={() => setVoiceState('idle')} style={{ minHeight: 36, border: 0, background: 'transparent', color: S.muted, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, cursor: 'pointer' }}>NOT NOW</button>
+              <button type="button" onClick={acceptVoicePrivacy} style={{ minHeight: 36, border: 0, borderRadius: 9, padding: '0 12px', background: S.amber, color: S.bg, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, fontWeight: 800, cursor: 'pointer' }}>LANJUT</button>
+              <button type="button" onClick={() => setVoiceState('idle')} style={{ minHeight: 36, border: 0, background: 'transparent', color: S.muted, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, cursor: 'pointer' }}>NANTI</button>
             </div>
           </div>
         ) : voiceState === 'recording' ? (
           <div style={{ padding: '7px 5px 5px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-              <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.red, fontSize: 9, fontWeight: 700, letterSpacing: '.08em' }}>● LISTENING</div>
+              <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.red, fontSize: 9, fontWeight: 700, letterSpacing: '.08em' }}>● MENDENGARKAN</div>
               <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.muted, fontSize: 9 }}>{formatDuration(elapsedMs)}</div>
             </div>
             <div aria-hidden="true" style={{ height: 34, marginTop: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3 }}>
               {levels.map((level, index) => <span key={index} style={{ width: 3, height: `${Math.max(5, Math.round(level * 30))}px`, borderRadius: 99, background: index % 4 === 0 ? S.gold : S.amber, opacity: .82, transition: 'height 70ms linear' }} />)}
             </div>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 7 }}>
-              <button type="button" onClick={cancelRecording} style={{ minHeight: 35, border: 0, background: 'transparent', color: S.muted, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, cursor: 'pointer' }}>CANCEL</button>
-              <button type="button" onClick={finishRecording} style={{ minHeight: 35, border: 0, borderRadius: 9, padding: '0 12px', background: S.amber, color: S.bg, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, fontWeight: 800, cursor: 'pointer' }}>DONE</button>
+              <button type="button" onClick={cancelRecording} style={{ minHeight: 35, border: 0, background: 'transparent', color: S.muted, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, cursor: 'pointer' }}>BATAL</button>
+              <button type="button" onClick={finishRecording} style={{ minHeight: 35, border: 0, borderRadius: 9, padding: '0 12px', background: S.amber, color: S.bg, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, fontWeight: 800, cursor: 'pointer' }}>SELESAI</button>
             </div>
           </div>
         ) : voiceState === 'ready' && voiceDraft ? (
           <div style={{ padding: '6px 5px 5px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
               <div style={{ color: S.ink, fontSize: 13 }}>🎙 Voice update <span style={{ color: S.muted }}>· {formatDuration(voiceDraft.durationMs)}</span></div>
-              <button type="submit" disabled={saving} aria-label="Send voice update" style={{ width: 38, height: 38, border: 0, borderRadius: 11, background: saving ? '#3a3328' : S.amber, color: S.bg, display: 'grid', placeItems: 'center', cursor: saving ? 'default' : 'pointer' }}>{saving ? '…' : <SendIcon />}</button>
+              <button type="submit" disabled={saving} aria-label="Kirim voice update" style={{ width: 38, height: 38, border: 0, borderRadius: 11, background: saving ? '#3a3328' : S.amber, color: S.bg, display: 'grid', placeItems: 'center', cursor: saving ? 'default' : 'pointer' }}>{saving ? '…' : <SendIcon />}</button>
             </div>
             <audio src={voiceDraft.url} preload="metadata" style={{ display: 'none' }} />
             <div style={{ display: 'flex', gap: 12, marginTop: 6 }}>
-              <button type="button" onClick={reRecord} disabled={saving} style={{ border: 0, background: 'transparent', color: S.gold, padding: 0, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8, cursor: 'pointer' }}>RE-RECORD</button>
-              <button type="button" onClick={clearVoice} disabled={saving} style={{ border: 0, background: 'transparent', color: S.muted, padding: 0, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8, cursor: 'pointer' }}>TYPE INSTEAD</button>
+              <button type="button" onClick={reRecord} disabled={saving} style={{ border: 0, background: 'transparent', color: S.gold, padding: 0, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8, cursor: 'pointer' }}>REKAM ULANG</button>
+              <button type="button" onClick={clearVoice} disabled={saving} style={{ border: 0, background: 'transparent', color: S.muted, padding: 0, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8, cursor: 'pointer' }}>PAKAI TEKS</button>
             </div>
           </div>
         ) : (
@@ -390,12 +392,12 @@ export default function UpdateSystemComposer({
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={saving || fileBlocked}
-                aria-label="Attach text file"
-                title="Attach .txt, .md, or .json"
+                aria-label="Lampirkan file teks"
+                title="Lampirkan .txt, .md, atau .json"
                 style={{ width: 40, height: 40, flexShrink: 0, border: 0, borderRadius: 11, background: 'transparent', color: fileBlocked ? S.muted2 : S.muted, display: 'grid', placeItems: 'center', cursor: fileBlocked ? 'default' : 'pointer' }}
               ><PlusIcon /></button>
               <input ref={fileInputRef} type="file" accept=".txt,.md,.json,text/plain,text/markdown,application/json" onChange={(event) => { void selectFile(event) }} disabled={saving || fileBlocked} style={{ display: 'none' }} />
-              <label htmlFor="universal-system-update" style={{ position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0,0,0,0)', whiteSpace: 'nowrap', border: 0 }}>Tell the System anything</label>
+              <label htmlFor="universal-system-update" style={{ position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0,0,0,0)', whiteSpace: 'nowrap', border: 0 }}>Update untuk System</label>
               <textarea
                 id="universal-system-update"
                 value={text}
@@ -405,17 +407,17 @@ export default function UpdateSystemComposer({
                 maxLength={MAX_KNOWLEDGE_TEXT_LENGTH}
                 disabled={saving}
                 rows={showExpanded ? 3 : 1}
-                placeholder="Tell the System anything…"
+                placeholder={placeholder}
                 style={{ boxSizing: 'border-box', width: '100%', minHeight: showExpanded ? 76 : 40, maxHeight: 220, resize: 'none', border: 0, outline: 0, background: 'transparent', color: S.ink, padding: showExpanded ? '9px 4px 5px' : '9px 3px', fontFamily: '"IBM Plex Sans", sans-serif', fontSize: 15.5, lineHeight: 1.45 }}
               />
-              <button type="button" onClick={requestVoice} disabled={saving || voiceBlocked} aria-label="Record voice update" title={voiceBlocked ? 'Clear text/file first to record voice' : 'Record voice update'} style={{ width: 40, height: 40, flexShrink: 0, border: 0, borderRadius: 11, background: 'transparent', color: voiceBlocked ? S.muted2 : S.gold, display: 'grid', placeItems: 'center', cursor: voiceBlocked ? 'default' : 'pointer' }}><MicIcon /></button>
+              <button type="button" onClick={requestVoice} disabled={saving || voiceBlocked} aria-label="Rekam voice update" title={voiceBlocked ? 'Kosongkan teks/file dulu untuk merekam' : 'Rekam voice update'} style={{ width: 40, height: 40, flexShrink: 0, border: 0, borderRadius: 11, background: 'transparent', color: voiceBlocked ? S.muted2 : S.gold, display: 'grid', placeItems: 'center', cursor: voiceBlocked ? 'default' : 'pointer' }}><MicIcon /></button>
               {hasContent && (
-                <button type="submit" disabled={saving} aria-label="Send update" style={{ width: 40, height: 40, flexShrink: 0, border: 0, borderRadius: 11, background: saving ? '#3a3328' : S.amber, color: S.bg, display: 'grid', placeItems: 'center', cursor: saving ? 'default' : 'pointer' }}>{saving ? '…' : <SendIcon />}</button>
+                <button type="submit" disabled={saving} aria-label="Kirim update" style={{ width: 40, height: 40, flexShrink: 0, border: 0, borderRadius: 11, background: saving ? '#3a3328' : S.amber, color: S.bg, display: 'grid', placeItems: 'center', cursor: saving ? 'default' : 'pointer' }}>{saving ? '…' : <SendIcon />}</button>
               )}
             </div>
 
             {showStarters && (
-              <div aria-label="Update starters" style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '7px 4px 2px' }}>
+              <div aria-label="Contoh update" style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '7px 4px 2px' }}>
                 {starterPrompts.map(prompt => (
                   <button
                     key={prompt}
@@ -433,7 +435,7 @@ export default function UpdateSystemComposer({
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '7px 4px 2px', padding: '8px 9px', borderRadius: 10, border: `1px solid ${S.line}`, background: S.panel2 }}>
                 <span style={{ color: S.gold, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5 }}>{file.extension.toUpperCase()}</span>
                 <span style={{ minWidth: 0, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: S.ink, fontSize: 11.5 }}>{file.name}</span>
-                <button type="button" onClick={() => setFile(null)} aria-label={`Remove ${file.name}`} style={{ border: 0, background: 'transparent', color: S.muted, fontSize: 17, cursor: 'pointer' }}>×</button>
+                <button type="button" onClick={() => setFile(null)} aria-label={`Hapus ${file.name}`} style={{ border: 0, background: 'transparent', color: S.muted, fontSize: 17, cursor: 'pointer' }}>×</button>
               </div>
             )}
           </>

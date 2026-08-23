@@ -43,7 +43,7 @@ test('text plus attachment stays below the bounded reasoning payload budget', ()
   assert.throws(() => composeKnowledgeText('short note', '🚀'.repeat(6000), 'context.txt'), /note plus attached file under 22 KB total/)
 })
 
-test('Today stays quest-first while the shared shell owns the compact System composer', () => {
+test('Today stays quest-first while the shared shell owns the compact contextual System composer', () => {
   const today = fs.readFileSync(path.join(process.cwd(), 'app/[username]/page.tsx'), 'utf8')
   const layout = fs.readFileSync(path.join(process.cwd(), 'app/[username]/layout.tsx'), 'utf8')
   const composer = fs.readFileSync(path.join(process.cwd(), 'app/[username]/update-system-composer.tsx'), 'utf8')
@@ -51,9 +51,10 @@ test('Today stays quest-first while the shared shell owns the compact System com
   assert.match(today, />Today</)
   assert.match(today, /SYSTEM FOCUS/)
   assert.doesNotMatch(today, /UpdateSystemComposer/)
-  assert.match(layout, /<UpdateSystemComposer playerId=\{player\.id\}/)
+  assert.match(layout, /<UpdateSystemComposer[\s\S]*playerId=\{player\.id\}/)
   assert.match(layout, /showComposer = pathname === todayPath \|\| pathname === vaultPath/)
-  assert.match(composer, /Tell the System anything…/)
+  assert.match(layout, /Ada yang perlu System tahu hari ini\?/)
+  assert.match(composer, /Ceritain apa pun ke System…/)
 })
 
 test('product metadata no longer presents Superhuman as a checklist tracker', () => {

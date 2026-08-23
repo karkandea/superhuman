@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { deriveUnderstandingStage } from '@/lib/system-understanding-ui'
 
 interface VaultEntry {
   id: string
@@ -36,11 +37,11 @@ const S = {
 } as const
 
 const INITIALIZATION_LABELS: Record<string, string> = {
-  life_context: 'Current situation',
-  schedule_structure: 'Weekly capacity',
-  current_direction: 'Current focus',
-  desired_outcome: 'Desired outcome',
-  major_constraint: 'Biggest blocker',
+  life_context: 'Keseharian sekarang',
+  schedule_structure: 'Ritme seminggu',
+  current_direction: 'Fokus sekarang',
+  desired_outcome: 'Hasil yang dituju',
+  major_constraint: 'Hambatan utama',
 }
 
 const INITIALIZATION_PROMPTS: Record<string, string> = {
@@ -62,6 +63,10 @@ function asString(value: unknown) {
 
 function asNumber(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
 
 function metadataString(entry: VaultEntry, key: string) {
@@ -91,8 +96,8 @@ function groupLabel(key: string) {
   yesterday.setDate(today.getDate() - 1)
   const todayKey = dateKey(today.toISOString())
   const yesterdayKey = dateKey(yesterday.toISOString())
-  if (key === todayKey) return 'Today'
-  if (key === yesterdayKey) return 'Yesterday'
+  if (key === todayKey) return 'Hari ini'
+  if (key === yesterdayKey) return 'Kemarin'
   const date = new Date(`${key}T12:00:00`)
   return date.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: date.getFullYear() === today.getFullYear() ? undefined : 'numeric' })
 }
@@ -117,7 +122,7 @@ function splitInitializationText(entry: VaultEntry) {
   }
 
   return {
-    question: INITIALIZATION_PROMPTS[questionKey] ?? 'Follow-up question',
+    question: INITIALIZATION_PROMPTS[questionKey] ?? 'Pertanyaan lanjutan',
     answer: normalized,
   }
 }
@@ -136,16 +141,10 @@ function cleanEntryText(entry: VaultEntry) {
 
 function preview(value: string, max = 210) {
   const compact = value.replace(/\s+/g, ' ').trim()
-  if (compact.length <= max) return { text: compact, truncated: false }
+  if (compact.length <= max) return compact
   const cut = compact.slice(0, max)
   const lastSpace = cut.lastIndexOf(' ')
-  return { text: `${cut.slice(0, Math.max(80, lastSpace))}…`, truncated: true }
-}
-
-function naturalList(items: string[]) {
-  if (items.length <= 1) return items[0] ?? ''
-  if (items.length === 2) return `${items[0]} and ${items[1]}`
-  return `${items.slice(0, -1).join(', ')}, and ${items.at(-1)}`
+  return `${cut.slice(0, Math.max(80, lastSpace))}…`
 }
 
 function initializationSummary(entries: VaultEntry[]) {
@@ -154,9 +153,9 @@ function initializationSummary(entries: VaultEntry[]) {
     .map(key => INITIALIZATION_LABELS[key].toLowerCase())
   const adaptiveCount = entries.filter(entry => metadataString(entry, 'origin') === 'adaptive').length
   const base = labels.length > 0
-    ? `You gave the System its starting picture: ${naturalList(labels)}.`
-    : 'You gave the System the starting context it needed to understand your life.'
-  return adaptiveCount > 0 ? `${base} ${adaptiveCount} follow-up ${adaptiveCount === 1 ? 'answer was' : 'answers were'} added during calibration.` : base
+    ? `System mulai dari ${labels.join(', ')}.`
+    : 'Ini konteks awal yang lo kasih ke System.'
+  return adaptiveCount > 0 ? `${base} Ada ${adaptiveCount} jawaban lanjutan yang ikut disimpan.` : base
 }
 
 function entryDisplay(entry: VaultEntry) {
@@ -180,7 +179,7 @@ function entryDisplay(entry: VaultEntry) {
   }
   if (fileName) {
     return {
-      title: extension ? `${extension.toUpperCase()} update` : 'File update',
+      title: extension ? `Update ${extension.toUpperCase()}` : 'File update',
       text,
       voice: false,
       fileName,
@@ -191,14 +190,14 @@ function entryDisplay(entry: VaultEntry) {
 
 function detailCountLabel(count: number) {
   if (count <= 0) return null
-  return `${count} ${count === 1 ? 'detail' : 'details'} saved`
+  return `${count} hal dipahami`
 }
 
 function statusCopy(entry: VaultEntry, detailCount: number) {
-  if (entry.processing_status === 'failed') return { text: 'Saved · processing paused', color: S.red }
-  if (entry.processing_status === 'pending') return { text: 'Saved · waiting for the next System decision', color: S.muted }
+  if (entry.processing_status === 'failed') return { text: 'Tersimpan · pemrosesan tertunda', color: S.red }
+  if (entry.processing_status === 'pending') return { text: 'Tersimpan · belum perlu diproses', color: S.muted }
   const linked = detailCountLabel(detailCount)
-  return { text: linked ?? 'Saved to Life Vault', color: linked ? S.gold : S.muted }
+  return { text: linked ?? 'Tersimpan di Vault', color: linked ? S.gold : S.muted }
 }
 
 export default function LifeVaultPage() {
@@ -210,17 +209,18 @@ export default function LifeVaultPage() {
   const [entries, setEntries] = useState<VaultEntry[]>([])
   const [detailIdsByEntry, setDetailIdsByEntry] = useState<Record<string, string[]>>({})
   const [detailSummariesByEntry, setDetailSummariesByEntry] = useState<Record<string, string[]>>({})
-  const [understandingUpdatedAt, setUnderstandingUpdatedAt] = useState<string | null>(null)
+  const [playerBrief, setPlayerBrief] = useState<Record<string, unknown> | null>(null)
+  const [progressionMap, setProgressionMap] = useState<Record<string, unknown> | null>(null)
+  const [responseModel, setResponseModel] = useState<Record<string, unknown> | null>(null)
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
   const [foundationReady, setFoundationReady] = useState(true)
   const [checkingStatus, setCheckingStatus] = useState(false)
-  const [showHowItWorks, setShowHowItWorks] = useState(false)
   const [showInitializationAnswers, setShowInitializationAnswers] = useState(false)
   const [expandedEntryIds, setExpandedEntryIds] = useState<Set<string>>(() => new Set())
 
   const loadEntries = useCallback(async (id: string) => {
-    const [knowledgeResult, briefResult] = await Promise.all([
+    const [knowledgeResult, briefResult, mapResult, responseResult] = await Promise.all([
       supabase
         .from('knowledge_entries')
         .select('id,raw_text,content_metadata,processing_status,occurred_at,created_at')
@@ -229,7 +229,19 @@ export default function LifeVaultPage() {
         .limit(60),
       supabase
         .from('player_briefs')
-        .select('created_at')
+        .select('brief')
+        .eq('user_id', id)
+        .eq('is_current', true)
+        .maybeSingle(),
+      supabase
+        .from('progression_maps')
+        .select('map')
+        .eq('user_id', id)
+        .eq('is_current', true)
+        .maybeSingle(),
+      supabase
+        .from('player_response_models')
+        .select('model')
         .eq('user_id', id)
         .eq('is_current', true)
         .maybeSingle(),
@@ -246,6 +258,8 @@ export default function LifeVaultPage() {
       throw knowledgeResult.error
     }
     if (briefResult.error) throw briefResult.error
+    if (mapResult.error) throw mapResult.error
+    if (responseResult.error) throw responseResult.error
 
     const rows = (knowledgeResult.data ?? []) as VaultEntry[]
     const ids = rows.map(entry => entry.id)
@@ -295,7 +309,9 @@ export default function LifeVaultPage() {
     setEntries(rows)
     setDetailIdsByEntry(nextDetailIds)
     setDetailSummariesByEntry(nextDetailSummaries)
-    setUnderstandingUpdatedAt(briefResult.data?.created_at ?? null)
+    setPlayerBrief(briefResult.data ? asRecord(briefResult.data.brief) : null)
+    setProgressionMap(mapResult.data ? asRecord(mapResult.data.map) : null)
+    setResponseModel(responseResult.data ? asRecord(responseResult.data.model) : null)
   }, [])
 
   useEffect(() => {
@@ -325,7 +341,7 @@ export default function LifeVaultPage() {
         setPlayerId(profile.id)
         await loadEntries(profile.id)
       } catch (error) {
-        if (!cancelled) setMessage(error instanceof Error ? error.message : 'Failed to load Life Vault')
+        if (!cancelled) setMessage(error instanceof Error ? error.message : 'Life Vault belum bisa dibuka.')
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -376,6 +392,7 @@ export default function LifeVaultPage() {
     return [...map.entries()]
   }, [feedItems])
 
+  const stage = useMemo(() => deriveUnderstandingStage({ playerBrief, progressionMap, responseModel }), [playerBrief, progressionMap, responseModel])
   const hasFailedEntry = entries.some(entry => entry.processing_status === 'failed')
   const progressionHref = `/${encodeURIComponent(username)}/history`
 
@@ -402,94 +419,79 @@ export default function LifeVaultPage() {
     setMessage('')
     try {
       await loadEntries(playerId)
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Couldn’t refresh Vault status.')
+    } catch {
+      setMessage('Status Vault belum bisa dicek. Update lo tetap aman.')
     } finally {
       setCheckingStatus(false)
     }
   }
 
   if (loading) {
-    return <main style={{ minHeight: '100dvh', background: S.bg, color: S.muted, display: 'grid', placeItems: 'center', fontFamily: '"IBM Plex Mono", monospace', fontSize: 10, letterSpacing: '.1em' }}>LOADING VAULT…</main>
+    return (
+      <main style={{ minHeight: '100dvh', background: S.bg, color: S.ink, fontFamily: '"IBM Plex Sans", sans-serif' }}>
+        <div style={{ width: '100%', maxWidth: 680, margin: '0 auto', padding: '30px 18px 120px', boxSizing: 'border-box' }}>
+          <div style={{ width: 185, height: 38, background: S.panel, borderRadius: 10 }} />
+          <div style={{ width: '76%', height: 12, background: S.line, borderRadius: 8, marginTop: 13 }} />
+          <div style={{ height: 96, background: S.panel, border: `1px solid ${S.line}`, borderRadius: 16, marginTop: 25 }} />
+          <div style={{ height: 180, background: S.panel2, borderRadius: 16, marginTop: 28 }} />
+        </div>
+      </main>
+    )
   }
 
   return (
     <main style={{ minHeight: '100dvh', background: S.bg, color: S.ink, fontFamily: '"IBM Plex Sans", sans-serif' }}>
       <div style={{ width: '100%', maxWidth: 680, margin: '0 auto', padding: '0 18px' }}>
-        <header style={{ padding: '30px 0 20px' }}>
+        <header style={{ padding: '30px 0 18px' }}>
           <h1 style={{ margin: 0, fontFamily: '"Space Grotesk", sans-serif', fontSize: 'clamp(34px,9vw,46px)', lineHeight: 1, letterSpacing: '-.045em' }}>Life Vault</h1>
-          <p style={{ margin: '9px 0 0', maxWidth: 560, color: S.muted, fontSize: 13, lineHeight: 1.58 }}>
-            Your private memory for the System. What you share here helps it understand your life and choose what matters next.
+          <p style={{ margin: '9px 0 0', maxWidth: 520, color: S.muted, fontSize: 13, lineHeight: 1.55 }}>
+            Yang lo ceritain ke System, tersimpan di sini.
           </p>
-
-          <div style={{ marginTop: 18, padding: '12px 0', borderTop: `1px solid ${S.line}`, borderBottom: `1px solid ${S.line}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
-            <div>
-              <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.muted2, fontSize: 8, letterSpacing: '.12em' }}>SYSTEM MEMORY</div>
-              <div style={{ marginTop: 4, color: '#d7d6d1', fontSize: 11.5 }}>
-                {understandingUpdatedAt
-                  ? `Updated ${new Date(understandingUpdatedAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}`
-                  : 'Building from what you’ve shared'}
-              </div>
-            </div>
-            <Link href={progressionHref} style={{ flexShrink: 0, color: S.gold, textDecoration: 'none', fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, fontWeight: 700 }}>
-              SEE UNDERSTANDING →
-            </Link>
-          </div>
-
-          <button
-            type="button"
-            aria-expanded={showHowItWorks}
-            onClick={() => setShowHowItWorks(value => !value)}
-            style={{ marginTop: 11, border: 0, background: 'transparent', padding: 0, color: S.muted, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, cursor: 'pointer' }}
-          >
-            {showHowItWorks ? 'HIDE HOW LIFE VAULT WORKS ↑' : 'HOW LIFE VAULT WORKS →'}
-          </button>
-
-          {showHowItWorks && (
-            <div style={{ marginTop: 12, padding: '10px 0 2px 12px', borderLeft: `2px solid ${S.lineStrong}`, color: S.muted, fontSize: 11.5, lineHeight: 1.58 }}>
-              Share goals, plans, constraints, wins, setbacks, or anything that changed. Your update stays in the Vault and is considered when the System next needs to decide what matters.
-            </div>
-          )}
         </header>
 
         {!foundationReady && (
-          <div style={{ border: '1px solid #4a3a21', background: '#17140f', borderRadius: 13, padding: '12px 13px', color: '#d7bd8c', fontSize: 11.5, lineHeight: 1.5 }}>
-            Life Vault belum bisa reconnect. Existing memory tetap aman.
+          <div style={{ border: '1px solid #4a3a21', background: '#17140f', borderRadius: 13, padding: '12px 13px', color: '#d7bd8c', fontSize: 11.5, lineHeight: 1.5, marginBottom: 16 }}>
+            Life Vault belum bisa tersambung. Memory yang sudah ada tetap aman.
           </div>
         )}
 
         {message && <div role="status" style={{ marginBottom: 13, color: S.red, fontSize: 11.5, lineHeight: 1.5 }}>{message}</div>}
 
         {hasFailedEntry && (
-          <div style={{ marginBottom: 20, padding: '11px 0', borderTop: `1px solid ${S.line}`, borderBottom: `1px solid ${S.line}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+          <div style={{ marginBottom: 17, padding: '11px 0', borderTop: `1px solid ${S.line}`, borderBottom: `1px solid ${S.line}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
             <div>
-              <div style={{ color: S.ink, fontSize: 11.5 }}>One update is saved, but the System hasn’t finished processing it.</div>
-              <div style={{ marginTop: 3, color: S.muted2, fontSize: 10.5 }}>Nothing needs to be entered again.</div>
+              <div style={{ color: S.ink, fontSize: 11.5 }}>Update lo sudah tersimpan.</div>
+              <div style={{ marginTop: 3, color: S.muted2, fontSize: 10.5 }}>System belum selesai memahaminya. Lo nggak perlu kirim ulang.</div>
             </div>
             <button type="button" onClick={() => { void checkProcessingStatus() }} disabled={checkingStatus} style={{ flexShrink: 0, border: 0, background: 'transparent', color: S.gold, padding: 4, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, fontWeight: 700, cursor: checkingStatus ? 'default' : 'pointer' }}>
-              {checkingStatus ? 'CHECKING…' : 'CHECK STATUS'}
+              {checkingStatus ? 'MENGECEK…' : 'CEK STATUS'}
             </button>
           </div>
         )}
 
-        <section aria-label="What belongs in Life Vault" style={{ marginBottom: 26 }}>
-          <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.muted2, fontSize: 8, letterSpacing: '.12em' }}>WHAT TO SHARE</div>
-          <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 7 }}>
-            {['A goal changed', 'Something happened', 'I’m stuck on something', 'About my life'].map(prompt => (
-              <span key={prompt} style={{ border: `1px solid ${S.line}`, borderRadius: 999, padding: '6px 9px', color: S.muted, background: S.panel2, fontSize: 10.5 }}>{prompt}</span>
-            ))}
+        <Link
+          href={progressionHref}
+          style={{ display: 'block', textDecoration: 'none', color: 'inherit', border: `1px solid ${S.line}`, borderRadius: 16, background: S.panel, padding: '14px 14px 13px', marginBottom: 27 }}
+        >
+          <div style={{ display: 'flex', alignItems: 'start', justifyContent: 'space-between', gap: 14 }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.muted2, fontSize: 8, letterSpacing: '.11em' }}>PEMAHAMAN SYSTEM</div>
+              <div style={{ marginTop: 5, fontFamily: '"Space Grotesk", sans-serif', color: S.ink, fontSize: 17, fontWeight: 650 }}>{stage.title}</div>
+              <div style={{ marginTop: 4, color: S.muted, fontSize: 11.5, lineHeight: 1.48 }}>{stage.description}</div>
+            </div>
+            <span aria-hidden="true" style={{ color: S.gold, marginTop: 16, flexShrink: 0 }}>→</span>
           </div>
-        </section>
+        </Link>
 
         <section>
-          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, marginBottom: 14 }}>
             <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.amber, fontSize: 8.5, letterSpacing: '.13em' }}>RECENT UPDATES</div>
-            {entries.length > 0 && <div style={{ color: S.muted2, fontFamily: '"IBM Plex Mono", monospace', fontSize: 7.8 }}>NEWEST FIRST</div>}
+            {entries.length > 0 && <div style={{ color: S.muted2, fontFamily: '"IBM Plex Mono", monospace', fontSize: 7.8 }}>TERBARU DULU</div>}
           </div>
 
           {entries.length === 0 ? (
-            <div style={{ padding: '28px 0', borderTop: `1px solid ${S.line}`, color: S.muted, fontSize: 12.5, lineHeight: 1.55 }}>
-              Tell the System something. Your first update will appear here.
+            <div style={{ padding: '25px 0', borderTop: `1px solid ${S.line}`, color: S.muted, fontSize: 12.5, lineHeight: 1.55 }}>
+              Belum ada update di sini. Ceritain apa pun lewat bar di bawah—nggak perlu dirapihin.
             </div>
           ) : (
             <div style={{ display: 'grid', gap: 30 }}>
@@ -505,18 +507,18 @@ export default function LifeVaultPage() {
                         return (
                           <article key={item.id} style={{ padding: '16px 1px 17px', borderBottom: `1px solid ${S.line}` }}>
                             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
-                              <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.gold, fontSize: 8.5, letterSpacing: '.11em' }}>INITIALIZATION INTERVIEW</div>
+                              <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.gold, fontSize: 8.5, letterSpacing: '.11em' }}>TITIK AWAL</div>
                               <time style={{ flexShrink: 0, color: S.muted2, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8 }}>{new Date(item.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time>
                             </div>
-                            <div style={{ marginTop: 7, fontFamily: '"Space Grotesk", sans-serif', color: S.ink, fontSize: 16, fontWeight: 650 }}>Your starting picture</div>
+                            <div style={{ marginTop: 7, fontFamily: '"Space Grotesk", sans-serif', color: S.ink, fontSize: 16, fontWeight: 650 }}>Konteks awal lo</div>
                             <div style={{ marginTop: 4, color: S.muted2, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5 }}>
-                              {sortedEntries.length} answers{totalDuration ? ` · ${totalDuration}` : ''}
+                              {sortedEntries.length} jawaban{totalDuration ? ` · ${totalDuration}` : ''}
                             </div>
                             <p style={{ margin: '9px 0 0', color: '#d1d0cb', fontSize: 12.5, lineHeight: 1.55 }}>{initializationSummary(sortedEntries)}</p>
                             <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                               {detailCount > 0 && <span style={{ color: S.gold, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5 }}>{detailCountLabel(detailCount)}</span>}
                               <button type="button" onClick={() => setShowInitializationAnswers(value => !value)} style={{ border: 0, background: 'transparent', color: S.muted, padding: 0, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, fontWeight: 700, cursor: 'pointer' }}>
-                                {showInitializationAnswers ? 'HIDE ANSWERS ↑' : 'VIEW ANSWERS →'}
+                                {showInitializationAnswers ? 'TUTUP JAWABAN ↑' : 'LIHAT JAWABAN →'}
                               </button>
                             </div>
 
@@ -527,7 +529,7 @@ export default function LifeVaultPage() {
                                   const copy = splitInitializationText(entry)
                                   const duration = formatDuration(metadataNumber(entry, 'durationMs'))
                                   const open = expandedEntryIds.has(entry.id)
-                                  const label = INITIALIZATION_LABELS[questionKey] ?? `Follow-up ${index + 1}`
+                                  const label = INITIALIZATION_LABELS[questionKey] ?? `Lanjutan ${index + 1}`
                                   return (
                                     <div key={entry.id} style={{ padding: '11px 0', borderBottom: index === sortedEntries.length - 1 ? 'none' : `1px solid ${S.line}` }}>
                                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
@@ -536,14 +538,14 @@ export default function LifeVaultPage() {
                                           {duration && <div style={{ marginTop: 2, color: S.muted2, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8 }}>{duration}</div>}
                                         </div>
                                         <button type="button" onClick={() => toggleEntry(entry.id)} style={{ flexShrink: 0, border: 0, background: 'transparent', color: S.muted, padding: 3, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8, cursor: 'pointer' }}>
-                                          {open ? 'HIDE' : 'VIEW ANSWER'}
+                                          {open ? 'TUTUP' : 'LIHAT'}
                                         </button>
                                       </div>
                                       {open && (
                                         <div style={{ marginTop: 10, padding: '10px 11px', background: S.panel2, borderLeft: `2px solid ${S.lineStrong}` }}>
-                                          <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.muted2, fontSize: 7.8, letterSpacing: '.1em' }}>QUESTION</div>
+                                          <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.muted2, fontSize: 7.8, letterSpacing: '.1em' }}>PERTANYAAN</div>
                                           <div style={{ marginTop: 4, color: S.muted, fontSize: 11, lineHeight: 1.5 }}>{copy.question}</div>
-                                          <div style={{ marginTop: 10, fontFamily: '"IBM Plex Mono", monospace', color: S.muted2, fontSize: 7.8, letterSpacing: '.1em' }}>YOUR ANSWER</div>
+                                          <div style={{ marginTop: 10, fontFamily: '"IBM Plex Mono", monospace', color: S.muted2, fontSize: 7.8, letterSpacing: '.1em' }}>JAWABAN LO</div>
                                           <div style={{ marginTop: 4, whiteSpace: 'pre-wrap', color: '#d4d3ce', fontSize: 12, lineHeight: 1.58 }}>{copy.answer}</div>
                                         </div>
                                       )}
@@ -561,7 +563,7 @@ export default function LifeVaultPage() {
                       const detailCount = (detailIdsByEntry[entry.id] ?? []).length
                       const linkedSummary = detailSummariesByEntry[entry.id]?.[0]?.trim() ?? ''
                       const fallbackPreview = preview(display.text)
-                      const summary = linkedSummary || fallbackPreview.text
+                      const summary = linkedSummary || fallbackPreview
                       const when = new Date(item.timestamp)
                       const expanded = expandedEntryIds.has(entry.id)
                       const status = statusCopy(entry, detailCount)
@@ -576,21 +578,21 @@ export default function LifeVaultPage() {
                           {display.fileName && <div style={{ marginTop: 5, color: S.muted, fontSize: 10.5 }}>{display.fileName}</div>}
 
                           <p style={{ margin: '8px 0 0', color: summary ? '#d1d0cb' : S.muted2, fontSize: 12.5, lineHeight: 1.55 }}>
-                            {summary || (display.voice ? 'Voice update saved. The System will use the audio at the next reasoning moment.' : 'Saved to your Life Vault.')}
+                            {summary || (display.voice ? 'Voice update lo sudah tersimpan.' : 'Update lo sudah tersimpan di Vault.')}
                           </p>
 
                           <div style={{ marginTop: 9, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                             <span style={{ color: status.color, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.2 }}>{status.text}</span>
                             {hasExpandableText && (
                               <button type="button" onClick={() => toggleEntry(entry.id)} style={{ border: 0, background: 'transparent', color: S.muted, padding: 0, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.2, fontWeight: 700, cursor: 'pointer' }}>
-                                {expanded ? 'HIDE ↑' : display.voice ? 'VIEW TRANSCRIPT →' : 'VIEW UPDATE →'}
+                                {expanded ? 'TUTUP ↑' : display.voice ? 'LIHAT TRANSKRIP →' : 'LIHAT UPDATE →'}
                               </button>
                             )}
                           </div>
 
                           {expanded && hasExpandableText && (
                             <div style={{ marginTop: 11, padding: '10px 11px', background: S.panel2, borderLeft: `2px solid ${S.lineStrong}` }}>
-                              <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.muted2, fontSize: 7.8, letterSpacing: '.1em' }}>{display.voice ? 'TRANSCRIPT' : 'FULL UPDATE'}</div>
+                              <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.muted2, fontSize: 7.8, letterSpacing: '.1em' }}>{display.voice ? 'TRANSKRIP' : 'UPDATE LENGKAP'}</div>
                               <div style={{ marginTop: 5, whiteSpace: 'pre-wrap', color: '#d4d3ce', fontSize: 12, lineHeight: 1.58 }}>{display.text}</div>
                             </div>
                           )}
