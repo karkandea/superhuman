@@ -65,9 +65,11 @@ function SendIcon() {
 export default function UpdateSystemComposer({
   playerId,
   onSaved,
+  starterPrompts = [],
 }: {
   playerId: string
   onSaved?: (entryId: string) => void | Promise<void>
+  starterPrompts?: readonly string[]
 }) {
   const [text, setText] = useState('')
   const [file, setFile] = useState<AttachedKnowledgeFile | null>(null)
@@ -319,10 +321,18 @@ export default function UpdateSystemComposer({
     }
   }
 
+  function chooseStarter(prompt: string) {
+    if (saving || voiceState !== 'idle' || file || voiceDraft) return
+    setText(prompt)
+    setNotice(null)
+    setExpanded(true)
+  }
+
   const hasContent = Boolean(text.trim() || file || voiceDraft)
   const showExpanded = expanded || voiceState !== 'idle' || Boolean(file) || Boolean(notice)
   const voiceBlocked = Boolean(text.trim() || file)
   const fileBlocked = voiceState !== 'idle' || Boolean(voiceDraft)
+  const showStarters = showExpanded && starterPrompts.length > 0 && !text.trim() && !file && voiceState === 'idle' && !voiceDraft && !notice
 
   return (
     <section aria-label="Tell the System anything" style={{ width: '100%' }}>
@@ -403,6 +413,21 @@ export default function UpdateSystemComposer({
                 <button type="submit" disabled={saving} aria-label="Send update" style={{ width: 40, height: 40, flexShrink: 0, border: 0, borderRadius: 11, background: saving ? '#3a3328' : S.amber, color: S.bg, display: 'grid', placeItems: 'center', cursor: saving ? 'default' : 'pointer' }}>{saving ? '…' : <SendIcon />}</button>
               )}
             </div>
+
+            {showStarters && (
+              <div aria-label="Update starters" style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '7px 4px 2px' }}>
+                {starterPrompts.map(prompt => (
+                  <button
+                    key={prompt}
+                    type="button"
+                    onClick={() => chooseStarter(prompt)}
+                    style={{ border: `1px solid ${S.line}`, borderRadius: 999, background: S.panel2, color: S.muted, padding: '6px 9px', fontFamily: '"IBM Plex Sans", sans-serif', fontSize: 10.5, cursor: 'pointer' }}
+                  >
+                    {prompt.replace(/:\s*$/, '')}
+                  </button>
+                ))}
+              </div>
+            )}
 
             {file && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '7px 4px 2px', padding: '8px 9px', borderRadius: 10, border: `1px solid ${S.line}`, background: S.panel2 }}>
