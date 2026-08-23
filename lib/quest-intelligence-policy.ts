@@ -7,7 +7,7 @@ import {
 } from './progression-intelligence'
 import { validateGeneratedQuestCandidates, type GeneratedQuestCandidate, type QuestKind } from './quest-system'
 
-export const QUEST_INTELLIGENCE_POLICY_VERSION = 'quest-policy.v2'
+export const QUEST_INTELLIGENCE_POLICY_VERSION = 'quest-policy.v3'
 export const QUEST_CANDIDATE_MIN = 8
 export const QUEST_CANDIDATE_ACCEPT_MIN = 4
 export const QUEST_CANDIDATE_MAX = 15
@@ -38,7 +38,8 @@ export interface QuestPolicyCandidate {
   strategicChain: QuestStrategicChain
   feasibility: QuestFeasibilityAssessment
   executionContract: QuestExecutionContract
-  scores: QuestPolicyScores
+  /** Backward-compatible diagnostic only. Selection does not depend on this grid. */
+  scores?: QuestPolicyScores
 }
 
 export interface QuestPolicySelection {
@@ -59,6 +60,19 @@ export interface QuestPolicyValidationContext {
   progressionMap: ProgressionMapSnapshot
   progressionTarget: ProgressionTargetSnapshot
 }
+
+export type QuestPolicyValidatorCode =
+  | 'candidate_pool_invalid'
+  | 'candidate_category_invalid'
+  | 'candidate_identity_invalid'
+  | 'candidate_provenance_invalid'
+  | 'strategic_chain_invalid'
+  | 'feasibility_invalid'
+  | 'execution_contract_invalid'
+  | 'selection_invalid'
+  | 'portfolio_invalid'
+  | 'no_quest_reason_invalid'
+  | 'unknown_validation_error'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -109,8 +123,9 @@ function signalIds(value: unknown, field: string, allowedSignalIds: ReadonlySet<
   return result
 }
 
-function scores(value: unknown, index: number): QuestPolicyScores {
-  if (!isRecord(value)) throw new Error(`Quest candidate ${index} requires policy scores`)
+function optionalScores(value: unknown, index: number): QuestPolicyScores | undefined {
+  if (value === undefined || value === null) return undefined
+  if (!isRecord(value)) throw new Error(`Quest candidate ${index} policy scores must be an object when supplied`)
   const result = {} as QuestPolicyScores
   for (const dimension of QUEST_SCORE_DIMENSIONS) {
     const score = value[dimension]
@@ -187,6 +202,24 @@ function strategicChain(value: unknown, index: number, validation: QuestPolicyVa
   }
 }
 
+function deterministicPriority(kind: QuestKind): GeneratedQuestCandidate['priority'] {
+  if (kind === 'main') return 5
+  if (kind === 'side') return 4
+  if (kind === 'maintenance') return 3
+  return 2
+}
+
+export function deterministicQuestXp(
+  difficulty: GeneratedQuestCandidate['difficulty'],
+  kind: QuestKind,
+): number {
+  const base = difficulty === 'hard' ? 100 : difficulty === 'medium' ? 75 : 50
+  if (kind === 'main') return base + 50
+  if (kind === 'bonus') return base + 25
+  if (kind === 'maintenance') return Math.max(40, base - 10)
+  return base
+}
+
 function enforceProgressionTargetCeiling(
   selections: QuestPolicySelection[],
   maxQuestCount: number,
@@ -211,22 +244,37 @@ function enforceProgressionTargetCeiling(
 
 export function questIntelligencePolicyInstructions() {
   return [
-    'QUEST POLICY / CONSTITUTION V2:',
+    'QUEST POLICY / CONSTITUTION V3:',
     'Choose only what most deserves the player’s attention today; do not mirror every goal.',
-    'Candidates must follow the strategic chain Distal Goal -> Proximal Outcome -> current Bottleneck/Opportunity -> candidate action. Maintenance may protect baseline capacity without inventing a bottleneck.',
-    'Apply feasibility/receptivity before scoring. A strategically attractive option that cannot realistically be executed today must be feasibleToday=false and cannot be selected.',
-    'Every candidate needs an executable contract: concrete action, observable completion condition, appropriate context, and reasonable dose. Avoid vague tasks without a bounded done condition.',
-    'Create 8–15 distinct evidence-backed candidates when today’s Progression Target calls for intervention.',
+    'Candidates must follow Distal Goal -> Proximal Outcome -> current Bottleneck/Opportunity -> candidate action. Maintenance may protect baseline capacity without inventing a bottleneck.',
+    'Apply feasibility/receptivity before selecting. A strategically attractive option that cannot realistically be executed today must be feasibleToday=false and cannot be selected.',
+    'Every candidate needs an executable contract: concrete action, observable completion condition, appropriate context, and reasonable dose.',
+    'Create 8–15 distinct evidence-backed candidates when today’s Progression Target calls for intervention. Four usable candidates is the bounded degraded minimum; never invent filler just to hit a count.',
     'Use category exactly as one of pagi, siang, malam, sepanjang_hari. Do not translate or invent category values.',
-    'Score every candidate 0–5 on goalRelevance, urgency, leverage, obstacleRemoval, actionability, contextFit, progressionValue, and redundancyPenalty. Do not collapse these into a blind weighted formula.',
+    'Consider goal relevance, urgency, leverage, obstacle removal, actionability, context fit, progression value, and redundancy while reasoning, but do not return a mechanical score grid.',
     'Select a portfolio rather than top-N. If any quest is selected: exactly 1 Main, at most 2 Side, at most 1 Maintenance, at most 1 Bonus, and never exceed Progression Target maxQuestCount.',
+    'Order selections from most important to least important. The System derives priority and XP deterministically; do not output either field.',
     'Selecting zero quests is valid when every option fails feasibility/receptivity, critical progress is already covered, uncertainty is too high, or another quest would mainly add burden. Provide noQuestReason.',
     'Never invent filler. A single focused Main Quest is valid when capacity is low.',
     'Use Daily Context only as temporary state for this date. Use Player Response Model as calibration evidence, not identity.',
-    'Repeated successful execution may justify modest dose/difficulty progression; repeated partial/skipped/failed execution should shrink, simplify, reschedule, or attack the upstream blocker instead of repeating the same oversized quest.',
-    'Completion is compliance evidence, not automatic strategy effectiveness. No universal success-rate or difficulty ratio should be assumed.',
-    'Priority uses 5 as highest and 1 as lowest. Time-of-day category is scheduling context, not a life-domain taxonomy.',
+    'Repeated successful execution may justify modest dose/difficulty progression; repeated partial/skipped/failed execution should shrink, simplify, reschedule, or attack the upstream blocker.',
+    'Completion is compliance evidence, not automatic strategy effectiveness.',
   ].join(' ')
+}
+
+export function questPolicyValidatorCode(error: unknown): QuestPolicyValidatorCode {
+  const message = error instanceof Error ? error.message : String(error)
+  if (/candidate.*(at least|produce|pool)|candidates/i.test(message) && /usable|produce|pool|at least/i.test(message)) return 'candidate_pool_invalid'
+  if (/invalid category/i.test(message)) return 'candidate_category_invalid'
+  if (/candidate ids|candidateId|title|distinct/i.test(message)) return 'candidate_identity_invalid'
+  if (/sourceSignalIds|source signal|outside retrieved context/i.test(message)) return 'candidate_provenance_invalid'
+  if (/strategic chain|strategic driver|goal|proximal outcome/i.test(message)) return 'strategic_chain_invalid'
+  if (/feasibility|receptivity|estimatedMinutes/i.test(message)) return 'feasibility_invalid'
+  if (/executionContract|execution contract|completion condition|dose/i.test(message)) return 'execution_contract_invalid'
+  if (/Quest selection|selection.*candidate|invalid kind|distinct candidates/i.test(message)) return 'selection_invalid'
+  if (/portfolio|Main Quest|Side Quest|Maintenance Quest|Bonus Quest/i.test(message)) return 'portfolio_invalid'
+  if (/noQuestReason/i.test(message)) return 'no_quest_reason_invalid'
+  return 'unknown_validation_error'
 }
 
 export function validateQuestIntelligenceDecision(
@@ -234,12 +282,12 @@ export function validateQuestIntelligenceDecision(
   allowedSignalIds: ReadonlySet<string>,
   validation: QuestPolicyValidationContext,
 ): QuestPolicyDecision {
-  if (!isRecord(value)) throw new Error('Quest Policy V2 output must be an object')
+  if (!isRecord(value)) throw new Error('Quest Policy V3 output must be an object')
   if (!Array.isArray(value.candidates) || value.candidates.length < QUEST_CANDIDATE_ACCEPT_MIN || value.candidates.length > QUEST_CANDIDATE_MAX) {
-    throw new Error(`Quest Policy V2 must produce at least ${QUEST_CANDIDATE_ACCEPT_MIN} usable candidates (${QUEST_CANDIDATE_MIN}–${QUEST_CANDIDATE_MAX} requested)`)
+    throw new Error(`Quest Policy V3 must produce at least ${QUEST_CANDIDATE_ACCEPT_MIN} usable candidates (${QUEST_CANDIDATE_MIN}–${QUEST_CANDIDATE_MAX} requested)`)
   }
   if (!Array.isArray(value.selections) || value.selections.length > QUEST_SELECTION_MAX) {
-    throw new Error(`Quest Policy V2 must select 0–${QUEST_SELECTION_MAX} quests`)
+    throw new Error(`Quest Policy V3 must select 0–${QUEST_SELECTION_MAX} quests`)
   }
 
   const seenCandidateIds = new Set<string>()
@@ -250,32 +298,34 @@ export function validateQuestIntelligenceDecision(
     if (seenCandidateIds.has(candidateId)) throw new Error('Quest candidate ids must be unique')
     seenCandidateIds.add(candidateId)
 
+    const chain = strategicChain(raw.strategicChain, index, validation)
     const [validated] = validateGeneratedQuestCandidates([{
       title: raw.title,
       category: normalizeQuestCategory(raw.category),
       kind: 'side',
       difficulty: raw.difficulty,
-      priority: 3,
-      xp: raw.xp,
-      rationale: raw.rationale,
+      priority: 4,
+      xp: 50,
+      rationale: chain.causalReason,
       sourceSignalIds: raw.sourceSignalIds,
     }], allowedSignalIds)
     const normalizedTitle = validated.title.toLocaleLowerCase()
     if (seenTitles.has(normalizedTitle)) throw new Error('Quest candidate titles must be distinct')
     seenTitles.add(normalizedTitle)
 
+    const candidateScores = optionalScores(raw.scores, index)
     return {
       candidateId,
       title: validated.title,
       category: validated.category,
       difficulty: validated.difficulty,
-      xp: validated.xp,
-      rationale: validated.rationale,
+      xp: deterministicQuestXp(validated.difficulty, 'side'),
+      rationale: chain.causalReason,
       sourceSignalIds: signalIds(raw.sourceSignalIds, `Quest candidate ${index} sourceSignalIds`, allowedSignalIds),
-      strategicChain: strategicChain(raw.strategicChain, index, validation),
+      strategicChain: chain,
       feasibility: feasibility(raw.feasibility, index),
       executionContract: executionContract(raw.executionContract, index),
-      scores: scores(raw.scores, index),
+      ...(candidateScores ? { scores: candidateScores } : {}),
     }
   })
 
@@ -292,12 +342,10 @@ export function validateQuestIntelligenceDecision(
 
     const kind = raw.kind
     if (!['main', 'side', 'maintenance', 'bonus'].includes(String(kind))) throw new Error(`Quest selection ${index} has invalid kind`)
-    const priority = raw.priority
-    if (!Number.isInteger(priority) || Number(priority) < 1 || Number(priority) > 5) throw new Error(`Quest selection ${index} has invalid priority`)
     return {
       candidateId,
       kind: kind as QuestKind,
-      priority: Number(priority) as GeneratedQuestCandidate['priority'],
+      priority: deterministicPriority(kind as QuestKind),
       selectionReason: nonEmptyString(raw.selectionReason, `Quest selection ${index} selectionReason`),
     }
   })
@@ -324,7 +372,7 @@ export function validateQuestIntelligenceDecision(
       kind: selection.kind,
       difficulty: candidate.difficulty,
       priority: selection.priority,
-      xp: candidate.xp,
+      xp: deterministicQuestXp(candidate.difficulty, selection.kind),
       rationale: candidate.strategicChain.causalReason,
       sourceSignalIds: candidate.sourceSignalIds,
       candidateId: candidate.candidateId,
@@ -342,9 +390,10 @@ export function compactQuestIntelligenceDecision(decision: QuestPolicyDecision) 
     candidateCount: decision.candidates.length,
     requestedCandidateMin: QUEST_CANDIDATE_MIN,
     degradedCandidatePool: decision.candidates.length < QUEST_CANDIDATE_MIN,
+    mechanicsOwnedBySystem: ['xp', 'priority'],
     candidates: decision.candidates.map(candidate => ({
       id: candidate.candidateId,
-      scores: candidate.scores,
+      ...(candidate.scores ? { scores: candidate.scores } : {}),
       feasibility: candidate.feasibility,
       strategicChain: candidate.strategicChain,
     })),
