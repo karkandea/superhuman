@@ -44,15 +44,21 @@ test('universal composer keeps input friction low and gives truthful save feedba
   assert.doesNotMatch(composer, /Saving alone does not trigger AI reasoning/)
 })
 
-test('Vault is memory, Progression is understanding, and execution history stays secondary', () => {
+test('Today exposes clear turn ownership while Vault and Progression keep separate mental models', () => {
   const today = source('app/[username]/page.tsx')
   const vault = source('app/[username]/vault/page.tsx')
   const progression = source('app/[username]/history/page.tsx')
   const understanding = source('lib/system-understanding-ui.ts')
 
-  assert.match(today, /SYSTEM DECIDING/)
-  assert.match(today, /Choosing today’s quests…/)
-  assert.match(today, /Finding the highest-leverage move\./)
+  assert.match(today, /SYSTEM YANG LANJUT/)
+  assert.match(today, /GILIRAN LO/)
+  assert.match(today, /NGGAK ADA ACTION DARI LO/)
+  assert.match(today, /Lagi memahami jawaban lo/)
+  assert.match(today, /Lagi nentuin fokus hari ini/)
+  assert.match(today, /Lagi nyusun quest/)
+  assert.match(today, /Lo nggak perlu ngapa-ngapain\./)
+  assert.match(today, /Nggak ada yang perlu lo lakukan sekarang\./)
+  assert.match(today, /CEK STATUS/)
   assert.doesNotMatch(today, /Progression Map/)
   assert.doesNotMatch(today, /response history/)
   assert.doesNotMatch(today, /UpdateSystemComposer/)
@@ -60,7 +66,7 @@ test('Vault is memory, Progression is understanding, and execution history stays
 
   assert.match(vault, /Yang lo ceritain ke System, tersimpan di sini\./)
   assert.match(vault, /PEMAHAMAN SYSTEM/)
-  assert.match(vault, /RECENT UPDATES/)
+  assert.match(vault, /UPDATE TERBARU/)
   assert.match(vault, /TITIK AWAL/)
   assert.match(vault, /LIHAT JAWABAN →/)
   assert.match(vault, /LIHAT TRANSKRIP →/)
@@ -86,7 +92,7 @@ test('Vault is memory, Progression is understanding, and execution history stays
 
   assert.match(understanding, /PLAYER UNDERSTANDING/)
   assert.match(understanding, /Titik awal/)
-  assert.match(understanding, /Konteks terbentuk/)
+  assert.match(understanding, /Gambaran awal udah kebaca/)
   assert.match(understanding, /Pola mulai terlihat/)
   assert.match(understanding, /modelPatternCount/)
   assert.match(understanding, /strategicNodeCount/)
