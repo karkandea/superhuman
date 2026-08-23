@@ -13,6 +13,13 @@ const S = {
   bg: '#0c0f14', panel: '#13171f', line: '#232a35', ink: '#ECEAE3', muted: '#7e8795', muted2: '#596270', amber: '#f6b24b', gold: '#ffd488', red: '#e5687a',
 } as const
 
+const VAULT_STARTER_PROMPTS = [
+  'A goal changed: ',
+  'Something happened: ',
+  'I’m stuck on something: ',
+  'About my life: ',
+] as const
+
 export default function PlayerRouteLayout({ children }: { children: ReactNode }) {
   const params = useParams<{ username: string }>()
   const pathname = usePathname()
@@ -131,7 +138,10 @@ export default function PlayerRouteLayout({ children }: { children: ReactNode })
       {showComposer && (
         <div style={{ position: 'fixed', left: 0, right: 0, bottom: 'calc(62px + env(safe-area-inset-bottom))', zIndex: 55, pointerEvents: 'none' }}>
           <div style={{ width: 'min(680px, 100%)', margin: '0 auto', padding: '0 12px 10px', boxSizing: 'border-box', pointerEvents: 'auto' }}>
-            <UpdateSystemComposer playerId={player.id} />
+            <UpdateSystemComposer
+              playerId={player.id}
+              starterPrompts={pathname === vaultPath ? VAULT_STARTER_PROMPTS : undefined}
+            />
           </div>
         </div>
       )}
