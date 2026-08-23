@@ -19,6 +19,7 @@ import {
   type InitializationRuntimeAttachment,
   type InitializationVoiceTranscript,
 } from './player-initialization-runtime'
+import { persistInitializationReasoningSession } from './reasoning-session'
 
 export const PLAYER_INITIALIZATION_CALIBRATION_SCHEMA_VERSION = 'player-initialization-calibration.v2'
 
@@ -33,11 +34,13 @@ function auditFrom(providerResponse: {
   providerId: string
   modelId: string
   requestId?: string
+  conversationRef?: string
 }): ModelAudit {
   return {
     providerId: providerResponse.providerId,
     modelId: providerResponse.modelId,
     requestId: providerResponse.requestId,
+    conversationRef: providerResponse.conversationRef,
     schemaVersion: PLAYER_INITIALIZATION_CALIBRATION_SCHEMA_VERSION,
   }
 }
@@ -211,6 +214,17 @@ export async function derivePlayerUnderstandingDelta(
   })
 
   await persistInitializationRuntimeDecision(input.playerId, decision, voiceTranscripts, audit)
+
+  try {
+    await persistInitializationReasoningSession({
+      playerId: input.playerId,
+      readiness: decision.readiness,
+      conversationRef: response.conversationRef,
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.warn(`[initialization-reasoning-session] ${message}`)
+  }
 
   return { actions, persistence }
 }
