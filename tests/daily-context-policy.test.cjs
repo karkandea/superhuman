@@ -190,5 +190,5 @@ test('worker and Today page preserve the daily lifecycle boundary behind consume
   assert.match(checkin, />\s*ADA\s*</)
   assert.doesNotMatch(today, /UpdateSystemComposer/)
   assert.match(layout, /showComposer = pathname === todayPath \|\| pathname === vaultPath/)
-  assert.match(today, /No quest needed right now\./)
+  assert.match(today, /Nggak ada quest yang perlu ditambah\./)
 })
