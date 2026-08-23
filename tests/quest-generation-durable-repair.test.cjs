@@ -147,3 +147,19 @@ test('durable step ledger stores bounded diagnostics and worker does not retry m
   assert.match(worker, /'quest_generation'/)
   assert.match(worker, /repairAttemptCount: generated\.repairAttemptCount/)
 })
+
+test('Today recovery is read-only and cannot requeue reasoning from a failure card', () => {
+  const today = fs.readFileSync(path.join(process.cwd(), 'app/[username]/page.tsx'), 'utf8')
+  const checkStatusStart = today.indexOf('async function checkGenerationStatus()')
+  const checkStatusEnd = today.indexOf('async function handleDailyContextConfirmed', checkStatusStart)
+  const checkStatusBody = today.slice(checkStatusStart, checkStatusEnd)
+  const emptyStateStart = today.indexOf('function SystemEmptyState')
+  const emptyStateBody = today.slice(emptyStateStart)
+
+  assert.ok(checkStatusStart >= 0)
+  assert.match(checkStatusBody, /syncAutomaticGeneration\(userId\)/)
+  assert.doesNotMatch(checkStatusBody, /requestDailyQuestGeneration|startGenerationAfterCheckin/)
+  assert.match(emptyStateBody, />CHECK STATUS</)
+  assert.doesNotMatch(emptyStateBody, />RETRY</)
+  assert.doesNotMatch(today, /async function retryGeneration/)
+})
