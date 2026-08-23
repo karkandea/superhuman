@@ -56,6 +56,13 @@ function sortedSummaries(value: unknown, priorityField: 'priority' | 'importance
     .sort((left, right) => number(right[priorityField]) - number(left[priorityField]) || number(right.confidence) - number(left.confidence))
 }
 
+function sortedPatterns(value: unknown) {
+  return asArray(value)
+    .map(item => asRecord(item))
+    .filter(item => text(item.observation))
+    .sort((left, right) => number(right.confidence) - number(left.confidence))
+}
+
 function modelPatternCount(modelValue: unknown) {
   const model = asRecord(modelValue)
   return ['executionPatterns', 'difficultyCalibration', 'receptivityPatterns', 'strategyEvidence']
@@ -124,10 +131,10 @@ function firstBriefSummary(briefValue: unknown, sectionKeys: string[]) {
 function firstModelPattern(modelValue: unknown) {
   const model = asRecord(modelValue)
   const candidates = [
-    ...sortedSummaries(model.executionPatterns, 'confidence'),
-    ...sortedSummaries(model.receptivityPatterns, 'confidence'),
-    ...sortedSummaries(model.difficultyCalibration, 'confidence'),
-  ]
+    ...sortedPatterns(model.executionPatterns),
+    ...sortedPatterns(model.receptivityPatterns),
+    ...sortedPatterns(model.difficultyCalibration),
+  ].sort((left, right) => number(right.confidence) - number(left.confidence))
   return text(candidates[0]?.observation)
 }
 
