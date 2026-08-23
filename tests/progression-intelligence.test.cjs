@@ -101,27 +101,28 @@ test('Progression Target supports explicit no-intervention and rejects incoheren
   assert.throws(() => validateProgressionTarget({ mode: 'progress', summary: 'Move career', primaryGoalId: 'g-role', proximalOutcomeIds: ['o-interview'], bottleneckIds: [], opportunityIds: [], maxQuestCount: 2, rationale: 'No driver.' }, MAP), /requires a bottleneck or opportunity/)
 })
 
-test('Quest Policy V2 enforces causal chain, feasibility gate, executable contract and portfolio ceiling', () => {
-  const valid = validateQuestIntelligenceDecision({ candidates: candidates(), selections: [{ candidateId: 'c1', kind: 'main', priority: 5, selectionReason: 'Best current leverage.' }] }, new Set(SIGNALS.map(signal => signal.id)), { progressionMap: MAP, progressionTarget: TARGET })
+test('Quest Policy V3 enforces causal chain, feasibility gate, executable contract and portfolio ceiling', () => {
+  const valid = validateQuestIntelligenceDecision({ candidates: candidates(), selections: [{ candidateId: 'c1', kind: 'main', priority: 1, selectionReason: 'Best current leverage.' }] }, new Set(SIGNALS.map(signal => signal.id)), { progressionMap: MAP, progressionTarget: TARGET })
   assert.equal(valid.quests.length, 1)
   assert.equal(valid.quests[0].strategicChain.proximalOutcomeId, 'o-interview')
   assert.equal(valid.quests[0].executionContract.dose, 'One bounded action')
+  assert.equal(valid.quests[0].priority, 5)
 
   const infeasible = candidates()
   infeasible[0] = candidate(1, { feasibility: { feasibleToday: false, receptivity: 'low', estimatedMinutes: 90, reason: 'Does not fit today.' } })
-  assert.throws(() => validateQuestIntelligenceDecision({ candidates: infeasible, selections: [{ candidateId: 'c1', kind: 'main', priority: 5, selectionReason: 'Strategically strong.' }] }, new Set(SIGNALS.map(signal => signal.id)), { progressionMap: MAP, progressionTarget: TARGET }), /failed feasibility/)
+  assert.throws(() => validateQuestIntelligenceDecision({ candidates: infeasible, selections: [{ candidateId: 'c1', kind: 'main', selectionReason: 'Strategically strong.' }] }, new Set(SIGNALS.map(signal => signal.id)), { progressionMap: MAP, progressionTarget: TARGET }), /failed feasibility/)
 
   const capped = validateQuestIntelligenceDecision({ candidates: candidates(), selections: [
-    { candidateId: 'c1', kind: 'main', priority: 5, selectionReason: 'one' },
-    { candidateId: 'c2', kind: 'side', priority: 3, selectionReason: 'lower-priority side' },
-    { candidateId: 'c3', kind: 'maintenance', priority: 4, selectionReason: 'higher-priority maintenance' },
+    { candidateId: 'c1', kind: 'main', selectionReason: 'one' },
+    { candidateId: 'c2', kind: 'side', selectionReason: 'next-highest portfolio slot' },
+    { candidateId: 'c3', kind: 'maintenance', selectionReason: 'lower mechanical rank' },
   ] }, new Set(SIGNALS.map(signal => signal.id)), { progressionMap: MAP, progressionTarget: TARGET })
   assert.equal(capped.quests.length, 2)
-  assert.deepEqual(capped.selections.map(selection => selection.candidateId), ['c1', 'c3'])
+  assert.deepEqual(capped.selections.map(selection => selection.candidateId), ['c1', 'c2'])
   assert.equal(capped.selections.filter(selection => selection.kind === 'main').length, 1)
 })
 
-test('Quest Policy V2 allows zero quests only with an explicit reason', () => {
+test('Quest Policy V3 allows zero quests only with an explicit reason', () => {
   const decision = validateQuestIntelligenceDecision({ candidates: candidates(), selections: [], noQuestReason: 'All worthwhile options are unreceptive in today context.' }, new Set(SIGNALS.map(signal => signal.id)), { progressionMap: MAP, progressionTarget: TARGET })
   assert.equal(decision.quests.length, 0)
   assert.match(decision.noQuestReason, /unreceptive/)
@@ -182,7 +183,7 @@ test('selected quest persists causal/execution metadata after the existing quest
     attachQuestMetadata: async input => { attached = input.items },
   }
   const result = await generateDailyQuestsWithIntelligence({
-    provider: { id: 'model', invokeStructured: async () => ({ output: { candidates: candidates(), selections: [{ candidateId: 'c1', kind: 'main', priority: 5, selectionReason: 'Live recruiter opportunity.' }] }, providerId: 'model', modelId: 'm1', requestId: 'r1' }) },
+    provider: { id: 'model', invokeStructured: async () => ({ output: { candidates: candidates(), selections: [{ candidateId: 'c1', kind: 'main', selectionReason: 'Live recruiter opportunity.' }] }, providerId: 'model', modelId: 'm1', requestId: 'r1' }) },
     contextRetriever: { retrieveForDailyQuest: async () => BASE_CONTEXT },
     repository: {
       findForDate: async () => [],
