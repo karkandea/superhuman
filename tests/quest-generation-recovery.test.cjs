@@ -30,19 +30,16 @@ function candidate(index, category = 'sepanjang_hari') {
     title: `Action ${index}`,
     category,
     difficulty: 'easy',
-    xp: 40,
-    rationale: 'Grounded option.',
     sourceSignalIds: ['s-goal', 's-blocker'],
     strategicChain: { goalId: 'g1', proximalOutcomeId: 'o1', driverType: 'bottleneck', driverId: 'b1', causalReason: 'Reduces direction ambiguity.' },
     feasibility: { feasibleToday: true, receptivity: 'high', estimatedMinutes: 20, reason: 'Fits today.' },
     executionContract: { action: `Do action ${index}`, completionCondition: `Action ${index} completed`, appropriateContext: 'One focused block', dose: '20 minutes' },
-    scores: { goalRelevance: 5, urgency: 3, leverage: 4, obstacleRemoval: 5, actionability: 5, contextFit: 5, progressionValue: 4, redundancyPenalty: 0 },
   }
 }
 
 function decisionWith(count, firstCategory = 'sepanjang_hari') {
   const candidates = Array.from({ length: count }, (_, i) => candidate(i + 1, i === 0 ? firstCategory : 'sepanjang_hari'))
-  return { candidates, selections: [{ candidateId: 'c1', kind: 'main', priority: 5, selectionReason: 'Best leverage.' }] }
+  return { candidates, selections: [{ candidateId: 'c1', kind: 'main', selectionReason: 'Best leverage.' }] }
 }
 
 test('quest policy keeps 8 candidates as the requested quality target but accepts a bounded 4-candidate degraded pool', () => {
