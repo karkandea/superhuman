@@ -115,8 +115,9 @@ export default function DailyQuestPage() {
   const generationBusy = generationStatus === 'queued' || generationStatus === 'running'
   const needsPlayerContext = !dailyPlanReady && generationStatus === 'failed' && generationErrorCode === 'insufficient_context'
   const systemPaused = !dailyPlanReady && generationStatus === 'blocked_auth'
-  const transportInterrupted = !dailyPlanReady && generationStatus === 'failed' && ['transient_transport_error', 'provider_rate_limited', 'processing_timeout', 'monitor_failed'].includes(generationErrorCode ?? '')
-  const generationFailed = !dailyPlanReady && generationStatus === 'failed' && !needsPlayerContext && !transportInterrupted
+  const transportInterrupted = !dailyPlanReady && generationStatus === 'failed' && ['transient_transport_error', 'provider_rate_limited'].includes(generationErrorCode ?? '')
+  const monitorInterrupted = !dailyPlanReady && generationStatus === 'failed' && ['processing_timeout', 'monitor_failed'].includes(generationErrorCode ?? '')
+  const generationFailed = !dailyPlanReady && generationStatus === 'failed' && !needsPlayerContext && !transportInterrupted && !monitorInterrupted
   const emptyAfterSuccess = !dailyPlanReady && Boolean(dailyContext) && generationStatus === 'succeeded'
 
   const refreshStreak = useCallback(async (uid: string, anchorIds: string[]) => {
@@ -189,6 +190,7 @@ export default function DailyQuestPage() {
         }
         if (current.status === 'failed' || current.status === 'blocked_auth') return
       }
+      setGenerationStatus('failed')
       setGenerationErrorCode('processing_timeout')
       setGenerationErrorMessage('System progression is taking longer than expected.')
     } catch (error) {
@@ -249,7 +251,7 @@ export default function DailyQuestPage() {
       if (generatedCount === 0 && !plan.finalized) {
         if (context) {
           const job = await getAiInferenceJobForDate(supabase, user.id, todayStr())
-          if (!job || job.status === 'succeeded') await startGenerationAfterCheckin(user.id)
+          if (!job) await startGenerationAfterCheckin(user.id)
           else await syncAutomaticGeneration(user.id)
         } else {
           setGenerationStatus('idle')
@@ -349,15 +351,9 @@ export default function DailyQuestPage() {
     }
   }
 
-  async function retryGeneration() {
-    if (!userId || generationBusy || (!dailyContext && !dailyPlanReady)) return
-    try {
-      await startGenerationAfterCheckin(userId)
-    } catch (error) {
-      setGenerationStatus('failed')
-      setGenerationErrorCode('manual_retry_failed')
-      setGenerationErrorMessage(error instanceof Error ? error.message : 'System retry failed.')
-    }
+  async function checkGenerationStatus() {
+    if (!userId || generationBusy) return
+    await syncAutomaticGeneration(userId)
   }
 
   async function handleDailyContextConfirmed(context: DailyContextSnapshot) {
@@ -423,8 +419,9 @@ export default function DailyQuestPage() {
             needsPlayerContext={needsPlayerContext}
             generationFailed={generationFailed || emptyAfterSuccess}
             transportInterrupted={transportInterrupted}
+            monitorInterrupted={monitorInterrupted}
             systemPaused={systemPaused}
-            onRetry={() => { void retryGeneration() }}
+            onCheckStatus={() => { void checkGenerationStatus() }}
           />
         )}
 
@@ -562,34 +559,46 @@ function SystemEmptyState({
   needsPlayerContext,
   generationFailed,
   transportInterrupted,
+  monitorInterrupted,
   systemPaused,
-  onRetry,
+  onCheckStatus,
 }: {
   generationStatus: AiInferenceJobStatus | 'idle'
   needsPlayerContext: boolean
   generationFailed: boolean
   transportInterrupted: boolean
+  monitorInterrupted: boolean
   systemPaused: boolean
-  onRetry: () => void
+  onCheckStatus: () => void
 }) {
   const busy = generationStatus === 'queued' || generationStatus === 'running'
   let eyebrow = 'SYSTEM DECIDING'
   let title = 'Choosing today’s quests…'
   let body = 'Finding the highest-leverage move.'
+  let canCheckStatus = false
   if (needsPlayerContext) {
     eyebrow = 'SYSTEM NEEDS CONTEXT'
     title = 'Tell the System what changed.'
     body = 'Use the composer below. One useful update is enough.'
   } else if (systemPaused) {
     eyebrow = 'SYSTEM PAUSED'
-    title = 'Your check-in is safe.'
-    body = 'Processing is temporarily unavailable.'
-  } else if (transportInterrupted || generationFailed) {
+    title = 'What you shared is safe.'
+    body = 'Processing is unavailable right now. You do not need to enter anything again.'
+  } else if (monitorInterrupted) {
+    eyebrow = 'SYSTEM CHECK'
+    title = 'Your progress is safe.'
+    body = 'The page lost track of processing. Checking status will not start another reasoning run.'
+    canCheckStatus = true
+  } else if (transportInterrupted) {
     eyebrow = 'PROCESSING INTERRUPTED'
-    title = 'Your check-in is safe.'
-    body = 'Retry without entering it again.'
+    title = 'Your progress is safe.'
+    body = 'The System handles transient retries itself. You do not need to restart reasoning.'
+    canCheckStatus = true
+  } else if (generationFailed) {
+    eyebrow = 'SYSTEM HELD'
+    title = 'Your progress is safe.'
+    body = 'The System could not finish today’s quest plan. You do not need to enter anything again.'
   }
-  const canRetry = transportInterrupted || generationFailed
 
   return (
     <section style={{ marginTop: 12, background: S.panel, border: `1px solid ${S.line}`, borderRadius: 17, padding: '20px 16px' }}>
@@ -599,8 +608,8 @@ function SystemEmptyState({
       </div>
       <div style={{ marginTop: 8, fontFamily: '"Space Grotesk", sans-serif', fontSize: 19, fontWeight: 700, lineHeight: 1.2 }}>{title}</div>
       <div style={{ marginTop: 6, color: S.muted, fontSize: 12, lineHeight: 1.5 }}>{body}</div>
-      {canRetry && (
-        <button type="button" onClick={onRetry} style={{ minHeight: 40, marginTop: 13, borderRadius: 10, border: 'none', background: S.amber, color: S.bg, padding: '0 14px', fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, fontWeight: 700, cursor: 'pointer' }}>RETRY</button>
+      {canCheckStatus && (
+        <button type="button" onClick={onCheckStatus} style={{ minHeight: 40, marginTop: 13, borderRadius: 10, border: `1px solid ${S.lineStrong}`, background: 'transparent', color: S.ink, padding: '0 14px', fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, fontWeight: 700, cursor: 'pointer' }}>CHECK STATUS</button>
       )}
     </section>
   )
