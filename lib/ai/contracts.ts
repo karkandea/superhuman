@@ -11,13 +11,23 @@ export type AiOperation =
   | 'derive_player_response_model'
   | 'choose_progression_target'
   | 'generate_daily_quests'
+  | 'repair_daily_quest_output'
   | 'assess_materiality'
   | 'generate_system_interrupt'
+
+export interface QuestOutputRepairContext extends ProgressionIntelligenceContext {
+  questRepair: {
+    validatorCode: string
+    validatorMessage: string
+    previousOutput: unknown
+  }
+}
 
 export type AiRequestContext =
   | RetrievedPlayerContext
   | MaterialityContext
   | ProgressionIntelligenceContext
+  | QuestOutputRepairContext
   | (RetrievedPlayerContext & { initialization: unknown })
 
 export interface StructuredModelAttachment {
