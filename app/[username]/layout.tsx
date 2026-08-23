@@ -14,10 +14,10 @@ const S = {
 } as const
 
 const VAULT_STARTER_PROMPTS = [
-  'A goal changed: ',
-  'Something happened: ',
-  'I’m stuck on something: ',
-  'About my life: ',
+  'Target gue berubah: ',
+  'Ada kejadian baru: ',
+  'Gue lagi mentok: ',
+  'Ada hal tentang hidup gue: ',
 ] as const
 
 export default function PlayerRouteLayout({ children }: { children: ReactNode }) {
@@ -138,8 +138,10 @@ export default function PlayerRouteLayout({ children }: { children: ReactNode })
       {showComposer && (
         <div style={{ position: 'fixed', left: 0, right: 0, bottom: 'calc(62px + env(safe-area-inset-bottom))', zIndex: 55, pointerEvents: 'none' }}>
           <div style={{ width: 'min(680px, 100%)', margin: '0 auto', padding: '0 12px 10px', boxSizing: 'border-box', pointerEvents: 'auto' }}>
-            <UpdateSystemComposer playerId={player.id}
+            <UpdateSystemComposer
+              playerId={player.id}
               starterPrompts={pathname === vaultPath ? VAULT_STARTER_PROMPTS : undefined}
+              placeholder={pathname === todayPath ? 'Ada yang perlu System tahu hari ini?' : 'Ceritain apa pun ke System…'}
             />
           </div>
         </div>
