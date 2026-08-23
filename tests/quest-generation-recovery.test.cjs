@@ -42,7 +42,7 @@ function decisionWith(count, firstCategory = 'sepanjang_hari') {
   return { candidates, selections: [{ candidateId: 'c1', kind: 'main', selectionReason: 'Best leverage.' }] }
 }
 
-test('quest policy keeps 8 candidates as the requested quality target but accepts a bounded 4-candidate degraded pool', () => {
+test('quest policy v3 keeps 8 candidates as the requested quality target but accepts a bounded 4-candidate degraded pool', () => {
   assert.equal(QUEST_CANDIDATE_MIN, 8)
   assert.equal(QUEST_CANDIDATE_ACCEPT_MIN, 4)
   const parsed = validateQuestIntelligenceDecision(decisionWith(4), SIGNAL_IDS, { progressionMap: MAP, progressionTarget: TARGET })
