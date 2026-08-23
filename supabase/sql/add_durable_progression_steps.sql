@@ -107,7 +107,7 @@ begin
   -- Internal diagnostics are bounded. Never persist prompts/model payloads here.
   v_safe_message := case
     when p_error_message is null then null
-    else left(regexp_replace(p_error_message, '[\\r\\n\\t]+', ' ', 'g'), 500)
+    else left(regexp_replace(p_error_message, '[\r\n\t]+', ' ', 'g'), 500)
   end;
 
   update public.progression_run_steps
@@ -130,7 +130,28 @@ begin
 end;
 $function$;
 
-revoke all on function public.start_progression_run_step(uuid,text,text,text,text) from public,anon,authenticated;
-revoke all on function public.complete_progression_run_step(uuid,text,text,text,text,text,text,text,text,smallint,text,text,text,text) from public,anon,authenticated;
-grant execute on function public.start_progression_run_step(uuid,text,text,text,text) to service_role;
-grant execute on function public.complete_progression_run_step(uuid,text,text,text,text,text,text,text,text,text,smallint,text,text,text,text) to service_role;
+-- Resolve exact overload signatures from pg_proc instead of hard-coding defaulted arg lists.
+do $acl$
+declare
+  v_start regprocedure;
+  v_complete regprocedure;
+begin
+  select p.oid::regprocedure into v_start
+  from pg_catalog.pg_proc p
+  join pg_catalog.pg_namespace n on n.oid=p.pronamespace
+  where n.nspname='public' and p.proname='start_progression_run_step'
+  order by p.oid desc limit 1;
+
+  select p.oid::regprocedure into v_complete
+  from pg_catalog.pg_proc p
+  join pg_catalog.pg_namespace n on n.oid=p.pronamespace
+  where n.nspname='public' and p.proname='complete_progression_run_step'
+  order by p.oid desc limit 1;
+
+  if v_start is null or v_complete is null then raise exception 'Progression step RPC creation failed'; end if;
+  execute format('revoke all on function %s from public, anon, authenticated', v_start);
+  execute format('grant execute on function %s to service_role', v_start);
+  execute format('revoke all on function %s from public, anon, authenticated', v_complete);
+  execute format('grant execute on function %s to service_role', v_complete);
+end;
+$acl$;
