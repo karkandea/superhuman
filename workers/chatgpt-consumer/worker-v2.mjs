@@ -5,13 +5,17 @@ import { hostname } from 'node:os'
 import { ChatGptConsumerWebProvider } from '../../lib/ai/chatgpt-consumer-provider.ts'
 import { BoundedPlayerContextRetriever } from '../../lib/context-retrieval.ts'
 import { generateSystemInterrupt } from '../../lib/ai/orchestrator.ts'
-import { generateDailyQuestsWithIntelligence } from '../../lib/ai/daily-quest-intelligence.ts'
+import {
+  DAILY_QUEST_INTELLIGENCE_SCHEMA_VERSION,
+  generateDailyQuestsWithIntelligence,
+} from '../../lib/ai/daily-quest-intelligence.ts'
 import {
   chooseProgressionTarget,
   refreshPlayerResponseModel,
   refreshProgressionMap,
   reviewQuestResponses,
 } from '../../lib/ai/progression-intelligence.ts'
+import { questPolicyValidatorCode } from '../../lib/quest-intelligence-policy.ts'
 import {
   MATERIALITY_BATCH_SCHEMA_VERSION,
   assessActivityMateriality,
@@ -24,6 +28,7 @@ import {
   createSupabaseUnderstandingRepository,
 } from '../../lib/supabase/progression-store.ts'
 import { createSupabaseProgressionIntelligenceStore } from '../../lib/supabase/progression-intelligence-store.ts'
+import { createSupabaseProgressionRunStepStore } from '../../lib/supabase/progression-run-step-store.ts'
 import {
   PlaywrightChatGptTransport,
   WorkerError,
@@ -58,6 +63,10 @@ function normalizeRpcRow(data) {
   if (Array.isArray(data)) return data[0] || null
   if (!data || typeof data !== 'object' || !data.id) return null
   return data
+}
+
+function stableHash(parts) {
+  return createHash('sha256').update(parts.map(part => String(part ?? '')).join('\n')).digest('hex')
 }
 
 function understandingDeltaBatchKey(knowledgeEntryIds) {
@@ -207,18 +216,32 @@ function classifyError(error) {
     return new WorkerError('insufficient_context', message, false)
   }
   if (/correlation mismatch|operation mismatch|schema version mismatch|malformed JSON|parseable JSON|sourceSignalIds|sourceKnowledgeEntryIds|targetUnderstandingId|outside retrieved context|outside current Player Brief|Understanding delta|Activity voice transcript|Materiality|materiality|System Interrupt|Interrupt action|interrupt plan|affectedQuestIds|urgency|recommendedAction|Quest Policy|Quest candidate|Quest selection|Quest portfolio|Progression Map|Progression Target|Player Response Model|Quest response review|strategic chain|strategic driver|feasibility|receptivity|executionContract|execution contract|effectiveness/.test(message)) {
-    return new WorkerError('model_output_invalid', message, true)
+    return new WorkerError('model_output_invalid', message, false)
   }
-  if (/Player Brief is missing|Player brief changed before understanding delta persistence|Progression Map changed during Daily Quest decision/.test(message)) {
+  if (/Player Brief is missing|Player brief changed before understanding delta persistence|Progression Map changed before Daily Quest reasoning|Progression Map changed during Daily Quest decision|Player Response Model changed before Daily Quest reasoning/.test(message)) {
     return new WorkerError('stale_player_brief', message, true)
   }
   if (/backlog did not drain|same knowledge batch repeated/.test(message)) {
-    return new WorkerError('backlog_not_drained', message, true)
+    return new WorkerError('backlog_not_drained', message, false)
   }
   if (/timeout|fetch failed|network|connection|temporar/i.test(message)) {
     return new WorkerError('transient_transport_error', message, true)
   }
-  return new WorkerError('inference_failed', message, true)
+  return new WorkerError('inference_failed', message, false)
+}
+
+function errorClass(error) {
+  if (error.code === 'provider_rate_limited' || error.code === 'transient_transport_error' || error.code === 'stale_player_brief') return 'transient'
+  if (error.code === 'model_output_invalid') return 'model_output'
+  if (error.code === 'insufficient_context') return 'insufficient_context'
+  if (error.code === 'browser_auth_required') return 'auth'
+  return 'internal'
+}
+
+function safeStepDiagnostic(activeStep, rawError, error) {
+  if (activeStep?.step !== 'quest_generation' || error.code !== 'model_output_invalid') return null
+  const message = rawError instanceof Error ? rawError.message : String(rawError)
+  return message.replace(/[\r\n\t]+/g, ' ').slice(0, 500)
 }
 
 async function scheduleRetry(client, job, error, refs) {
@@ -264,6 +287,33 @@ async function processJob(client, job) {
   const dailyQuestRepository = createSupabaseDailyQuestRepository(client)
   const materialityRepository = createSupabaseMaterialityRepository(client)
   const progressionStore = createSupabaseProgressionIntelligenceStore(client)
+  const runStepStore = createSupabaseProgressionRunStepStore(client)
+  let activeStep = null
+
+  const startStep = async (step, inputHash, schemaVersion) => {
+    activeStep = { step, inputHash, schemaVersion }
+    await runStepStore.start({
+      jobId: job.id,
+      workerId: WORKER_ID,
+      step,
+      inputHash,
+      schemaVersion,
+    })
+  }
+
+  const finishStep = async (details = {}) => {
+    if (!activeStep) return
+    await runStepStore.complete({
+      jobId: job.id,
+      workerId: WORKER_ID,
+      step: activeStep.step,
+      inputHash: activeStep.inputHash,
+      schemaVersion: activeStep.schemaVersion,
+      status: 'succeeded',
+      ...details,
+    })
+    activeStep = null
+  }
 
   const heartbeatTimer = setInterval(() => {
     heartbeat(client, job.id).catch(error => console.error(`[heartbeat] ${error.message}`))
@@ -334,12 +384,18 @@ async function processJob(client, job) {
 
     if (shouldRefreshStrategicState) {
       if (knowledgeBatchCount > 0) await sleep(AI_STAGE_PAUSE_MS)
+      await startStep(
+        'progression_map',
+        stableHash([job.user_id, job.target_date, latestPlayerBriefVersion, knowledgeBatchCount, responseEventsSynced]),
+        'progression-map.v1',
+      )
       const map = await refreshProgressionMap({ provider, contextRetriever, store: progressionStore }, {
         playerId: job.user_id,
         date: job.target_date,
         limit: 32,
       })
       progressionMapVersion = map.version
+      await finishStep({ artifactType: 'progression_map', artifactId: map.id })
     } else {
       progressionMapVersion = currentMapBeforeLearning?.version ?? null
     }
@@ -364,12 +420,18 @@ async function processJob(client, job) {
       playerResponseModelVersion = responseModel?.version ?? null
 
       await sleep(AI_STAGE_PAUSE_MS)
+      await startStep(
+        'progression_map_after_learning',
+        stableHash([job.user_id, job.target_date, playerResponseModelVersion, questResponsesReviewed]),
+        'progression-map.v1',
+      )
       const refreshedMap = await refreshProgressionMap({ provider, contextRetriever, store: progressionStore }, {
         playerId: job.user_id,
         date: job.target_date,
         limit: 32,
       })
       progressionMapVersion = refreshedMap.version
+      await finishStep({ artifactType: 'progression_map', artifactId: refreshedMap.id })
     } else {
       const responseModel = await progressionStore.loadCurrentPlayerResponseModel(job.user_id)
       playerResponseModelVersion = responseModel?.version ?? null
@@ -419,23 +481,44 @@ async function processJob(client, job) {
       if (dailyContext) {
         const currentMap = await progressionStore.loadCurrentProgressionMap(job.user_id)
         if (!currentMap) {
+          await startStep(
+            'progression_map',
+            stableHash([job.user_id, job.target_date, latestPlayerBriefVersion, 'first-plan']),
+            'progression-map.v1',
+          )
           const map = await refreshProgressionMap({ provider, contextRetriever, store: progressionStore }, {
             playerId: job.user_id,
             date: job.target_date,
             limit: 32,
           })
           progressionMapVersion = map.version
+          await finishStep({ artifactType: 'progression_map', artifactId: map.id })
         }
+
+        const resolvedMap = await progressionStore.loadCurrentProgressionMap(job.user_id)
         await sleep(AI_STAGE_PAUSE_MS)
+        await startStep(
+          'progression_target',
+          stableHash([job.user_id, job.target_date, resolvedMap?.id, dailyContext.id, playerResponseModelVersion]),
+          'progression-target.v1',
+        )
         const target = await chooseProgressionTarget({ provider, contextRetriever, store: progressionStore }, {
           playerId: job.user_id,
           date: job.target_date,
           limit: 32,
         })
         progressionTargetId = target.id
+        await finishStep({ artifactType: 'progression_target', artifactId: target.id })
       }
 
       if (knowledgeBatchCount > 0 || shouldLearnFromResponses) await sleep(AI_STAGE_PAUSE_MS)
+      const mapForQuest = await progressionStore.loadCurrentProgressionMap(job.user_id)
+      const targetForQuest = await progressionStore.loadProgressionTargetForDate(job.user_id, job.target_date)
+      await startStep(
+        'quest_generation',
+        stableHash([job.user_id, job.target_date, mapForQuest?.id, targetForQuest?.id, playerResponseModelVersion, dailyContext?.id]),
+        DAILY_QUEST_INTELLIGENCE_SCHEMA_VERSION,
+      )
       generated = await generateDailyQuestsWithIntelligence({
         provider,
         contextRetriever,
@@ -445,16 +528,24 @@ async function processJob(client, job) {
         playerId: job.user_id,
         date: job.target_date,
       })
+      await finishStep({
+        artifactType: generated.source === 'generated' ? 'quest_batch' : generated.source === 'no_quest' ? 'no_quest_plan' : generated.source,
+        artifactId: generated.quests[0]?.batchId ?? targetForQuest?.id ?? null,
+        providerId: generated.requestId ? 'chatgpt-consumer-web' : undefined,
+        requestId: generated.requestId,
+        repairAttemptCount: generated.repairAttemptCount ?? 0,
+      })
     } else if (questsBefore.length > 0) {
       const target = await progressionStore.loadProgressionTargetForDate(job.user_id, job.target_date)
       progressionTargetId = target?.id ?? null
-      generated = { source: 'existing', quests: questsBefore }
+      generated = { source: 'existing', quests: questsBefore, repairAttemptCount: 0 }
     } else {
       const target = await progressionStore.loadProgressionTargetForDate(job.user_id, job.target_date)
       progressionTargetId = target?.id ?? null
       generated = {
         source: 'no_quest',
         quests: [],
+        repairAttemptCount: 0,
         ...(target?.noQuestReason ? { noQuestReason: target.noQuestReason } : {}),
       }
     }
@@ -483,6 +574,7 @@ async function processJob(client, job) {
         appliedInterruptCount,
         questCount: 0,
         questSource: 'awaiting_context',
+        questRepairAttemptCount: generated.repairAttemptCount ?? 0,
         awaitingDailyContext: true,
         targetDate: job.target_date,
         windowCutoffAt: cutoff,
@@ -518,16 +610,41 @@ async function processJob(client, job) {
       appliedInterruptCount,
       questCount: generated.quests.length,
       questSource: generated.source,
+      questRepairAttemptCount: generated.repairAttemptCount ?? 0,
       noQuest: generated.source === 'no_quest',
       ...(generated.noQuestReason ? { noQuestReason: generated.noQuestReason } : {}),
       targetDate: job.target_date,
       windowCutoffAt: cutoff,
     })
 
-    console.log(`[job ${job.id}] succeeded: knowledge=${processedKnowledgeCount}/${knowledgeBatchCount} batches; deltaActions=${understandingDeltaActionCount}; brief=v${latestPlayerBriefVersion ?? 'unchanged'}; map=v${progressionMapVersion ?? 'none'}; responseModel=v${playerResponseModelVersion ?? 'none'}; responseEvents=${responseEventsSynced} synced/${questResponsesReviewed} reviewed; plan=${generated.source}/${generated.quests.length} quests; materiality=${materialityCount}; interrupts=${appliedInterruptCount} applied/${suggestedInterruptCount} suggested`)
+    console.log(`[job ${job.id}] succeeded: knowledge=${processedKnowledgeCount}/${knowledgeBatchCount} batches; deltaActions=${understandingDeltaActionCount}; brief=v${latestPlayerBriefVersion ?? 'unchanged'}; map=v${progressionMapVersion ?? 'none'}; responseModel=v${playerResponseModelVersion ?? 'none'}; responseEvents=${responseEventsSynced} synced/${questResponsesReviewed} reviewed; plan=${generated.source}/${generated.quests.length} quests; repair=${generated.repairAttemptCount ?? 0}; materiality=${materialityCount}; interrupts=${appliedInterruptCount} applied/${suggestedInterruptCount} suggested`)
   } catch (rawError) {
     const error = classifyError(rawError)
     const refs = provider.consumeConversationRefs()
+
+    if (activeStep) {
+      const validatorCode = activeStep.step === 'quest_generation'
+        ? (rawError?.validatorCode || questPolicyValidatorCode(rawError))
+        : null
+      try {
+        await runStepStore.complete({
+          jobId: job.id,
+          workerId: WORKER_ID,
+          step: activeStep.step,
+          inputHash: activeStep.inputHash,
+          schemaVersion: activeStep.schemaVersion,
+          status: error.code === 'browser_auth_required' ? 'blocked' : 'failed',
+          repairAttemptCount: Number(rawError?.repairAttemptCount || 0),
+          errorClass: errorClass(error),
+          errorCode: error.code,
+          validatorCode: validatorCode || undefined,
+          errorMessage: safeStepDiagnostic(activeStep, rawError, error) || undefined,
+        })
+      } catch (stepError) {
+        console.error(`[job ${job.id}] durable-step failure: ${stepError.message}`)
+      }
+      activeStep = null
+    }
 
     if (error.code === 'browser_auth_required') {
       await completeJob(client, job, 'blocked_auth', refs, {}, error)
@@ -565,7 +682,7 @@ async function main() {
   const once = process.argv.includes('--once')
   console.log(`Superhuman ChatGPT consumer worker online as ${WORKER_ID}`)
   console.log(browserRuntimeSummary())
-  console.log(`Activity batching: knowledgeBudget=${KNOWLEDGE_BATCH_BUDGET_BYTES}B; materialityRawBudget=${MATERIALITY_RAW_BUDGET_BYTES}B; stagePause=${AI_STAGE_PAUSE_MS}ms; memory=${UNDERSTANDING_DELTA_VERSION}; intelligence=progression-map/player-response-model/quest-policy.v2`)
+  console.log(`Activity batching: knowledgeBudget=${KNOWLEDGE_BATCH_BUDGET_BYTES}B; materialityRawBudget=${MATERIALITY_RAW_BUDGET_BYTES}B; stagePause=${AI_STAGE_PAUSE_MS}ms; memory=${UNDERSTANDING_DELTA_VERSION}; intelligence=progression-map/player-response-model/quest-policy.v3`)
 
   do {
     const job = await claimJob(client)
