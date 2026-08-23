@@ -5,6 +5,7 @@ import fs from 'node:fs/promises'
 import { spawn } from 'node:child_process'
 
 const CHATGPT_URL = 'https://chatgpt.com/'
+const TEMPORARY_CHAT_URL = 'https://chatgpt.com/?temporary-chat=true'
 const PROFILE_DIR = process.env.CHATGPT_BROWSER_PROFILE_DIR || path.join(os.homedir(), '.superhuman', 'chatgpt-profile')
 const CHROME_BIN = process.env.CHATGPT_CHROME_BIN || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const CDP_PORT = Number(process.env.CHATGPT_CDP_PORT || 9222)
@@ -25,6 +26,14 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
 
 function timeoutUntil(deadline, cap = 30_000) {
   return Math.max(1_000, Math.min(cap, deadline - Date.now()))
+}
+
+function conversationUrl(conversationRef) {
+  const ref = String(conversationRef || '').trim()
+  if (!/^[A-Za-z0-9_-]{6,240}$/.test(ref)) {
+    throw new WorkerError('conversation_ref_invalid', 'Provider conversation reference is invalid', false)
+  }
+  return `https://chatgpt.com/c/${encodeURIComponent(ref)}`
 }
 
 async function firstVisible(page, selectors) {
@@ -259,14 +268,19 @@ async function chatGptContext() {
 }
 
 export class PlaywrightChatGptTransport {
-  async execute({ prompt, correlationId, timeoutMs, attachments = [] }) {
+  async execute({ prompt, correlationId, timeoutMs, attachments = [], conversationRef, temporaryChat = true }) {
     const materialized = await materializeAttachments(attachments)
     const context = await chatGptContext()
     const page = await context.newPage()
 
     try {
       const deadline = Date.now() + timeoutMs
-      await page.goto(CHATGPT_URL, { waitUntil: 'domcontentloaded', timeout: Math.min(timeoutMs, 45000) })
+      const startUrl = conversationRef
+        ? conversationUrl(conversationRef)
+        : temporaryChat
+          ? TEMPORARY_CHAT_URL
+          : CHATGPT_URL
+      await page.goto(startUrl, { waitUntil: 'domcontentloaded', timeout: Math.min(timeoutMs, 45000) })
       await throwIfProviderRateLimited(page)
 
       const composer = await waitForComposer(page, deadline)
@@ -344,5 +358,5 @@ export async function loginMode() {
 }
 
 export function browserRuntimeSummary() {
-  return `ChatGPT profile: ${PROFILE_DIR}; cdp=${CDP_URL}; headless=${HEADLESS}`
+  return `ChatGPT profile: ${PROFILE_DIR}; cdp=${CDP_URL}; headless=${HEADLESS}; freshChats=temporary`
 }
