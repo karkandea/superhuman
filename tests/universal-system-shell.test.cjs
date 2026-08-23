@@ -74,7 +74,7 @@ test('Vault is memory, Progression is understanding, and execution history stays
   assert.doesNotMatch(vault, /SystemFreshnessCard/)
   assert.doesNotMatch(vault, /UpdateSystemComposer/)
 
-  assert.match(progression, /PLAYER UNDERSTANDING/)
+  assert.match(progression, /deriveUnderstandingStage/)
   assert.match(progression, /CURRENT PICTURE/)
   assert.match(progression, /Yang kebaca sekarang/)
   assert.match(progression, /WHAT CHANGED/)
@@ -84,6 +84,7 @@ test('Vault is memory, Progression is understanding, and execution history stays
   assert.match(progression, /LIHAT SEMUA 30 HARI →/)
   assert.doesNotMatch(progression, />30 days</)
 
+  assert.match(understanding, /PLAYER UNDERSTANDING/)
   assert.match(understanding, /Titik awal/)
   assert.match(understanding, /Konteks terbentuk/)
   assert.match(understanding, /Pola mulai terlihat/)
