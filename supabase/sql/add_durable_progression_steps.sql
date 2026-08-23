@@ -1,5 +1,6 @@
 -- Durable per-stage state for progression runs.
 -- Supabase remains the source of truth; provider conversation state is never authoritative.
+-- Production migration applied 2026-08-23.
 
 create table if not exists public.progression_run_steps (
   id uuid primary key default gen_random_uuid(),
