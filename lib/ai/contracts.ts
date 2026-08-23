@@ -43,6 +43,7 @@ export interface AiProviderResponse {
   providerId: string
   modelId: string
   requestId?: string
+  conversationRef?: string
   usage?: {
     inputTokens?: number
     outputTokens?: number
@@ -58,5 +59,6 @@ export interface ModelAudit {
   providerId: string
   modelId: string
   requestId?: string
+  conversationRef?: string
   schemaVersion: string
 }
