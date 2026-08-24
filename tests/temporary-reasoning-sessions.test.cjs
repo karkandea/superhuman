@@ -8,12 +8,19 @@ function source(relativePath) {
   return fs.readFileSync(path.join(process.cwd(), relativePath), 'utf8')
 }
 
-test('every fresh consumer reasoning room starts as Temporary Chat', () => {
+test('every fresh consumer reasoning room enters Temporary Chat through browser UI first', () => {
   const transport = source('workers/chatgpt-consumer/browser-transport.mjs')
   assert.match(transport, /TEMPORARY_CHAT_URL = 'https:\/\/chatgpt\.com\/\?temporary-chat=true'/)
   assert.match(transport, /temporaryChat = true/)
-  assert.match(transport, /conversationRef\s*\? conversationUrl\(conversationRef\)/)
-  assert.match(transport, /\? TEMPORARY_CHAT_URL/)
+  assert.match(transport, /async function openFreshChat/)
+  assert.match(transport, /await page\.goto\(CHATGPT_URL/)
+  assert.match(transport, /async function activateTemporaryChat/)
+  assert.match(transport, /temporary-chat-button|Temporary chat/)
+  assert.match(transport, /await control\.click/)
+  assert.match(transport, /if \(conversationRef\)/)
+  assert.match(transport, /conversationUrl\(conversationRef\)/)
+  assert.match(transport, /await composer\.fill\(prompt/)
+  assert.doesNotMatch(transport, /mouse\.move|Math\.random\(\).*mouse|human[-_ ]like/i)
 })
 
 test('provider marks prior room history as non-canonical working context', () => {
