@@ -162,7 +162,7 @@ test('Today recovery is read-only and canonical status owns liveness', () => {
   assert.match(checkStatusBody, /syncAutomaticGeneration\(userId\)/)
   assert.doesNotMatch(checkStatusBody, /requestDailyQuestGeneration|startGenerationAfterCheckin/)
   assert.doesNotMatch(today, /watchGenerationJob|processing_timeout|monitor_failed/)
-  assert.match(today, />CEK STATUS</)
+  assert.match(today, /CEK STATUS/)
   assert.doesNotMatch(today, />RETRY</)
   assert.doesNotMatch(today, /async function retryGeneration/)
   assert.match(migration, /available_at <= v_now - interval '90 seconds'/)
