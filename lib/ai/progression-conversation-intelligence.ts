@@ -13,10 +13,13 @@ import {
   type ProgressionResearchPlan,
   type ProgressionResearchResult,
 } from '../progression-conversation'
-import {
-  type ProgressionTargetDecision,
-  type ProgressionTargetSnapshot,
+import type {
+  PlayerResponseModelSnapshot,
+  ProgressionMapSnapshot,
+  ProgressionTargetDecision,
+  ProgressionTargetSnapshot,
 } from '../progression-intelligence'
+import type { PlayerBriefSnapshot, PlayerSignal, RecentQuestResult } from '../player-understanding'
 import type { ProgressionIntelligenceStore } from '../supabase/progression-intelligence-store'
 
 interface SessionRow {
@@ -46,10 +49,6 @@ function conversationClient(): SupabaseClient | null {
   const key = serviceKey()
   if (!url || !key) return null
   return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } })
-}
-
-function record(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
 
 function auditFrom(response: AiProviderResponse, schemaVersion: string): ModelAudit {
@@ -148,7 +147,7 @@ async function persistResearch(
 }
 
 async function createQuestion(client: SupabaseClient, sessionId: string, decision: ProgressionMoveDecision) {
-  if (!decision.question) throw new Error('ASK progression move is missing its question')
+  if (!decision.question) throw new Error('Progression Target decision gate invalid: ASK move is missing question')
   const question = await rpcRow<{ id: string }>(client, 'create_progression_question_operator', {
     p_session_id: sessionId,
     p_response_type: decision.question.responseType,
@@ -214,7 +213,11 @@ async function runExternalResearch(
       }],
     },
   })
-  return { response, result: validateProgressionResearchResult(response.output) }
+  try {
+    return { response, result: validateProgressionResearchResult(response.output) }
+  } catch (error) {
+    throw new Error(`Progression Target research output invalid: ${error instanceof Error ? error.message : String(error)}`)
+  }
 }
 
 async function chooseMove(
@@ -222,12 +225,12 @@ async function chooseMove(
   input: {
     playerId: string
     date: string
-    playerBrief: unknown
+    playerBrief: PlayerBriefSnapshot
     dailyContext: unknown
-    signals: Array<{ id: string } & Record<string, unknown>>
-    recentQuestResults: unknown
-    progressionMap: NonNullable<Awaited<ReturnType<ProgressionIntelligenceStore['loadCurrentProgressionMap']>>>
-    playerResponseModel: unknown
+    signals: PlayerSignal[]
+    recentQuestResults: RecentQuestResult[]
+    progressionMap: ProgressionMapSnapshot
+    playerResponseModel: PlayerResponseModelSnapshot | null
     research: ResearchRow[]
     session: SessionRow
     researchBudgetRemaining: number
@@ -278,21 +281,37 @@ async function chooseMove(
       question: { responseType: ['free_text', 'short_text', 'single_choice', 'multiple_choice'], prompt: 'materially decision-changing question', reason: 'which uncertainty this resolves', options: '0–6 concise options; required for choice types' },
       researchPlan: { topic: 'world/domain topic only', question: 'decision-relevant research question', queries: '1–4 bounded web queries without player identity lookup', reason: 'which uncertainty this reduces' },
       target: {
-        mode: ['progress', 'maintenance_only', 'no_intervention'], summary: 'what should move today', primaryGoalId: 'optional map goal id', proximalOutcomeIds: 'map ids', bottleneckIds: 'map ids', opportunityIds: 'map ids', maintenanceIntent: 'optional', maxQuestCount: 'integer 0..5', rationale: 'concise causal reason', noQuestReason: 'required only for no_intervention',
+        mode: ['progress', 'maintenance_only', 'no_intervention'],
+        summary: 'what should move today',
+        primaryGoalId: 'optional map goal id',
+        proximalOutcomeIds: 'map ids',
+        bottleneckIds: 'map ids',
+        opportunityIds: 'map ids',
+        maintenanceIntent: 'optional',
+        maxQuestCount: 'integer 0..5',
+        rationale: 'concise causal reason',
+        noQuestReason: 'required only for no_intervention',
       },
       conclusion: 'required only for DECIDE',
       waitFor: 'required only for WAIT; observable condition/evidence that should trigger reevaluation',
     },
   })
 
-  const decision = validateProgressionMoveDecision(response.output, {
-    progressionMap: input.progressionMap,
-    allowedSignalIds: new Set(input.signals.map(signal => signal.id)),
-    requireResearch,
-    canQuest: Boolean(input.dailyContext),
-    researchBudgetRemaining: input.researchBudgetRemaining,
-  })
-  return { response, decision }
+  try {
+    const decision = validateProgressionMoveDecision(response.output, {
+      progressionMap: input.progressionMap,
+      allowedSignalIds: new Set(input.signals.map(signal => signal.id)),
+      requireResearch,
+      canQuest: Boolean(input.dailyContext),
+      researchBudgetRemaining: input.researchBudgetRemaining,
+    })
+    if (decision.nextAction === 'ask' && input.questionBudgetRemaining < 1) {
+      throw new Error('clarification budget is exhausted')
+    }
+    return { response, decision }
+  } catch (error) {
+    throw new Error(`Progression Target decision gate invalid: ${error instanceof Error ? error.message : String(error)}`)
+  }
 }
 
 function noInterventionDecision(decision: ProgressionMoveDecision): ProgressionTargetDecision {
@@ -353,7 +372,7 @@ export async function chooseProgressionTarget(
       date: input.date,
       playerBrief: base.playerBrief,
       dailyContext: base.dailyContext,
-      signals: base.signals as Array<{ id: string } & Record<string, unknown>>,
+      signals: base.signals,
       recentQuestResults: base.recentQuestResults,
       progressionMap,
       playerResponseModel,
@@ -368,7 +387,7 @@ export async function chooseProgressionTarget(
     }
 
     if (decision.nextAction === 'research') {
-      if (!decision.researchPlan) throw new Error('Progression research move is missing its research plan')
+      if (!decision.researchPlan) throw new Error('Progression Target decision gate invalid: RESEARCH move is missing researchPlan')
       await setState(client, session.id, 'researching', { topic: decision.researchPlan.topic })
       if (decision.playerUpdates.length === 0) {
         await appendSystemMessage(client, session.id, 'research_update', 'Gue mau cek beberapa hal dulu sebelum nentuin langkah berikutnya.', { topic: decision.researchPlan.topic })
@@ -395,22 +414,19 @@ export async function chooseProgressionTarget(
     }
 
     if (decision.nextAction === 'ask') {
-      if (usedQuestions >= 3) throw new Error('Progression move exceeded bounded clarification budget')
       await createQuestion(client, session.id, decision)
-      // worker-v2 already maps this evidence phrase to the canonical insufficient_context terminal state.
-      // The actual player-facing question lives in progression_questions; no raw model error reaches UI.
+      // Existing worker maps this phrase to canonical insufficient_context. The player-facing
+      // question is persisted separately; raw provider output never reaches the UI.
       throw new Error('evidence-backed player signals require one material clarification before a progression target')
     }
 
     if (decision.nextAction === 'decide' || decision.nextAction === 'wait') {
       const targetDecision = noInterventionDecision(decision)
-      await appendSystemMessage(
-        client,
-        session.id,
-        decision.nextAction === 'decide' ? 'decision' : 'wait',
-        decision.nextAction === 'decide' ? decision.conclusion! : decision.waitFor!,
-        { whyNow: decision.whyNow, criticalSignalIds: decision.criticalSignalIds },
-      )
+      const message = decision.nextAction === 'decide' ? decision.conclusion! : decision.waitFor!
+      await appendSystemMessage(client, session.id, decision.nextAction === 'decide' ? 'decision' : 'wait', message, {
+        whyNow: decision.whyNow,
+        criticalSignalIds: decision.criticalSignalIds,
+      })
       await setState(client, session.id, 'waiting', { nextAction: decision.nextAction })
       return dependencies.store.persistProgressionTarget({
         playerId: input.playerId,
@@ -423,7 +439,7 @@ export async function chooseProgressionTarget(
       })
     }
 
-    if (!decision.target) throw new Error('QUEST progression move is missing a Progression Target')
+    if (!decision.target) throw new Error('Progression Target decision gate invalid: QUEST move is missing target')
     await appendSystemMessage(client, session.id, 'decision', decision.target.summary, {
       whyNow: decision.whyNow,
       criticalSignalIds: decision.criticalSignalIds,
@@ -440,5 +456,5 @@ export async function chooseProgressionTarget(
     })
   }
 
-  throw new Error('Progression move did not converge within bounded research passes')
+  throw new Error('Progression Target decision gate invalid: move did not converge within bounded research passes')
 }
