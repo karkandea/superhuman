@@ -211,6 +211,64 @@ async function waitForSendReady(page, deadline) {
   return null
 }
 
+function temporaryChatUrlActive(page) {
+  try {
+    const url = new URL(page.url())
+    return url.searchParams.get('temporary-chat') === 'true'
+  } catch {
+    return false
+  }
+}
+
+async function temporaryChatControl(page) {
+  return firstVisible(page, [
+    'button[data-testid="temporary-chat-button"]',
+    'button[aria-label*="Temporary chat"]',
+    'button[aria-label*="temporary chat"]',
+    '[role="button"][aria-label*="Temporary chat"]',
+    'button:has-text("Temporary")',
+  ])
+}
+
+async function activateTemporaryChat(page, deadline) {
+  if (temporaryChatUrlActive(page)) return
+
+  const control = await temporaryChatControl(page)
+  if (control) {
+    try {
+      await control.click({ timeout: timeoutUntil(deadline) })
+      await sleep(250)
+      await throwIfProviderRateLimited(page)
+      return
+    } catch {
+      // ChatGPT UI changes occasionally. Keep one deterministic compatibility
+      // fallback rather than adding mouse jitter or retry-click loops.
+    }
+  }
+
+  await page.goto(TEMPORARY_CHAT_URL, {
+    waitUntil: 'domcontentloaded',
+    timeout: timeoutUntil(deadline, 45_000),
+  })
+  await throwIfProviderRateLimited(page)
+}
+
+async function openFreshChat(page, deadline, temporaryChat) {
+  await page.goto(CHATGPT_URL, {
+    waitUntil: 'domcontentloaded',
+    timeout: timeoutUntil(deadline, 45_000),
+  })
+  await throwIfProviderRateLimited(page)
+  await waitForComposer(page, deadline)
+
+  if (temporaryChat) {
+    await activateTemporaryChat(page, deadline)
+    // Temporary Chat activation may replace composer DOM. Resolve it again after
+    // the state transition so subsequent fill/upload targets the current composer.
+    await waitForComposer(page, deadline)
+  }
+}
+
 let connectedBrowser = null
 let spawnedChrome = null
 
@@ -275,13 +333,15 @@ export class PlaywrightChatGptTransport {
 
     try {
       const deadline = Date.now() + timeoutMs
-      const startUrl = conversationRef
-        ? conversationUrl(conversationRef)
-        : temporaryChat
-          ? TEMPORARY_CHAT_URL
-          : CHATGPT_URL
-      await page.goto(startUrl, { waitUntil: 'domcontentloaded', timeout: Math.min(timeoutMs, 45000) })
-      await throwIfProviderRateLimited(page)
+      if (conversationRef) {
+        await page.goto(conversationUrl(conversationRef), {
+          waitUntil: 'domcontentloaded',
+          timeout: timeoutUntil(deadline, 45_000),
+        })
+        await throwIfProviderRateLimited(page)
+      } else {
+        await openFreshChat(page, deadline, temporaryChat)
+      }
 
       const composer = await waitForComposer(page, deadline)
       const assistantMessages = page.locator('[data-message-author-role="assistant"]')
@@ -358,5 +418,5 @@ export async function loginMode() {
 }
 
 export function browserRuntimeSummary() {
-  return `ChatGPT profile: ${PROFILE_DIR}; cdp=${CDP_URL}; headless=${HEADLESS}; freshChats=temporary`
+  return `ChatGPT profile: ${PROFILE_DIR}; cdp=${CDP_URL}; headless=${HEADLESS}; freshChats=temporary-ui`
 }

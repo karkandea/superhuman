@@ -100,8 +100,8 @@ export function deriveUnderstandingStage(input: {
     return {
       id: 'context_formed',
       label: 'PLAYER UNDERSTANDING',
-      title: 'Konteks terbentuk',
-      description: 'Arah dan hambatan utama lo sudah cukup kebaca. System masih belajar dari apa yang terjadi setelah lo jalanin.',
+      title: 'Gambaran awal udah kebaca',
+      description: 'Arah, ritme, dan hambatan utama lo udah cukup jelas. System bakal makin ngerti dari apa yang lo ceritain dan jalanin.',
       depth: 2,
     }
   }
@@ -109,10 +109,10 @@ export function deriveUnderstandingStage(input: {
   return {
     id: 'starting_point',
     label: 'PLAYER UNDERSTANDING',
-    title: hasBrief ? 'Titik awal terbentuk' : 'Titik awal',
+    title: hasBrief ? 'Gambaran awal mulai kebaca' : 'Titik awal',
     description: hasBrief
-      ? 'System sudah punya gambaran dasar dan akan mempertajamnya dari update serta hasil nyata lo.'
-      : 'System lagi membangun konteks dasar dari yang lo ceritain.',
+      ? 'System sudah punya gambaran dasar dan bakal mempertajamnya dari update serta hasil nyata lo.'
+      : 'System lagi membangun gambaran awal dari yang lo ceritain.',
     depth: 1,
   }
 }

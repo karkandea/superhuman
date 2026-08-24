@@ -49,7 +49,7 @@ test('Today stays quest-first while the shared shell owns the compact contextual
   const composer = fs.readFileSync(path.join(process.cwd(), 'app/[username]/update-system-composer.tsx'), 'utf8')
 
   assert.match(today, />Today</)
-  assert.match(today, /SYSTEM FOCUS/)
+  assert.match(today, /FOKUS HARI INI/)
   assert.doesNotMatch(today, /UpdateSystemComposer/)
   assert.match(layout, /<UpdateSystemComposer[\s\S]*playerId=\{player\.id\}/)
   assert.match(layout, /showComposer = pathname === todayPath \|\| pathname === vaultPath/)

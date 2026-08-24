@@ -188,16 +188,11 @@ function entryDisplay(entry: VaultEntry) {
   return { title: 'Life update', text, voice: false, fileName: null }
 }
 
-function detailCountLabel(count: number) {
-  if (count <= 0) return null
-  return `${count} hal dipahami`
-}
-
-function statusCopy(entry: VaultEntry, detailCount: number) {
-  if (entry.processing_status === 'failed') return { text: 'Tersimpan · pemrosesan tertunda', color: S.red }
-  if (entry.processing_status === 'pending') return { text: 'Tersimpan · belum perlu diproses', color: S.muted }
-  const linked = detailCountLabel(detailCount)
-  return { text: linked ?? 'Tersimpan di Vault', color: linked ? S.gold : S.muted }
+function statusCopy(entry: VaultEntry, linkedUnderstandingCount: number) {
+  if (entry.processing_status === 'failed') return { text: 'Tersimpan · belum selesai dipahami', color: S.red }
+  if (entry.processing_status === 'pending') return { text: 'Tersimpan', color: S.muted }
+  if (linkedUnderstandingCount > 0) return { text: 'Sudah dipakai System', color: S.gold }
+  return { text: 'Tersimpan di Vault', color: S.muted }
 }
 
 export default function LifeVaultPage() {
@@ -396,14 +391,6 @@ export default function LifeVaultPage() {
   const hasFailedEntry = entries.some(entry => entry.processing_status === 'failed')
   const progressionHref = `/${encodeURIComponent(username)}/history`
 
-  function detailCountForEntries(groupEntries: VaultEntry[]) {
-    const ids = new Set<string>()
-    for (const entry of groupEntries) {
-      for (const detailId of detailIdsByEntry[entry.id] ?? []) ids.add(detailId)
-    }
-    return ids.size
-  }
-
   function toggleEntry(id: string) {
     setExpandedEntryIds(current => {
       const next = new Set(current)
@@ -485,7 +472,7 @@ export default function LifeVaultPage() {
 
         <section>
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, marginBottom: 14 }}>
-            <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.amber, fontSize: 8.5, letterSpacing: '.13em' }}>RECENT UPDATES</div>
+            <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.amber, fontSize: 8.5, letterSpacing: '.13em' }}>UPDATE TERBARU</div>
             {entries.length > 0 && <div style={{ color: S.muted2, fontFamily: '"IBM Plex Mono", monospace', fontSize: 7.8 }}>TERBARU DULU</div>}
           </div>
 
@@ -503,20 +490,18 @@ export default function LifeVaultPage() {
                       if (item.kind === 'initialization') {
                         const sortedEntries = [...item.entries].sort((left, right) => new Date(left.created_at).getTime() - new Date(right.created_at).getTime())
                         const totalDuration = formatDuration(sortedEntries.reduce((sum, entry) => sum + (metadataNumber(entry, 'durationMs') ?? 0), 0))
-                        const detailCount = detailCountForEntries(sortedEntries)
                         return (
                           <article key={item.id} style={{ padding: '16px 1px 17px', borderBottom: `1px solid ${S.line}` }}>
                             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
                               <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.gold, fontSize: 8.5, letterSpacing: '.11em' }}>TITIK AWAL</div>
                               <time style={{ flexShrink: 0, color: S.muted2, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8 }}>{new Date(item.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time>
                             </div>
-                            <div style={{ marginTop: 7, fontFamily: '"Space Grotesk", sans-serif', color: S.ink, fontSize: 16, fontWeight: 650 }}>Konteks awal lo</div>
+                            <div style={{ marginTop: 7, fontFamily: '"Space Grotesk", sans-serif', color: S.ink, fontSize: 16, fontWeight: 650 }}>Gambaran awal lo</div>
                             <div style={{ marginTop: 4, color: S.muted2, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5 }}>
-                              {sortedEntries.length} jawaban{totalDuration ? ` · ${totalDuration}` : ''}
+                              {sortedEntries.length} jawaban tersimpan{totalDuration ? ` · ${totalDuration}` : ''}
                             </div>
                             <p style={{ margin: '9px 0 0', color: '#d1d0cb', fontSize: 12.5, lineHeight: 1.55 }}>{initializationSummary(sortedEntries)}</p>
                             <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                              {detailCount > 0 && <span style={{ color: S.gold, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5 }}>{detailCountLabel(detailCount)}</span>}
                               <button type="button" onClick={() => setShowInitializationAnswers(value => !value)} style={{ border: 0, background: 'transparent', color: S.muted, padding: 0, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, fontWeight: 700, cursor: 'pointer' }}>
                                 {showInitializationAnswers ? 'TUTUP JAWABAN ↑' : 'LIHAT JAWABAN →'}
                               </button>
