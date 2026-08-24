@@ -119,6 +119,11 @@ export default function PlayerInitialization({
   }, [jobStatus])
 
   const question = useMemo(() => nextQuestion(questions), [questions])
+
+  useEffect(() => {
+    setAnswer(question?.answerText ?? '')
+  }, [question?.id, question?.answerText])
+
   const basicQuestions = useMemo(
     () => questions.filter(item => item.origin === 'basic').sort((left, right) => left.sequence - right.sequence),
     [questions],
