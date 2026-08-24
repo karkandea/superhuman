@@ -78,17 +78,42 @@ set search_path = ''
 as $function$
 begin
   if new.status in ('failed','blocked_auth','paused_rate_limit') then
-    update public.progression_sessions
-    set state='stopped',
-        state_metadata=coalesce(state_metadata,'{}'::jsonb) || jsonb_build_object(
-          'jobStatus',new.status,
-          'errorCode',new.error_code,
-          'jobUpdatedAt',new.updated_at
-        ),
-        updated_at=now()
-    where current_job_id=new.id
-      and status='active'
-      and state not in ('quest_ready','waiting');
+    -- insufficient_context is a successful ASK handoff when a pending clarification
+    -- question exists. Keep the canonical session waiting on the player instead of
+    -- overwriting it to stopped just because the inference job is terminal.
+    if new.status='failed'
+       and new.error_code='insufficient_context'
+       and exists(
+         select 1
+         from public.progression_sessions s
+         join public.progression_questions q on q.session_id=s.id
+         where s.current_job_id=new.id
+           and s.status='active'
+           and q.status='pending'
+       ) then
+      update public.progression_sessions
+      set state='need_clarification',
+          state_metadata=coalesce(state_metadata,'{}'::jsonb) || jsonb_build_object(
+            'jobStatus',new.status,
+            'errorCode',new.error_code,
+            'jobUpdatedAt',new.updated_at
+          ),
+          updated_at=now()
+      where current_job_id=new.id
+        and status='active';
+    else
+      update public.progression_sessions
+      set state='stopped',
+          state_metadata=coalesce(state_metadata,'{}'::jsonb) || jsonb_build_object(
+            'jobStatus',new.status,
+            'errorCode',new.error_code,
+            'jobUpdatedAt',new.updated_at
+          ),
+          updated_at=now()
+      where current_job_id=new.id
+        and status='active'
+        and state not in ('quest_ready','waiting');
+    end if;
   elsif new.status='queued'
         and old.status in ('failed','blocked_auth','paused_rate_limit') then
     update public.progression_sessions
