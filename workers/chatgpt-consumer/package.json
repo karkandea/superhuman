@@ -4,9 +4,9 @@
   "type": "module",
   "scripts": {
     "install-browser": "playwright install chromium",
-    "login": "node --import tsx worker-v2.mjs --login",
-    "start": "node --import tsx worker-v2.mjs",
-    "once": "node --import tsx worker-v2.mjs --once"
+    "login": "node --import ./checkpoint-observer.mjs --import tsx worker-v2.mjs --login",
+    "start": "node --import ./checkpoint-observer.mjs --import tsx worker-v2.mjs",
+    "once": "node --import ./checkpoint-observer.mjs --import tsx worker-v2.mjs --once"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
