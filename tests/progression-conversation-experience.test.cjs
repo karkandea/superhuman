@@ -36,18 +36,39 @@ test('progression move is a bounded decision gate instead of an always-quest age
   assert.match(runtime, /Player Brief \+ private signals \+ observed quest results remain the source of truth about the player/)
 })
 
-test('initial progression requires real external research and preserves source URLs', () => {
+test('initial progression requires real external research without leaking player identity into the research payload', () => {
   const runtime = source('lib/ai/progression-conversation-intelligence.ts')
   const transport = source('workers/chatgpt-consumer/browser-transport.mjs')
   const provider = source('lib/ai/chatgpt-consumer-provider.ts')
+  const researchFunction = runtime.slice(runtime.indexOf('async function runExternalResearch'), runtime.indexOf('async function chooseMove'))
   assert.match(runtime, /first post-onboarding progression decision/)
-  assert.match(runtime, /Use external web search for this request\. Do not answer from memory alone\./)
-  assert.match(runtime, /never the player identity/)
-  assert.match(runtime, /sources: \[\{/)
+  assert.match(researchFunction, /Use external web search for this request\. Do not answer from memory alone\./)
+  assert.match(researchFunction, /never the player identity/)
+  assert.doesNotMatch(researchFunction, /playerId/)
+  assert.match(researchFunction, /sources: \[\{/)
   assert.match(provider, /webSearch: request\.operation === 'research_progression_context'/)
   assert.match(transport, /async function activateWebSearch/)
   assert.match(transport, /web_search_unavailable/)
   assert.match(transport, /research=search-ui/)
+})
+
+test('conversation session state follows durable worker steps instead of invented frontend activity', () => {
+  const sql = source('supabase/sql/sync_progression_session_with_run_steps.sql')
+  assert.match(sql, /create trigger progression_run_steps_progression_session_state/)
+  assert.match(sql, /new\.status <> 'running'/)
+  assert.match(sql, /'understanding','progression_map','progression_map_after_learning'/)
+  assert.match(sql, /'progression_target','quest_generation','quest_repair'/)
+  assert.match(sql, /'workerStep',new\.step/)
+  assert.match(sql, /current_job_id=new\.job_id/)
+})
+
+test('Home bootstrap reads actual Daily Context and finalized quest state before asking the player for anything', () => {
+  const sql = source('supabase/sql/add_progression_conversation_home_bootstrap.sql')
+  assert.match(sql, /from public\.daily_contexts/)
+  assert.match(sql, /from public\.quest_batches/)
+  assert.match(sql, /v_state:=case when v_no_quest then 'waiting' else 'quest_ready' end/)
+  assert.match(sql, /v_metadata:=jsonb_build_object\('reason','progression'\)/)
+  assert.match(sql, /'reason','daily_context'/)
 })
 
 test('Home renders actual session state and interactive material clarification', () => {
