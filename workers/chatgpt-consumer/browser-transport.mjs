@@ -4,6 +4,11 @@ import path from 'node:path'
 import fs from 'node:fs/promises'
 import { spawn } from 'node:child_process'
 
+import {
+  composerTextMatches,
+  composerVerificationLengths,
+} from './composer-verification.mjs'
+
 const CHATGPT_URL = 'https://chatgpt.com/'
 const TEMPORARY_CHAT_URL = 'https://chatgpt.com/?temporary-chat=true'
 const PROFILE_DIR = process.env.CHATGPT_BROWSER_PROFILE_DIR || path.join(os.homedir(), '.superhuman', 'chatgpt-profile')
@@ -95,10 +100,17 @@ async function waitForComposer(page, deadline) {
   throw new WorkerError('composer_not_found', 'ChatGPT prompt composer was not found', true)
 }
 
-async function composerText(composer) {
+async function composerTextCandidates(composer) {
   const tagName = await composer.evaluate(element => element.tagName.toLowerCase()).catch(() => '')
-  if (tagName === 'textarea' || tagName === 'input') return String(await composer.inputValue().catch(() => ''))
-  return String(await composer.innerText().catch(() => ''))
+  if (tagName === 'textarea' || tagName === 'input') {
+    return [String(await composer.inputValue().catch(() => ''))]
+  }
+
+  const [innerText, textContent] = await Promise.all([
+    composer.innerText().catch(() => ''),
+    composer.textContent().catch(() => ''),
+  ])
+  return [...new Set([String(innerText || ''), String(textContent || '')])]
 }
 
 async function fillComposerVerified(composer, prompt, deadline) {
@@ -107,9 +119,15 @@ async function fillComposerVerified(composer, prompt, deadline) {
   } catch {
     throw new WorkerError('composer_fill_timeout', 'ChatGPT composer did not accept the request before timeout', true)
   }
-  const actual = (await composerText(composer)).trim()
-  if (!actual || actual !== String(prompt).trim()) {
-    throw new WorkerError('composer_fill_unverified', 'ChatGPT composer state did not match the request after fill', true)
+
+  const candidates = await composerTextCandidates(composer)
+  if (!composerTextMatches(prompt, candidates)) {
+    const lengths = composerVerificationLengths(prompt, candidates)
+    throw new WorkerError(
+      'composer_fill_unverified',
+      `ChatGPT composer state did not match the request after fill (expectedChars=${lengths.expectedChars}, actualChars=${lengths.actualChars})`,
+      true,
+    )
   }
 }
 
