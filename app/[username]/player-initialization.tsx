@@ -19,6 +19,7 @@ import VoiceAnswerRecorder, {
   type VoiceRecorderState,
 } from './voice-answer-recorder'
 import ConversationBubble, { ConversationStatus } from './conversation-bubble'
+import ConversationHeader from './conversation-header'
 import {
   SystemEyebrow,
   SystemMoment,
@@ -59,11 +60,13 @@ function conversationOrder(left: PlayerInitializationQuestion, right: PlayerInit
 function visiblePlayerAnswer(question: PlayerInitializationQuestion) {
   if (question.status === 'skipped') return 'Dilewati.'
   if (question.answerText?.trim()) return question.answerText.trim()
+  if (question.transcriptText?.trim()) return question.transcriptText.trim()
   return '🎙 Jawaban suara'
 }
 
 export default function PlayerInitialization({
   playerId,
+  playerName,
   onReady,
 }: {
   playerId: string
@@ -85,6 +88,7 @@ export default function PlayerInitialization({
   const watchedJobRef = useRef<string | null>(null)
   const voiceRef = useRef<VoiceAnswerRecorderHandle | null>(null)
   const participatedRef = useRef(false)
+  const threadEndRef = useRef<HTMLDivElement | null>(null)
 
   const reload = useCallback(async () => {
     await ensurePlayerInitialization(supabase)
@@ -178,6 +182,24 @@ export default function PlayerInitialization({
   const adaptiveLead = question?.origin === 'adaptive'
     ? adaptiveAddressedThisCycle > 0 ? 'Oke. Satu lagi.' : 'Masih ada satu yang belum kebaca.'
     : null
+  const headerStatus = question?.origin === 'adaptive'
+    ? 'FOLLOW-UP · CALIBRATION'
+    : jobStatus === 'queued' || jobStatus === 'running'
+      ? 'UNDERSTANDING'
+      : 'CALIBRATION'
+  const headerProgress = question?.origin === 'adaptive' ? 100 : progress
+  const headerProgressLabel = questionNumber
+    ? `${questionNumber} / ${totalBasic}`
+    : question?.origin === 'adaptive'
+      ? 'FOLLOW-UP'
+      : `${Math.min(addressedBasic, totalBasic)} / ${totalBasic}`
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      threadEndRef.current?.scrollIntoView({ block: 'end' })
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [conversationHistory.length, feedback, question?.id])
 
   const watchJob = useCallback(async (jobId: string) => {
     if (watchedJobRef.current === jobId) return
@@ -364,26 +386,20 @@ export default function PlayerInitialization({
   }
 
   return (
-    <div style={{ minHeight: '100dvh', background: S.bg, color: S.ink, fontFamily: '"IBM Plex Sans", sans-serif', padding: '0 18px 76px' }}>
-      <main style={{ width: '100%', maxWidth: 680, margin: '0 auto', paddingTop: 28 }}>
-        <header style={{ position: 'sticky', top: 0, zIndex: 3, background: 'linear-gradient(180deg,#0c0f14 78%,rgba(12,15,20,0))', padding: '5px 0 19px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              {canGoBack && (
-                <button type="button" onClick={() => { void goBack() }} aria-label="Kembali ke pertanyaan sebelumnya" style={{ border: 0, padding: '4px 0', background: 'transparent', color: S.muted, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, fontWeight: 700, letterSpacing: '.07em', cursor: 'pointer' }}>← KEMBALI</button>
-              )}
-              <SystemEyebrow>CALIBRATION</SystemEyebrow>
-            </div>
-            <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: question?.origin === 'adaptive' ? S.gold : S.muted, fontSize: 8.5, fontWeight: 700, letterSpacing: '.08em' }}>
-              {questionNumber ? `${questionNumber} / ${totalBasic}` : question?.origin === 'adaptive' ? 'FOLLOW-UP' : `${Math.min(addressedBasic, totalBasic)} / ${totalBasic}`}
-            </div>
-          </div>
-          <div style={{ height: 3, marginTop: 11, borderRadius: 99, overflow: 'hidden', background: '#1b212a' }}>
-            <div style={{ width: `${question?.origin === 'adaptive' ? 100 : progress}%`, height: '100%', borderRadius: 99, background: S.amber, boxShadow: '0 0 15px rgba(246,178,75,.3)', transition: 'width 280ms ease' }} />
-          </div>
-        </header>
+    <div style={{ height: '100dvh', overflow: 'hidden', background: S.bg, color: S.ink, fontFamily: '"IBM Plex Sans", sans-serif', padding: '0 18px' }}>
+      <main style={{ width: '100%', maxWidth: 680, height: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column' }}>
+        <ConversationHeader
+          playerName={playerName}
+          statusLabel={headerStatus}
+          onBack={canGoBack ? () => { void goBack() } : null}
+          progress={headerProgress}
+          progressLabel={headerProgressLabel}
+        />
 
-        <section data-conversation-thread="onboarding" style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 10 }}>
+        <section
+          data-conversation-thread="onboarding"
+          style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: 12, padding: '16px 2px 20px', scrollbarGutter: 'stable' }}
+        >
           {conversationHistory.map(item => (
             <div key={item.id} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <ConversationBubble actor="system" compact>{item.prompt}</ConversationBubble>
@@ -393,46 +409,18 @@ export default function PlayerInitialization({
 
           {question ? (
             <>
-              <ConversationBubble actor="system">
+              <ConversationBubble actor="system" collapsible={false}>
                 {adaptiveLead && <div style={{ marginBottom: 6, color: S.amber, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, fontWeight: 700, letterSpacing: '.07em' }}>{adaptiveLead}</div>}
                 <div style={{ fontFamily: '"Space Grotesk", sans-serif', fontSize: 'clamp(18px,4vw,23px)', fontWeight: 680, lineHeight: 1.35, letterSpacing: '-.02em' }}>{question.prompt}</div>
-                {questionHelper && <div style={{ marginTop: 8, color: S.muted, fontSize: 11.8, lineHeight: 1.55 }}>{questionHelper}</div>}
+                {questionHelper && <div style={{ marginTop: 8, color: S.muted, fontSize: 12.5, lineHeight: 1.55 }}>{questionHelper}</div>}
               </ConversationBubble>
-
-              {feedback ? (
-                <ConversationStatus>{feedback.replace('✓ ', '')}</ConversationStatus>
-              ) : (
-                <section data-player-answer-composer style={{ width: 'min(94%, 590px)', alignSelf: 'flex-end' }}>
-                  <div style={{ position: 'relative', minHeight: 116, border: `1px solid ${voiceState === 'recording' ? '#4a3a23' : S.line}`, borderRadius: '17px 17px 6px 17px', background: S.panel2, overflow: 'hidden', transition: 'border-color 180ms ease, box-shadow 180ms ease', boxShadow: voiceState === 'recording' ? '0 0 0 1px rgba(246,178,75,.08), 0 16px 42px rgba(0,0,0,.16)' : 'none' }}>
-                    {voiceState === 'idle' && (
-                      <textarea
-                        value={answer}
-                        onChange={event => setAnswer(event.target.value)}
-                        disabled={systemBusy}
-                        placeholder="Balas System…"
-                        rows={4}
-                        maxLength={5000}
-                        autoFocus
-                        style={{ width: '100%', minHeight: 116, boxSizing: 'border-box', resize: 'none', border: 0, background: 'transparent', color: S.ink, padding: '14px 58px 14px 14px', outline: 'none', fontFamily: '"IBM Plex Sans", sans-serif', fontSize: 14, lineHeight: 1.6 }}
-                      />
-                    )}
-                    <VoiceAnswerRecorder key={question.id} ref={voiceRef} playerId={playerId} questionId={question.id} disabled={systemBusy} textPresent={hasTextAnswer} onStateChange={setVoiceState} />
-                  </div>
-
-                  {!voiceBusy && (
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 9 }}>
-                      <button type="button" onClick={() => { void skip() }} disabled={!canSkip} style={{ border: 0, padding: '6px 2px', background: 'transparent', color: canSkip ? S.muted : S.muted2, fontFamily: '"IBM Plex Sans", sans-serif', fontSize: 11.5, cursor: canSkip ? 'pointer' : 'default' }}>Lewati</button>
-                      <button type="button" onClick={() => { void submit() }} disabled={!canContinue} style={{ minHeight: 40, border: 0, borderRadius: 11, background: canContinue ? S.amber : '#252b34', color: canContinue ? '#17120a' : S.muted2, padding: '0 16px', fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.8, fontWeight: 800, letterSpacing: '.08em', cursor: canContinue ? 'pointer' : 'default' }}>{saving ? 'SAVING…' : 'KIRIM →'}</button>
-                    </div>
-                  )}
-                </section>
-              )}
+              {feedback ? <ConversationStatus>{feedback.replace('✓ ', '')}</ConversationStatus> : null}
             </>
           ) : state.readiness !== 'ready' ? (
             <>
               {jobStatus === 'queued' || jobStatus === 'running' ? (
                 <>
-                  <ConversationBubble actor="system">
+                  <ConversationBubble actor="system" collapsible={false}>
                     <div style={{ fontFamily: '"Space Grotesk", sans-serif', fontSize: 19, fontWeight: 680 }}>Oke. Sebentar.</div>
                     <div style={{ marginTop: 7, color: S.muted, fontSize: 12.5 }}>Gue lagi nyambungin semua yang lo ceritain.</div>
                   </ConversationBubble>
@@ -440,7 +428,7 @@ export default function PlayerInitialization({
                 </>
               ) : answeredThisCycle > 0 ? (
                 <>
-                  <ConversationBubble actor="system">
+                  <ConversationBubble actor="system" collapsible={false}>
                     <div style={{ fontFamily: '"Space Grotesk", sans-serif', fontSize: 19, fontWeight: 680 }}>{currentCalibrationVersion === 0 ? 'Oke. Gue sambungin dulu semuanya.' : 'Got it. Gue cek lagi.'}</div>
                     <div style={{ marginTop: 7, color: S.muted, fontSize: 12.2 }}>{currentCalibrationVersion === 0 ? 'Kalau masih ada yang kurang, gue bakal nanya. Kalau nggak, kita mulai.' : 'Kalau udah cukup, kita mulai. Kalau belum, gue tanya seperlunya.'}</div>
                   </ConversationBubble>
@@ -451,15 +439,50 @@ export default function PlayerInitialization({
                 </>
               ) : skippedThisCycle > 0 ? (
                 <>
-                  <ConversationBubble actor="system">Masih ada satu bagian yang kosong. Balik sebentar; cukup jawab yang lo bisa.</ConversationBubble>
+                  <ConversationBubble actor="system" collapsible={false}>Masih ada satu bagian yang kosong. Balik sebentar; cukup jawab yang lo bisa.</ConversationBubble>
                   <div style={{ alignSelf: 'flex-end' }}><button type="button" onClick={() => { void reviewSkipped() }} disabled={systemBusy} style={{ minHeight: 40, border: 0, borderRadius: 11, background: systemBusy ? '#252b34' : S.amber, color: systemBusy ? S.muted2 : '#17120a', padding: '0 16px', fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.8, fontWeight: 800, letterSpacing: '.08em', cursor: systemBusy ? 'default' : 'pointer' }}>BALIK KE PERTANYAAN →</button></div>
                 </>
               ) : null}
             </>
           ) : null}
+
+          {!question && error && <div role="alert" style={{ padding: '11px 12px', border: '1px solid #482631', borderRadius: 12, background: '#171116', color: S.red, fontSize: 11.5, lineHeight: 1.5 }}>{error}</div>}
+          <div ref={threadEndRef} aria-hidden="true" />
         </section>
 
-        {error && <div role="alert" style={{ marginTop: 18, padding: '11px 12px', border: '1px solid #482631', borderRadius: 12, background: '#171116', color: S.red, fontSize: 11.5, lineHeight: 1.5 }}>{error}</div>}
+        {question && !feedback ? (
+          <section
+            data-player-answer-composer
+            data-sticky-chat-composer
+            style={{ flex: '0 0 auto', margin: '0 -18px', padding: '10px 18px max(12px, env(safe-area-inset-bottom))', borderTop: `1px solid ${S.line}`, background: 'rgba(12,15,20,.97)', backdropFilter: 'blur(18px)', boxShadow: '0 -18px 46px rgba(0,0,0,.22)' }}
+          >
+            <div style={{ width: '100%', maxWidth: 680, margin: '0 auto' }}>
+              {error && <div role="alert" style={{ marginBottom: 8, color: S.red, fontSize: 11.2, lineHeight: 1.45 }}>{error}</div>}
+              <div style={{ position: 'relative', minHeight: 52, border: `1px solid ${voiceState === 'recording' ? '#4a3a23' : S.line}`, borderRadius: 16, background: S.panel2, overflow: 'hidden', transition: 'border-color 180ms ease, box-shadow 180ms ease', boxShadow: voiceState === 'recording' ? '0 0 0 1px rgba(246,178,75,.08), 0 16px 42px rgba(0,0,0,.16)' : 'none' }}>
+                {voiceState === 'idle' && (
+                  <textarea
+                    value={answer}
+                    onChange={event => setAnswer(event.target.value)}
+                    disabled={systemBusy}
+                    placeholder="Balas System…"
+                    rows={2}
+                    maxLength={5000}
+                    autoFocus
+                    style={{ width: '100%', minHeight: 52, maxHeight: 118, boxSizing: 'border-box', resize: 'none', border: 0, background: 'transparent', color: S.ink, padding: '12px 58px 10px 13px', outline: 'none', fontFamily: '"IBM Plex Sans", sans-serif', fontSize: 14, lineHeight: 1.5 }}
+                  />
+                )}
+                <VoiceAnswerRecorder key={question.id} ref={voiceRef} playerId={playerId} questionId={question.id} disabled={systemBusy} textPresent={hasTextAnswer} onStateChange={setVoiceState} />
+              </div>
+
+              {!voiceBusy && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 8 }}>
+                  <button type="button" onClick={() => { void skip() }} disabled={!canSkip} style={{ border: 0, padding: '6px 2px', background: 'transparent', color: canSkip ? S.muted : S.muted2, fontFamily: '"IBM Plex Sans", sans-serif', fontSize: 11.5, cursor: canSkip ? 'pointer' : 'default' }}>Lewati</button>
+                  <button type="button" onClick={() => { void submit() }} disabled={!canContinue} style={{ minHeight: 38, border: 0, borderRadius: 11, background: canContinue ? S.amber : '#252b34', color: canContinue ? '#17120a' : S.muted2, padding: '0 16px', fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.8, fontWeight: 800, letterSpacing: '.08em', cursor: canContinue ? 'pointer' : 'default' }}>{saving ? 'SAVING…' : 'KIRIM →'}</button>
+                </div>
+              )}
+            </div>
+          </section>
+        ) : null}
       </main>
     </div>
   )
