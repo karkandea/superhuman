@@ -61,14 +61,24 @@ export default function TodayConversationShell({
 
   useEffect(() => {
     let cancelled = false
-    void reload().catch(() => {
+
+    async function loadInitialConversation() {
+      await ensureProgressionSession(supabase)
+      const next = await loadProgressionConversation(supabase)
+      if (cancelled) return
+      setSnapshot(next)
+      setLoadError(false)
+      setLoading(false)
+    }
+
+    void loadInitialConversation().catch(() => {
       if (!cancelled) {
         setLoadError(true)
         setLoading(false)
       }
     })
     return () => { cancelled = true }
-  }, [reload, playerId])
+  }, [playerId])
 
   useEffect(() => {
     const state = snapshot?.session?.state
