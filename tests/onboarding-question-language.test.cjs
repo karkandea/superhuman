@@ -45,10 +45,12 @@ test('onboarding UI shows helper copy only where it removes ambiguity', () => {
 
 test('basic onboarding can go back and replace prior evidence before calibration', () => {
   const page = source('app/[username]/player-initialization.tsx')
+  const header = source('app/[username]/conversation-header.tsx')
   const service = source('lib/player-initialization-service.ts')
   const sql = source('supabase/sql/add_onboarding_answer_back_navigation.sql')
 
-  assert.match(page, /← KEMBALI/)
+  assert.match(page, /onBack=\{canGoBack \? \(\) => \{ void goBack\(\) \} : null\}/)
+  assert.match(header, /aria-label="Kembali ke pertanyaan sebelumnya"/)
   assert.match(page, /reopenPreviousPlayerInitializationQuestion/)
   assert.match(page, /currentCalibrationVersion === 0/)
   assert.match(page, /state\.lastCalibratedAt === null/)
