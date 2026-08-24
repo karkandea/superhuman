@@ -40,7 +40,7 @@ export default function ProgressionSessionDetailPage(){
       </header>
 
       <section data-conversation-thread="episode-history" style={{marginTop:22,display:'flex',flexDirection:'column',gap:12}}>
-        {messages.length===0?<div style={{color:S.muted,fontSize:12.5}}>Belum ada player-facing update di episode ini.</div>:messages.map(message=><ConversationBubble key={message.id} actor={message.actor} meta={moment(message.created_at)}>{message.body}</ConversationBubble>)}
+        {messages.length===0?<div style={{color:S.muted,fontSize:12.5}}>Belum ada player-facing update di episode ini.</div>:messages.map(message=><ConversationBubble key={message.id} actor={message.actor} playerName={username} meta={moment(message.created_at)}>{message.body}</ConversationBubble>)}
       </section>
 
       {research.length>0&&<section style={{marginTop:32}}>

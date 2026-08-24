@@ -11,8 +11,8 @@ import {
   type ProgressionSessionState,
 } from '@/lib/progression-conversation-service'
 import { supabase } from '@/lib/supabase'
-import ConversationBubble, { ConversationStatus } from './conversation-bubble'
-import ConversationHeader from './conversation-header'
+import ConversationBubble from './conversation-bubble'
+import ConversationHeader, { AgentTypingIndicator } from './conversation-header'
 
 const S = {
   panel: '#13171f', panel2: '#10141b', line: '#232a35', ink: '#ECEAE3', muted: '#7e8795',
@@ -31,6 +31,10 @@ const STATE_COPY: Record<ProgressionSessionState, { eyebrow: string; title: stri
 
 function stateNeedsFocus(state: ProgressionSessionState) {
   return state === 'understanding' || state === 'researching' || state === 'deciding' || state === 'need_clarification'
+}
+
+function stateIsWorking(state: ProgressionSessionState) {
+  return state === 'understanding' || state === 'researching' || state === 'deciding'
 }
 
 function formatMoment(value: string) {
@@ -109,6 +113,11 @@ export default function TodayConversationShell({
   const waitingForDailyContext = session?.state === 'waiting' && session.metadata.reason === 'daily_context'
   const hideTodayBody = Boolean(session && stateNeedsFocus(session.state))
   const headerStatus = (copy?.eyebrow ?? 'SYSTEM · PROGRESSION').replace('SYSTEM · ', '')
+  const systemWorking = Boolean(
+    session
+      && !snapshot?.question
+      && (stateIsWorking(session.state) || workerStep === 'quest_generation' || workerStep === 'quest_repair'),
+  )
 
   if (loading) return <>{children}</>
 
@@ -118,6 +127,7 @@ export default function TodayConversationShell({
         <ConversationHeader
           playerName={username}
           statusLabel={headerStatus}
+          agentActive={systemWorking}
           action={(
             <Link
               href={`/${encodeURIComponent(username)}/history/sessions`}
@@ -148,8 +158,8 @@ export default function TodayConversationShell({
                   <div data-conversation-thread="onboarding-context" style={{ display: 'flex', flexDirection: 'column', gap: 11, marginTop: 14 }}>
                     {snapshot!.initialAnswers.map(item => (
                       <div key={item.id} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        <ConversationBubble actor="system" compact>{item.prompt}</ConversationBubble>
-                        <ConversationBubble actor="player" compact>{item.answer}</ConversationBubble>
+                        <ConversationBubble actor="system" compact playerName={username}>{item.prompt}</ConversationBubble>
+                        <ConversationBubble actor="player" compact playerName={username}>{item.answer}</ConversationBubble>
                       </div>
                     ))}
                   </div>
@@ -161,6 +171,7 @@ export default function TodayConversationShell({
                   <ConversationBubble
                     key={message.id}
                     actor={message.actor}
+                    playerName={username}
                     meta={message.createdAt ? formatMoment(message.createdAt) : undefined}
                   >
                     {message.body}
@@ -168,15 +179,21 @@ export default function TodayConversationShell({
                 ))}
 
                 {snapshot?.question && (
-                  <QuestionComposer question={snapshot.question} onAnswered={reload} />
+                  <QuestionComposer question={snapshot.question} playerName={username} onAnswered={reload} />
                 )}
 
-                {!snapshot?.question && copy && stateNeedsFocus(session.state) && (
-                  <ConversationStatus>{copy.title}</ConversationStatus>
+                {systemWorking && copy && (
+                  <ConversationBubble actor="system" playerName={username} collapsible={false} systemActive>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <AgentTypingIndicator label="Superhuman sedang memproses next move" />
+                      <span style={{ color: S.gold, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.1, fontWeight: 700, letterSpacing: '.05em' }}>{headerStatus}</span>
+                    </div>
+                    <div style={{ marginTop: 8, color: S.muted, fontSize: 12.5, lineHeight: 1.55 }}>{copy.title}</div>
+                  </ConversationBubble>
                 )}
 
                 {waitingForDailyContext && (
-                  <ConversationBubble actor="system">
+                  <ConversationBubble actor="system" playerName={username}>
                     Kasih kondisi hari ini di bawah. Setelah itu gue lanjut research dan nentuin arahnya.
                   </ConversationBubble>
                 )}
@@ -197,9 +214,11 @@ export default function TodayConversationShell({
 
 function QuestionComposer({
   question,
+  playerName,
   onAnswered,
 }: {
   question: ProgressionConversationQuestion
+  playerName: string
   onAnswered: () => Promise<unknown>
 }) {
   const [text, setText] = useState('')
@@ -234,7 +253,7 @@ function QuestionComposer({
 
   return (
     <div data-conversation-question style={{ display: 'contents' }}>
-      <ConversationBubble actor="system" meta={question.createdAt ? formatMoment(question.createdAt) : undefined} collapsible={false}>
+      <ConversationBubble actor="system" playerName={playerName} meta={question.createdAt ? formatMoment(question.createdAt) : undefined} collapsible={false}>
         <div style={{ fontFamily: '"Space Grotesk", sans-serif', fontSize: 16.5, fontWeight: 650, lineHeight: 1.4 }}>{question.prompt}</div>
         {question.reason && <div style={{ marginTop: 7, color: S.muted, fontSize: 11.5, lineHeight: 1.5 }}>{question.reason}</div>}
       </ConversationBubble>
@@ -282,7 +301,7 @@ function QuestionComposer({
 
             {error && <div role="status" style={{ marginTop: 8, color: S.red, fontSize: 11 }}>{error}</div>}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 7 }}>
-              <div style={{ color: S.muted2, fontFamily: '"IBM Plex Mono", monospace', fontSize: 7.8, letterSpacing: '.06em' }}>PLAYER</div>
+              <div style={{ color: S.muted2, fontFamily: '"IBM Plex Mono", monospace', fontSize: 7.8, letterSpacing: '.06em' }}>{playerName.toUpperCase()}</div>
               <button type="button" onClick={() => { void submit() }} disabled={!canSend || saving} style={{ minHeight: 36, border: 0, borderRadius: 10, background: canSend && !saving ? S.amber : '#262a31', color: canSend && !saving ? '#17120a' : S.muted2, padding: '0 14px', fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, fontWeight: 800, letterSpacing: '.07em', cursor: canSend && !saving ? 'pointer' : 'default' }}>
                 {saving ? 'NYIMPEN…' : 'KIRIM →'}
               </button>
