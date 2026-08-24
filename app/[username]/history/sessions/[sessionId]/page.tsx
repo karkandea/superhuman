@@ -4,8 +4,9 @@ import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import ConversationBubble from '../../../conversation-bubble'
 
-const S={bg:'#0c0f14',panel:'#13171f',panel2:'#10141b',line:'#232a35',ink:'#ECEAE3',muted:'#7e8795',muted2:'#596270',amber:'#f6b24b',gold:'#ffd488'} as const
+const S={bg:'#0c0f14',panel:'#13171f',line:'#232a35',ink:'#ECEAE3',muted:'#7e8795',amber:'#f6b24b',gold:'#ffd488'} as const
 
 type SessionRow={id:string;user_id:string;title:string;kind:string;state:string;status:string;opened_at:string;closed_at:string|null}
 type MessageRow={id:string;actor:'player'|'system';message_type:string;body:string;metadata:Record<string,unknown>;created_at:string}
@@ -30,7 +31,7 @@ export default function ProgressionSessionDetailPage(){
     if(!cancelled){setSession(sessionResult.data as SessionRow);setMessages((messageResult.data??[]) as MessageRow[]);setResearch((researchResult.data??[]) as ResearchRow[]);setLoading(false)}
   }void load().catch(()=>{if(!cancelled){setError(true);setLoading(false)}});return()=>{cancelled=true}},[router,sessionId,username])
 
-  return <div style={{minHeight:'100dvh',background:S.bg,color:S.ink,fontFamily:'"IBM Plex Sans", sans-serif'}}><main style={{maxWidth:620,margin:'0 auto',padding:'29px 18px 110px'}}>
+  return <div style={{minHeight:'100dvh',background:S.bg,color:S.ink,fontFamily:'"IBM Plex Sans", sans-serif'}}><main style={{maxWidth:680,margin:'0 auto',padding:'29px 18px 110px'}}>
     <Link href={`/${encodeURIComponent(username)}/history/sessions`} style={{color:S.muted,textDecoration:'none',fontFamily:'"IBM Plex Mono", monospace',fontSize:8.5,fontWeight:700}}>← SEMUA EPISODE</Link>
     {loading?<div style={{marginTop:30,color:S.muted,fontSize:12}}>Membaca episode…</div>:error||!session?<div style={{marginTop:30,color:S.muted,fontSize:12}}>Episode belum bisa dibaca sekarang.</div>:<>
       <header style={{marginTop:20,paddingBottom:20,borderBottom:`1px solid ${S.line}`}}>
@@ -38,11 +39,8 @@ export default function ProgressionSessionDetailPage(){
         <h1 style={{margin:'8px 0 0',fontFamily:'"Space Grotesk", sans-serif',fontSize:'clamp(32px,8vw,44px)',lineHeight:1,letterSpacing:'-.045em'}}>{session.title}</h1>
       </header>
 
-      <section style={{marginTop:22,display:'grid',gap:13}}>
-        {messages.length===0?<div style={{color:S.muted,fontSize:12.5}}>Belum ada player-facing update di episode ini.</div>:messages.map(message=><article key={message.id} style={{marginLeft:message.actor==='player'?'12%':0,marginRight:message.actor==='system'?'8%':0,borderLeft:message.actor==='system'?`2px solid ${S.amber}`:`1px solid ${S.line}`,background:message.actor==='player'?S.panel2:'transparent',borderRadius:message.actor==='player'?10:0,padding:message.actor==='system'?'4px 0 4px 12px':'9px 10px'}}>
-          <div style={{fontFamily:'"IBM Plex Mono", monospace',fontSize:7.8,fontWeight:700,letterSpacing:'.08em',color:message.actor==='system'?S.gold:S.muted2}}>{message.actor==='system'?'SYSTEM':'PLAYER'} · {moment(message.created_at)}</div>
-          <div style={{marginTop:5,fontSize:13,lineHeight:1.58,whiteSpace:'pre-wrap'}}>{message.body}</div>
-        </article>)}
+      <section data-conversation-thread="episode-history" style={{marginTop:22,display:'flex',flexDirection:'column',gap:12}}>
+        {messages.length===0?<div style={{color:S.muted,fontSize:12.5}}>Belum ada player-facing update di episode ini.</div>:messages.map(message=><ConversationBubble key={message.id} actor={message.actor} meta={moment(message.created_at)}>{message.body}</ConversationBubble>)}
       </section>
 
       {research.length>0&&<section style={{marginTop:32}}>

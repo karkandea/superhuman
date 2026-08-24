@@ -11,6 +11,7 @@ import {
   type ProgressionSessionState,
 } from '@/lib/progression-conversation-service'
 import { supabase } from '@/lib/supabase'
+import ConversationBubble, { ConversationStatus } from './conversation-bubble'
 
 const S = {
   panel: '#13171f', panel2: '#10141b', line: '#232a35', ink: '#ECEAE3', muted: '#7e8795',
@@ -101,8 +102,8 @@ export default function TodayConversationShell({
 
   return (
     <>
-      <div style={{ maxWidth: 620, margin: '0 auto', padding: '18px 18px 0', fontFamily: '"IBM Plex Sans", sans-serif' }}>
-        <section style={{ borderBottom: `1px solid ${S.line}`, padding: '10px 0 20px' }}>
+      <div style={{ maxWidth: 680, margin: '0 auto', padding: '18px 18px 0', fontFamily: '"IBM Plex Sans", sans-serif' }}>
+        <section style={{ borderBottom: `1px solid ${S.line}`, padding: '10px 0 22px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 }}>
             <div>
               <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: S.amber, fontSize: 8.5, letterSpacing: '.14em' }}>
@@ -123,67 +124,55 @@ export default function TodayConversationShell({
           {loadError ? (
             <div style={{ marginTop: 13, color: S.muted, fontSize: 12.5 }}>Timeline belum kebaca. Today tetap bisa dipakai.</div>
           ) : session ? (
-            <div style={{ marginTop: 16 }}>
+            <div style={{ marginTop: 18 }}>
               {session.kind === 'initial_calibration' && (snapshot?.initialAnswers.length ?? 0) > 0 && (
-                <details style={{ border: `1px solid ${S.line}`, borderRadius: 13, background: S.panel2, padding: '12px 13px', marginBottom: 13 }}>
-                  <summary style={{ cursor: 'pointer', color: S.muted, fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, fontWeight: 700, letterSpacing: '.04em' }}>
-                    PLAYER · JAWABAN ONBOARDING ({snapshot!.initialAnswers.length})
+                <details style={{ border: `1px solid ${S.line}`, borderRadius: 14, background: S.panel2, padding: '11px 12px', marginBottom: 16 }}>
+                  <summary style={{ cursor: 'pointer', color: S.muted, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, fontWeight: 700, letterSpacing: '.05em' }}>
+                    KONTEKS AWAL · {snapshot!.initialAnswers.length} JAWABAN
                   </summary>
-                  <div style={{ display: 'grid', gap: 12, marginTop: 13 }}>
+                  <div data-conversation-thread="onboarding-context" style={{ display: 'flex', flexDirection: 'column', gap: 11, marginTop: 14 }}>
                     {snapshot!.initialAnswers.map(item => (
-                      <div key={item.id}>
-                        <div style={{ color: S.muted2, fontSize: 10.5, lineHeight: 1.45 }}>{item.prompt}</div>
-                        <div style={{ color: S.ink, fontSize: 12.5, lineHeight: 1.55, marginTop: 3, whiteSpace: 'pre-wrap' }}>{item.answer}</div>
+                      <div key={item.id} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <ConversationBubble actor="system" compact>{item.prompt}</ConversationBubble>
+                        <ConversationBubble actor="player" compact>{item.answer}</ConversationBubble>
                       </div>
                     ))}
                   </div>
                 </details>
               )}
 
-              <div style={{ display: 'grid', gap: 10 }}>
+              <div data-conversation-thread="progression" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {(snapshot?.messages ?? []).map(message => (
-                  <article
+                  <ConversationBubble
                     key={message.id}
-                    style={{
-                      marginLeft: message.actor === 'player' ? '12%' : 0,
-                      marginRight: message.actor === 'system' ? '8%' : 0,
-                      borderLeft: message.actor === 'system' ? `2px solid ${S.amber}` : `1px solid ${S.line}`,
-                      padding: message.actor === 'system' ? '3px 0 3px 12px' : '8px 10px',
-                      borderRadius: message.actor === 'player' ? 10 : 0,
-                      background: message.actor === 'player' ? S.panel2 : 'transparent',
-                    }}
+                    actor={message.actor}
+                    meta={message.createdAt ? formatMoment(message.createdAt) : undefined}
                   >
-                    <div style={{ color: message.actor === 'system' ? S.gold : S.muted2, fontFamily: '"IBM Plex Mono", monospace', fontSize: 7.8, fontWeight: 700, letterSpacing: '.08em' }}>
-                      {message.actor === 'system' ? 'SYSTEM' : 'PLAYER'}{message.createdAt ? ` · ${formatMoment(message.createdAt)}` : ''}
-                    </div>
-                    <div style={{ marginTop: 4, color: S.ink, fontSize: 13, lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>{message.body}</div>
-                  </article>
+                    {message.body}
+                  </ConversationBubble>
                 ))}
+
+                {snapshot?.question && (
+                  <QuestionComposer question={snapshot.question} onAnswered={reload} />
+                )}
+
+                {!snapshot?.question && copy && stateNeedsFocus(session.state) && (
+                  <ConversationStatus>{copy.title}</ConversationStatus>
+                )}
+
+                {waitingForDailyContext && (
+                  <ConversationBubble actor="system">
+                    Kasih kondisi hari ini di bawah. Setelah itu gue lanjut research dan nentuin arahnya.
+                  </ConversationBubble>
+                )}
               </div>
-
-              {snapshot?.question && (
-                <QuestionCard question={snapshot.question} onAnswered={reload} />
-              )}
-
-              {!snapshot?.question && copy && stateNeedsFocus(session.state) && (
-                <div aria-live="polite" style={{ display: 'flex', alignItems: 'center', gap: 9, marginTop: 15, color: S.muted, fontSize: 11.8 }}>
-                  <span aria-hidden="true" style={{ width: 7, height: 7, borderRadius: 99, background: S.amber, boxShadow: '0 0 12px rgba(246,178,75,.55)' }} />
-                  {copy.title}
-                </div>
-              )}
-
-              {waitingForDailyContext && (
-                <div style={{ marginTop: 14, color: S.muted, fontSize: 11.8, lineHeight: 1.55 }}>
-                  Kasih kondisi hari ini di bawah. Setelah itu System yang lanjut research dan nentuin arahnya.
-                </div>
-              )}
             </div>
           ) : null}
         </section>
       </div>
 
       {hideTodayBody ? (
-        <div style={{ maxWidth: 620, margin: '0 auto', padding: '26px 18px 180px', color: S.muted2, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, letterSpacing: '.08em' }}>
+        <div style={{ maxWidth: 680, margin: '0 auto', padding: '24px 18px 180px', color: S.muted2, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, letterSpacing: '.08em' }}>
           {session?.state === 'need_clarification' ? 'GILIRAN LO' : 'SYSTEM YANG LANJUT'}
         </div>
       ) : children}
@@ -191,7 +180,7 @@ export default function TodayConversationShell({
   )
 }
 
-function QuestionCard({
+function QuestionComposer({
   question,
   onAnswered,
 }: {
@@ -229,48 +218,56 @@ function QuestionCard({
   }
 
   return (
-    <section style={{ marginTop: 17, border: `1px solid ${S.line}`, borderRadius: 16, background: S.panel, padding: '14px 13px' }}>
-      <div style={{ color: S.gold, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8, fontWeight: 700, letterSpacing: '.1em' }}>SYSTEM NANYA</div>
-      <div style={{ marginTop: 8, color: S.ink, fontFamily: '"Space Grotesk", sans-serif', fontSize: 18, fontWeight: 650, lineHeight: 1.35 }}>{question.prompt}</div>
+    <div data-conversation-question style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <ConversationBubble actor="system" meta={question.createdAt ? formatMoment(question.createdAt) : undefined}>
+        <div style={{ fontFamily: '"Space Grotesk", sans-serif', fontSize: 16.5, fontWeight: 650, lineHeight: 1.4 }}>{question.prompt}</div>
+        {question.reason && <div style={{ marginTop: 7, color: S.muted, fontSize: 11.5, lineHeight: 1.5 }}>{question.reason}</div>}
+      </ConversationBubble>
 
-      {(question.responseType === 'free_text' || question.responseType === 'short_text') && (
-        <textarea
-          value={text}
-          onChange={event => setText(event.target.value)}
-          rows={question.responseType === 'short_text' ? 2 : 4}
-          maxLength={question.responseType === 'short_text' ? 800 : 5000}
-          placeholder="Jawab pakai bahasa lo sendiri…"
-          style={{ width: '100%', marginTop: 13, boxSizing: 'border-box', resize: 'vertical', border: `1px solid ${S.line}`, borderRadius: 11, background: '#0d1117', color: S.ink, padding: '11px 12px', outline: 'none', font: 'inherit', fontSize: 13, lineHeight: 1.5 }}
-        />
-      )}
+      <section style={{ width: 'min(92%, 560px)', alignSelf: 'flex-end', border: `1px solid ${S.line}`, borderRadius: '16px 16px 6px 16px', background: S.panel2, padding: '11px 11px 10px' }}>
+        {(question.responseType === 'free_text' || question.responseType === 'short_text') && (
+          <textarea
+            value={text}
+            onChange={event => setText(event.target.value)}
+            rows={question.responseType === 'short_text' ? 2 : 4}
+            maxLength={question.responseType === 'short_text' ? 800 : 5000}
+            placeholder="Jawab pakai bahasa lo sendiri…"
+            autoFocus
+            style={{ width: '100%', boxSizing: 'border-box', resize: 'vertical', border: 0, background: 'transparent', color: S.ink, padding: '3px 3px 7px', outline: 'none', font: 'inherit', fontSize: 13, lineHeight: 1.55 }}
+          />
+        )}
 
-      {question.responseType === 'single_choice' && (
-        <div style={{ display: 'grid', gap: 8, marginTop: 13 }}>
-          {question.options.map(option => (
-            <button key={option} type="button" onClick={() => setSingle(option)} style={{ textAlign: 'left', minHeight: 42, borderRadius: 11, border: `1px solid ${single === option ? S.amber : S.line}`, background: single === option ? 'rgba(246,178,75,.08)' : '#0d1117', color: S.ink, padding: '9px 11px', cursor: 'pointer' }}>
-              {option}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {question.responseType === 'multiple_choice' && (
-        <div style={{ display: 'grid', gap: 8, marginTop: 13 }}>
-          {question.options.map(option => {
-            const selected = multi.includes(option)
-            return (
-              <button key={option} type="button" onClick={() => setMulti(current => selected ? current.filter(item => item !== option) : [...current, option])} style={{ textAlign: 'left', minHeight: 42, borderRadius: 11, border: `1px solid ${selected ? S.amber : S.line}`, background: selected ? 'rgba(246,178,75,.08)' : '#0d1117', color: S.ink, padding: '9px 11px', cursor: 'pointer' }}>
-                {selected ? '✓ ' : ''}{option}
+        {question.responseType === 'single_choice' && (
+          <div style={{ display: 'grid', gap: 7 }}>
+            {question.options.map(option => (
+              <button key={option} type="button" onClick={() => setSingle(option)} style={{ textAlign: 'left', minHeight: 40, borderRadius: 10, border: `1px solid ${single === option ? S.amber : S.line}`, background: single === option ? 'rgba(246,178,75,.08)' : '#0d1117', color: S.ink, padding: '8px 10px', cursor: 'pointer' }}>
+                {option}
               </button>
-            )
-          })}
-        </div>
-      )}
+            ))}
+          </div>
+        )}
 
-      {error && <div role="status" style={{ marginTop: 9, color: S.red, fontSize: 11 }}>{error}</div>}
-      <button type="button" onClick={() => { void submit() }} disabled={!canSend || saving} style={{ width: '100%', minHeight: 44, marginTop: 12, border: 0, borderRadius: 11, background: canSend && !saving ? S.amber : '#262a31', color: canSend && !saving ? '#17120a' : S.muted2, fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, fontWeight: 800, letterSpacing: '.07em', cursor: canSend && !saving ? 'pointer' : 'default' }}>
-        {saving ? 'NYIMPEN…' : 'JAWAB →'}
-      </button>
-    </section>
+        {question.responseType === 'multiple_choice' && (
+          <div style={{ display: 'grid', gap: 7 }}>
+            {question.options.map(option => {
+              const selected = multi.includes(option)
+              return (
+                <button key={option} type="button" onClick={() => setMulti(current => selected ? current.filter(item => item !== option) : [...current, option])} style={{ textAlign: 'left', minHeight: 40, borderRadius: 10, border: `1px solid ${selected ? S.amber : S.line}`, background: selected ? 'rgba(246,178,75,.08)' : '#0d1117', color: S.ink, padding: '8px 10px', cursor: 'pointer' }}>
+                  {selected ? '✓ ' : ''}{option}
+                </button>
+              )
+            })}
+          </div>
+        )}
+
+        {error && <div role="status" style={{ marginTop: 8, color: S.red, fontSize: 11 }}>{error}</div>}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 8 }}>
+          <div style={{ color: S.muted2, fontFamily: '"IBM Plex Mono", monospace', fontSize: 7.8, letterSpacing: '.06em' }}>PLAYER</div>
+          <button type="button" onClick={() => { void submit() }} disabled={!canSend || saving} style={{ minHeight: 38, border: 0, borderRadius: 10, background: canSend && !saving ? S.amber : '#262a31', color: canSend && !saving ? '#17120a' : S.muted2, padding: '0 14px', fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, fontWeight: 800, letterSpacing: '.07em', cursor: canSend && !saving ? 'pointer' : 'default' }}>
+            {saving ? 'NYIMPEN…' : 'KIRIM →'}
+          </button>
+        </div>
+      </section>
+    </div>
   )
 }
