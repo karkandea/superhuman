@@ -31,6 +31,7 @@ export default function PlayerRouteLayout({ children }: { children: ReactNode })
   const [loadError, setLoadError] = useState<string | null>(null)
   const [loggingOut, setLoggingOut] = useState(false)
   const [logoutError, setLogoutError] = useState<string | null>(null)
+  const [todayConversationNeedsInput, setTodayConversationNeedsInput] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -123,6 +124,7 @@ export default function PlayerRouteLayout({ children }: { children: ReactNode })
   const vaultPath = `${basePath}/vault`
   const progressionPath = `${basePath}/history`
   const showComposer = pathname === todayPath || pathname === vaultPath
+  const showUpdateComposer = showComposer && !(pathname === todayPath && todayConversationNeedsInput)
 
   const tabs = [
     { href: todayPath, label: 'Today', active: pathname === todayPath },
@@ -131,7 +133,11 @@ export default function PlayerRouteLayout({ children }: { children: ReactNode })
   ]
 
   const routedContent = pathname === todayPath ? (
-    <TodayConversationShell playerId={player.id} username={player.name}>
+    <TodayConversationShell
+      playerId={player.id}
+      username={player.name}
+      onConversationInputModeChange={setTodayConversationNeedsInput}
+    >
       {children}
     </TodayConversationShell>
   ) : children
@@ -142,7 +148,7 @@ export default function PlayerRouteLayout({ children }: { children: ReactNode })
 
       <FirstQuestReveal playerId={player.id} active={pathname === todayPath} />
 
-      {showComposer && (
+      {showUpdateComposer && (
         <div style={{ position: 'fixed', left: 0, right: 0, bottom: 'calc(62px + env(safe-area-inset-bottom))', zIndex: 55, pointerEvents: 'none' }}>
           <div style={{ width: 'min(680px, 100%)', margin: '0 auto', padding: '0 12px 10px', boxSizing: 'border-box', pointerEvents: 'auto' }}>
             <UpdateSystemComposer
