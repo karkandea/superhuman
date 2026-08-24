@@ -177,7 +177,6 @@ function compactResearch(rows: ResearchRow[]) {
 async function runExternalResearch(
   provider: AiProvider,
   input: {
-    playerId: string
     date: string
     plan: ProgressionResearchPlan
     worldContext: Record<string, unknown>
@@ -195,7 +194,6 @@ async function runExternalResearch(
       'Every material claim in findings must be supportable by the returned source list. Never invent URLs or citations.',
     ].join(' '),
     context: {
-      playerId: input.playerId,
       date: input.date,
       researchPlan: input.plan,
       worldContext: input.worldContext,
@@ -393,7 +391,6 @@ export async function chooseProgressionTarget(
         await appendSystemMessage(client, session.id, 'research_update', 'Gue mau cek beberapa hal dulu sebelum nentuin langkah berikutnya.', { topic: decision.researchPlan.topic })
       }
       const researched = await runExternalResearch(dependencies.provider, {
-        playerId: input.playerId,
         date: input.date,
         plan: decision.researchPlan,
         worldContext: {
