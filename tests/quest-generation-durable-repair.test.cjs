@@ -55,7 +55,7 @@ function output(count) {
   }
 }
 
-function deps(provider) {
+function deps(provider, repairTelemetry) {
   let persisted = null
   return {
     dependencies: {
@@ -77,6 +77,7 @@ function deps(provider) {
         persistNoQuestPlan: async () => {},
         attachQuestMetadata: async () => {},
       },
+      ...(repairTelemetry ? { repairTelemetry } : {}),
     },
     persisted: () => persisted,
   }
@@ -87,7 +88,11 @@ test('quest output validator gets exactly one targeted repair before persistence
     { operation: 'generate_daily_quests', output: output(3), requestId: 'initial-request' },
     { operation: 'repair_daily_quest_output', output: output(4), requestId: 'repair-request' },
   ] })
-  const setup = deps(provider)
+  const telemetry = []
+  const setup = deps(provider, {
+    onStart: async input => telemetry.push({ type: 'start', ...input }),
+    onComplete: async input => telemetry.push({ type: 'complete', ...input }),
+  })
   const result = await generateDailyQuestsWithIntelligence(setup.dependencies, { playerId: 'p1', date: '2026-08-23' })
   assert.equal(provider.calls.length, 2)
   assert.deepEqual(provider.calls.map(call => call.request.operation), ['generate_daily_quests', 'repair_daily_quest_output'])
@@ -98,6 +103,10 @@ test('quest output validator gets exactly one targeted repair before persistence
   assert.equal(setup.persisted()[0].priority, 5)
   assert.equal(setup.persisted()[0].xp, deterministicQuestXp('medium', 'main'))
   assert.equal(provider.calls[1].request.context.questRepair.validatorCode, 'candidate_pool_invalid')
+  assert.deepEqual(telemetry, [
+    { type: 'start', validatorCode: 'candidate_pool_invalid' },
+    { type: 'complete', status: 'succeeded', validatorCode: 'candidate_pool_invalid', requestId: 'repair-request' },
+  ])
 })
 
 test('failed repair stops after two total model calls and exposes validator code', async () => {
@@ -105,7 +114,11 @@ test('failed repair stops after two total model calls and exposes validator code
     { operation: 'generate_daily_quests', output: output(3) },
     { operation: 'repair_daily_quest_output', output: output(2) },
   ] })
-  const setup = deps(provider)
+  const telemetry = []
+  const setup = deps(provider, {
+    onStart: async input => telemetry.push({ type: 'start', ...input }),
+    onComplete: async input => telemetry.push({ type: 'complete', ...input }),
+  })
   await assert.rejects(
     () => generateDailyQuestsWithIntelligence(setup.dependencies, { playerId: 'p1', date: '2026-08-23' }),
     error => {
@@ -118,6 +131,10 @@ test('failed repair stops after two total model calls and exposes validator code
   assert.equal(provider.calls.length, 2)
   assert.equal(provider.remainingFixtures(), 0)
   assert.equal(setup.persisted(), null)
+  assert.equal(telemetry[0].type, 'start')
+  assert.equal(telemetry[1].type, 'complete')
+  assert.equal(telemetry[1].status, 'failed')
+  assert.equal(telemetry[1].validatorCode, 'candidate_pool_invalid')
 })
 
 test('quest v4 contract keeps semantic decisions in model and mechanics in code', async () => {
@@ -135,7 +152,7 @@ test('quest v4 contract keeps semantic decisions in model and mechanics in code'
   assert.match(request.instructions, /System owns XP and priority mechanics/)
 })
 
-test('durable step ledger stores bounded diagnostics and worker does not retry model contract failures', () => {
+test('durable step ledger stores bounded diagnostics and worker captures understanding plus repair latency', () => {
   const migration = fs.readFileSync(path.join(process.cwd(), 'supabase/sql/add_durable_progression_steps.sql'), 'utf8')
   const worker = fs.readFileSync(path.join(process.cwd(), 'workers/chatgpt-consumer/worker-v2.mjs'), 'utf8')
   assert.match(migration, /create table if not exists public\.progression_run_steps/)
@@ -145,6 +162,10 @@ test('durable step ledger stores bounded diagnostics and worker does not retry m
   assert.match(worker, /new WorkerError\('model_output_invalid', message, false\)/)
   assert.match(worker, /new WorkerError\('inference_failed', message, false\)/)
   assert.match(worker, /'quest_generation'/)
+  assert.match(worker, /'understanding'/)
+  assert.match(worker, /understandingStepStarted/)
+  assert.match(worker, /step: 'quest_repair'/)
+  assert.match(worker, /repairTelemetry/)
   assert.match(worker, /repairAttemptCount: generated\.repairAttemptCount/)
 })
 
