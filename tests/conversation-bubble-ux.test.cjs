@@ -31,17 +31,19 @@ test('onboarding keeps cinematic system moments but questions run as one convers
   assert.match(onboarding, /<ConversationBubble actor="system"/)
   assert.match(onboarding, /<ConversationBubble actor="player"/)
   assert.match(onboarding, /data-player-answer-composer/)
+  assert.match(onboarding, /data-sticky-chat-composer/)
   assert.match(onboarding, /placeholder="Balas System…"/)
   assert.match(onboarding, /← KEMBALI/)
 })
 
-test('material clarification on Home is presented as a system bubble plus player reply composer', () => {
+test('material clarification on Home is presented as a system bubble plus sticky player reply composer', () => {
   const home = source('app/[username]/today-conversation-shell.tsx')
 
   assert.match(home, /function QuestionComposer/)
   assert.match(home, /data-conversation-question/)
   assert.match(home, /<ConversationBubble actor="system"/)
-  assert.match(home, /alignSelf: 'flex-end'/)
+  assert.match(home, /data-sticky-chat-composer/)
+  assert.match(home, /position: 'fixed'/)
   assert.match(home, /KIRIM →/)
   assert.doesNotMatch(home, /SYSTEM NANYA/)
 })
