@@ -81,7 +81,7 @@ begin
   update public.player_initialization_questions
   set status='pending',
       answer_mode='text',
-      answer_text=null,
+      answer_text=case when v_previous_mode='text' then v_previous_answer else null end,
       answer_audio_storage_path=null,
       answer_audio_file_name=null,
       answer_audio_mime_type=null,
