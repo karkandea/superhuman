@@ -26,7 +26,7 @@ export interface QuestOutputRepairContext extends ProgressionIntelligenceContext
 }
 
 export interface ProgressionConversationModelContext {
-  playerId: string
+  playerId?: string
   date: string
   [key: string]: unknown
 }
