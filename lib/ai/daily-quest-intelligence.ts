@@ -24,6 +24,16 @@ export interface DailyQuestGenerationResult {
   requestId?: string
 }
 
+export interface QuestRepairTelemetry {
+  onStart?(input: { validatorCode: string }): Promise<void> | void
+  onComplete?(input: {
+    status: 'succeeded' | 'failed'
+    validatorCode: string
+    requestId?: string
+    errorMessage?: string
+  }): Promise<void> | void
+}
+
 function requireProvider(provider: AiProvider | undefined): AiProvider {
   if (!provider || typeof provider.invokeStructured !== 'function') {
     throw new Error('AI provider is required; no fake or random fallback is allowed')
@@ -88,6 +98,15 @@ function boundedValidatorMessage(error: unknown) {
   return message.replace(/[\r\n\t]+/g, ' ').slice(0, 500)
 }
 
+async function runTelemetry(callback: (() => Promise<void> | void) | undefined) {
+  if (!callback) return
+  try {
+    await callback()
+  } catch {
+    // Telemetry must never change the AI decision or persistence outcome.
+  }
+}
+
 async function validateWithSingleRepair(input: {
   provider: AiProvider
   initialResponse: AiProviderResponse
@@ -95,6 +114,7 @@ async function validateWithSingleRepair(input: {
   allowedSignalIds: ReadonlySet<string>
   progressionMap: NonNullable<ProgressionIntelligenceContext['progressionMap']>
   progressionTarget: NonNullable<Awaited<ReturnType<ProgressionIntelligenceStore['loadProgressionTargetForDate']>>>
+  repairTelemetry?: QuestRepairTelemetry
 }) {
   try {
     return {
@@ -118,36 +138,72 @@ async function validateWithSingleRepair(input: {
         previousOutput: input.initialResponse.output,
       },
     }
-    const repairResponse = await input.provider.invokeStructured({
-      operation: 'repair_daily_quest_output',
-      schemaVersion: DAILY_QUEST_INTELLIGENCE_SCHEMA_VERSION,
-      instructions: [
-        'Repair one rejected Daily Quest draft. This is a targeted schema/business-constraint repair, not a new strategic decision.',
-        'The Progression Target is already final. Preserve its intent and preserve valid candidate meaning from the previous draft whenever possible.',
-        'Fix only what is required by questRepair.validatorCode / validatorMessage and the RESPONSE_CONTRACT.',
-        'Return the complete corrected payload, not a patch.',
-        'Do not create new goals, bottlenecks, opportunities, source ids, or player facts.',
-        'Do not output XP, priority, rationale duplicates, or score grids; the System owns those mechanics.',
-        questIntelligencePolicyInstructions(),
-      ].join(' '),
-      context: repairContext,
-      responseContract: questResponseContract(),
-    })
+
+    await runTelemetry(input.repairTelemetry?.onStart
+      ? () => input.repairTelemetry!.onStart!({ validatorCode: initialValidatorCode })
+      : undefined)
+
+    let repairResponse: AiProviderResponse
+    try {
+      repairResponse = await input.provider.invokeStructured({
+        operation: 'repair_daily_quest_output',
+        schemaVersion: DAILY_QUEST_INTELLIGENCE_SCHEMA_VERSION,
+        instructions: [
+          'Repair one rejected Daily Quest draft. This is a targeted schema/business-constraint repair, not a new strategic decision.',
+          'The Progression Target is already final. Preserve its intent and preserve valid candidate meaning from the previous draft whenever possible.',
+          'Fix only what is required by questRepair.validatorCode / validatorMessage and the RESPONSE_CONTRACT.',
+          'Return the complete corrected payload, not a patch.',
+          'Do not create new goals, bottlenecks, opportunities, source ids, or player facts.',
+          'Do not output XP, priority, rationale duplicates, or score grids; the System owns those mechanics.',
+          questIntelligencePolicyInstructions(),
+        ].join(' '),
+        context: repairContext,
+        responseContract: questResponseContract(),
+      })
+    } catch (repairInvokeError) {
+      await runTelemetry(input.repairTelemetry?.onComplete
+        ? () => input.repairTelemetry!.onComplete!({
+          status: 'failed',
+          validatorCode: initialValidatorCode,
+          errorMessage: boundedValidatorMessage(repairInvokeError),
+        })
+        : undefined)
+      if (repairInvokeError && typeof repairInvokeError === 'object') {
+        Object.assign(repairInvokeError, { repairAttemptCount: 1, initialValidatorCode })
+      }
+      throw repairInvokeError
+    }
 
     try {
+      const decision = validateQuestIntelligenceDecision(
+        repairResponse.output,
+        input.allowedSignalIds,
+        { progressionMap: input.progressionMap, progressionTarget: input.progressionTarget },
+      )
+      await runTelemetry(input.repairTelemetry?.onComplete
+        ? () => input.repairTelemetry!.onComplete!({
+          status: 'succeeded',
+          validatorCode: initialValidatorCode,
+          requestId: repairResponse.requestId,
+        })
+        : undefined)
       return {
         response: repairResponse,
-        decision: validateQuestIntelligenceDecision(
-          repairResponse.output,
-          input.allowedSignalIds,
-          { progressionMap: input.progressionMap, progressionTarget: input.progressionTarget },
-        ),
+        decision,
         repairAttemptCount: 1,
         validatorCode: undefined as string | undefined,
         initialValidatorCode,
       }
     } catch (repairError) {
       const validatorCode = questPolicyValidatorCode(repairError)
+      await runTelemetry(input.repairTelemetry?.onComplete
+        ? () => input.repairTelemetry!.onComplete!({
+          status: 'failed',
+          validatorCode,
+          requestId: repairResponse.requestId,
+          errorMessage: boundedValidatorMessage(repairError),
+        })
+        : undefined)
       throw Object.assign(
         new Error(`Quest Policy repair failed [${validatorCode}]: ${boundedValidatorMessage(repairError)}`),
         {
@@ -168,6 +224,7 @@ export async function generateDailyQuestsWithIntelligence(
     contextRetriever: DailyQuestContextRetriever
     repository: DailyQuestRepository
     progressionStore: ProgressionIntelligenceStore
+    repairTelemetry?: QuestRepairTelemetry
   },
   input: { playerId: string; date: string; limit?: number },
 ): Promise<DailyQuestGenerationResult> {
@@ -282,6 +339,7 @@ export async function generateDailyQuestsWithIntelligence(
     allowedSignalIds: new Set(context.signals.map(signal => signal.id)),
     progressionMap: progressionMapSnapshot,
     progressionTarget: intelligence.progressionTarget,
+    repairTelemetry: dependencies.repairTelemetry,
   })
   const decision = resolved.decision
   const response = resolved.response
