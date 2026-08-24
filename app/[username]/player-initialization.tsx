@@ -6,6 +6,7 @@ import {
   answerPlayerInitializationQuestion,
   ensurePlayerInitialization,
   loadPlayerInitialization,
+  reopenPreviousPlayerInitializationQuestion,
   requestPlayerInitializationCalibration,
   resetSkippedPlayerInitializationQuestions,
   skipPlayerInitializationQuestion,
@@ -78,6 +79,8 @@ export default function PlayerInitialization({
     const next = await loadPlayerInitialization(supabase, playerId)
     setState(next.state)
     setQuestions(next.questions)
+    const current = nextQuestion(next.questions)
+    setAnswer(current?.answerText ?? '')
 
     if (next.state.readiness === 'ready') {
       if (participatedRef.current) setIdentified(true)
@@ -118,8 +121,13 @@ export default function PlayerInitialization({
   }, [jobStatus])
 
   const question = useMemo(() => nextQuestion(questions), [questions])
-  const totalBasic = questions.filter(item => item.origin === 'basic').length
-  const addressedBasic = questions.filter(item => item.origin === 'basic' && item.status !== 'pending').length
+
+  const basicQuestions = useMemo(
+    () => questions.filter(item => item.origin === 'basic').sort((left, right) => left.sequence - right.sequence),
+    [questions],
+  )
+  const totalBasic = basicQuestions.length
+  const addressedBasic = basicQuestions.filter(item => item.status !== 'pending').length
   const currentCalibrationVersion = state?.calibrationVersion ?? 0
   const answeredThisCycle = questions.filter(item => item.status === 'answered' && item.calibrationVersion === currentCalibrationVersion).length
   const skippedThisCycle = questions.filter(item => item.status === 'skipped' && item.calibrationVersion === currentCalibrationVersion).length
@@ -133,6 +141,19 @@ export default function PlayerInitialization({
   const hasTextAnswer = Boolean(answer.trim())
   const canContinue = !systemBusy && !voiceBusy && (hasTextAnswer || hasVoiceDraft)
   const canSkip = !systemBusy && voiceState === 'idle'
+  const canGoBack = Boolean(
+    state
+      && currentCalibrationVersion === 0
+      && state.lastCalibratedAt === null
+      && state.readiness !== 'ready'
+      && !systemBusy
+      && voiceState === 'idle'
+      && (
+        question?.origin === 'basic'
+          ? basicQuestions.some(item => item.status === 'answered' && item.sequence < question.sequence)
+          : !question && basicQuestions.some(item => item.status === 'answered')
+      ),
+  )
   const showIntro = !introDismissed && addressedBasic === 0 && currentCalibrationVersion === 0 && isBasicQuestion
   const questionHelper = question
     ? question.origin === 'basic'
@@ -220,6 +241,27 @@ export default function PlayerInitialization({
     } catch {
       setFeedback(null)
       setError('Belum bisa dilewatin. Coba sekali lagi.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function goBack() {
+    if (!canGoBack) return
+    setSaving(true)
+    setError(null)
+    try {
+      const reopened = await reopenPreviousPlayerInitializationQuestion(
+        supabase,
+        question?.origin === 'basic' ? question.id : null,
+      )
+      if (!reopened) return
+      voiceRef.current?.reset()
+      setVoiceState('idle')
+      setAnswer(reopened.answerMode === 'text' ? reopened.answerText ?? '' : '')
+      await reload()
+    } catch {
+      setError('Jawaban sebelumnya belum bisa dibuka. Coba sekali lagi.')
     } finally {
       setSaving(false)
     }
@@ -332,7 +374,19 @@ export default function PlayerInitialization({
         {question && (
           <>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 }}>
-              <SystemEyebrow>SYSTEM</SystemEyebrow>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                {canGoBack && (
+                  <button
+                    type="button"
+                    onClick={() => { void goBack() }}
+                    aria-label="Kembali ke pertanyaan sebelumnya"
+                    style={{ border: 0, padding: '4px 0', background: 'transparent', color: S.muted, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, fontWeight: 700, letterSpacing: '.07em', cursor: 'pointer' }}
+                  >
+                    ← KEMBALI
+                  </button>
+                )}
+                <SystemEyebrow>SYSTEM</SystemEyebrow>
+              </div>
               <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: question.origin === 'adaptive' ? S.gold : S.muted, fontSize: 8.5, fontWeight: 700, letterSpacing: '.08em' }}>
                 {questionNumber ? `${questionNumber} / ${totalBasic}` : '•'}
               </div>
@@ -433,7 +487,12 @@ export default function PlayerInitialization({
                 {currentCalibrationVersion === 0 && (
                   <p style={{ margin: '10px auto 0', maxWidth: 430, color: S.muted2, fontSize: 11.5, lineHeight: 1.55 }}>Kalau masih ada yang kurang, gue bakal nanya. Kalau nggak, kita mulai.</p>
                 )}
-                <button type="button" onClick={() => { void calibrate() }} disabled={systemBusy} style={{ width: '100%', minHeight: 49, marginTop: 25, border: 0, borderRadius: 13, background: systemBusy ? '#252b34' : S.amber, color: systemBusy ? S.muted2 : '#17120a', fontFamily: '"IBM Plex Mono", monospace', fontSize: 9.5, fontWeight: 800, letterSpacing: '.08em', cursor: systemBusy ? 'default' : 'pointer' }}>
+                {canGoBack && (
+                  <button type="button" onClick={() => { void goBack() }} style={{ width: '100%', minHeight: 44, marginTop: 21, border: `1px solid ${S.line}`, borderRadius: 13, background: 'transparent', color: S.muted, fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, fontWeight: 700, letterSpacing: '.07em', cursor: 'pointer' }}>
+                    ← KEMBALI
+                  </button>
+                )}
+                <button type="button" onClick={() => { void calibrate() }} disabled={systemBusy} style={{ width: '100%', minHeight: 49, marginTop: canGoBack ? 10 : 25, border: 0, borderRadius: 13, background: systemBusy ? '#252b34' : S.amber, color: systemBusy ? S.muted2 : '#17120a', fontFamily: '"IBM Plex Mono", monospace', fontSize: 9.5, fontWeight: 800, letterSpacing: '.08em', cursor: systemBusy ? 'default' : 'pointer' }}>
                   {saving ? 'STARTING…' : currentCalibrationVersion === 0 ? 'LANJUT →' : 'CEK LAGI →'}
                 </button>
               </>
