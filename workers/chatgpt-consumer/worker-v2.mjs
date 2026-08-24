@@ -315,6 +315,43 @@ async function processJob(client, job) {
     activeStep = null
   }
 
+  const repairTelemetry = {
+    async onStart({ validatorCode }) {
+      try {
+        await runStepStore.start({
+          jobId: job.id,
+          workerId: WORKER_ID,
+          step: 'quest_repair',
+          inputHash: stableHash([job.user_id, job.target_date, validatorCode]),
+          schemaVersion: DAILY_QUEST_INTELLIGENCE_SCHEMA_VERSION,
+        })
+      } catch (error) {
+        console.error(`[job ${job.id}] quest-repair telemetry start failed: ${error.message}`)
+      }
+    },
+    async onComplete({ status, validatorCode, requestId, errorMessage }) {
+      try {
+        await runStepStore.complete({
+          jobId: job.id,
+          workerId: WORKER_ID,
+          step: 'quest_repair',
+          status,
+          providerId: 'chatgpt-consumer-web',
+          requestId,
+          repairAttemptCount: 1,
+          ...(status === 'failed' ? {
+            errorClass: 'repair',
+            errorCode: 'quest_repair_failed',
+            validatorCode,
+            errorMessage,
+          } : {}),
+        })
+      } catch (error) {
+        console.error(`[job ${job.id}] quest-repair telemetry completion failed: ${error.message}`)
+      }
+    },
+  }
+
   const heartbeatTimer = setInterval(() => {
     heartbeat(client, job.id).catch(error => console.error(`[heartbeat] ${error.message}`))
   }, Math.max(15_000, Math.floor(LEASE_SECONDS * 500)))
@@ -341,6 +378,7 @@ async function processJob(client, job) {
     let playerResponseModelVersion = null
     let progressionTargetId = null
     let lastBatchSignature = ''
+    let understandingStepStarted = false
 
     while (true) {
       const batch = await pendingKnowledgeBatch(client, job.user_id, cutoff)
@@ -348,6 +386,15 @@ async function processJob(client, job) {
       const signature = batch.ids.join(',')
       if (signature === lastBatchSignature) throw new Error('same knowledge batch repeated; backlog did not drain')
       lastBatchSignature = signature
+
+      if (!understandingStepStarted) {
+        await startStep(
+          'understanding',
+          stableHash([job.user_id, job.target_date, cutoff]),
+          UNDERSTANDING_DELTA_VERSION,
+        )
+        understandingStepStarted = true
+      }
 
       const delta = await deriveActivityUnderstandingDelta({
         client,
@@ -377,6 +424,9 @@ async function processJob(client, job) {
 
     const remainingKnowledge = await pendingKnowledgeCount(client, job.user_id, cutoff)
     if (remainingKnowledge > 0) throw new Error(`backlog did not drain; ${remainingKnowledge} knowledge entries remain in the activity window`)
+    if (understandingStepStarted) {
+      await finishStep()
+    }
 
     responseEventsSynced = await progressionStore.syncQuestResponseEvents(job.user_id, job.target_date)
     const currentMapBeforeLearning = await progressionStore.loadCurrentProgressionMap(job.user_id)
@@ -524,6 +574,7 @@ async function processJob(client, job) {
         contextRetriever,
         repository: dailyQuestRepository,
         progressionStore,
+        repairTelemetry,
       }, {
         playerId: job.user_id,
         date: job.target_date,
