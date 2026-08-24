@@ -18,9 +18,9 @@ import VoiceAnswerRecorder, {
   type VoiceAnswerRecorderHandle,
   type VoiceRecorderState,
 } from './voice-answer-recorder'
+import ConversationBubble, { ConversationStatus } from './conversation-bubble'
 import {
   SystemEyebrow,
-  SystemLine,
   SystemMoment,
   SystemPulse,
   WaitingCopy,
@@ -48,6 +48,18 @@ function nextQuestion(questions: PlayerInitializationQuestion[]) {
       if (left.origin === 'adaptive' && left.priority !== right.priority) return right.priority - left.priority
       return left.sequence - right.sequence
     })[0] ?? null
+}
+
+function conversationOrder(left: PlayerInitializationQuestion, right: PlayerInitializationQuestion) {
+  if (left.origin !== right.origin) return left.origin === 'basic' ? -1 : 1
+  if (left.calibrationVersion !== right.calibrationVersion) return left.calibrationVersion - right.calibrationVersion
+  return left.sequence - right.sequence
+}
+
+function visiblePlayerAnswer(question: PlayerInitializationQuestion) {
+  if (question.status === 'skipped') return 'Dilewati.'
+  if (question.answerText?.trim()) return question.answerText.trim()
+  return '🎙 Jawaban suara'
 }
 
 export default function PlayerInitialization({
@@ -121,9 +133,12 @@ export default function PlayerInitialization({
   }, [jobStatus])
 
   const question = useMemo(() => nextQuestion(questions), [questions])
-
   const basicQuestions = useMemo(
     () => questions.filter(item => item.origin === 'basic').sort((left, right) => left.sequence - right.sequence),
+    [questions],
+  )
+  const conversationHistory = useMemo(
+    () => questions.filter(item => item.status === 'answered' || item.status === 'skipped').sort(conversationOrder),
     [questions],
   )
   const totalBasic = basicQuestions.length
@@ -312,26 +327,16 @@ export default function PlayerInitialization({
     return (
       <div style={{ minHeight: '100dvh', background: S.bg, color: S.ink, display: 'grid', placeItems: 'center', fontFamily: '"IBM Plex Sans", sans-serif', padding: '24px 18px 72px' }}>
         <main style={{ width: '100%', maxWidth: 560, textAlign: 'center' }}>
-          <SystemMoment>
-            <SystemPulse size={64} />
-          </SystemMoment>
-          <SystemMoment delay={180}>
-            <div style={{ marginTop: 28 }}><SystemEyebrow>PLAYER IDENTIFIED</SystemEyebrow></div>
-          </SystemMoment>
+          <SystemMoment><SystemPulse size={64} /></SystemMoment>
+          <SystemMoment delay={180}><div style={{ marginTop: 28 }}><SystemEyebrow>PLAYER IDENTIFIED</SystemEyebrow></div></SystemMoment>
           <SystemMoment delay={310}>
-            <h1 style={{ margin: '18px auto 0', maxWidth: 520, fontFamily: '"Space Grotesk", sans-serif', fontSize: 'clamp(36px,9vw,54px)', lineHeight: 1, letterSpacing: '-.05em' }}>
-              Oke. Kita mulai dari sini.
-            </h1>
+            <h1 style={{ margin: '18px auto 0', maxWidth: 520, fontFamily: '"Space Grotesk", sans-serif', fontSize: 'clamp(36px,9vw,54px)', lineHeight: 1, letterSpacing: '-.05em' }}>Oke. Kita mulai dari sini.</h1>
           </SystemMoment>
           <SystemMoment delay={430}>
-            <p style={{ margin: '18px auto 0', maxWidth: 430, color: S.muted, fontSize: 14, lineHeight: 1.65 }}>
-              Mulai sekarang, System yang jaga arahnya. Lo tinggal jalanin langkah berikutnya.
-            </p>
+            <p style={{ margin: '18px auto 0', maxWidth: 430, color: S.muted, fontSize: 14, lineHeight: 1.65 }}>Mulai sekarang, System yang jaga arahnya. Lo tinggal jalanin langkah berikutnya.</p>
           </SystemMoment>
           <SystemMoment delay={560}>
-            <button type="button" onClick={onReady} style={{ width: '100%', minHeight: 50, marginTop: 30, border: 0, borderRadius: 13, background: S.amber, color: '#17120a', fontFamily: '"IBM Plex Mono", monospace', fontSize: 9.5, fontWeight: 800, letterSpacing: '.08em', cursor: 'pointer' }}>
-              MASUK →
-            </button>
+            <button type="button" onClick={onReady} style={{ width: '100%', minHeight: 50, marginTop: 30, border: 0, borderRadius: 13, background: S.amber, color: '#17120a', fontFamily: '"IBM Plex Mono", monospace', fontSize: 9.5, fontWeight: 800, letterSpacing: '.08em', cursor: 'pointer' }}>MASUK →</button>
           </SystemMoment>
         </main>
       </div>
@@ -342,26 +347,16 @@ export default function PlayerInitialization({
     return (
       <div style={{ minHeight: '100dvh', background: S.bg, color: S.ink, display: 'grid', placeItems: 'center', fontFamily: '"IBM Plex Sans", sans-serif', padding: '24px 18px 72px' }}>
         <main style={{ width: '100%', maxWidth: 560, textAlign: 'center' }}>
-          <SystemMoment>
-            <SystemPulse size={62} />
-          </SystemMoment>
-          <SystemMoment delay={160}>
-            <div style={{ marginTop: 26 }}><SystemEyebrow>SYSTEM ONLINE</SystemEyebrow></div>
-          </SystemMoment>
+          <SystemMoment><SystemPulse size={62} /></SystemMoment>
+          <SystemMoment delay={160}><div style={{ marginTop: 26 }}><SystemEyebrow>SYSTEM ONLINE</SystemEyebrow></div></SystemMoment>
           <SystemMoment delay={300}>
-            <h1 style={{ margin: '18px auto 0', maxWidth: 520, fontFamily: '"Space Grotesk", sans-serif', fontSize: 'clamp(38px,10vw,58px)', lineHeight: .98, letterSpacing: '-.05em' }}>
-              Semua progression punya titik awal.<br />Ini punya lo.
-            </h1>
+            <h1 style={{ margin: '18px auto 0', maxWidth: 520, fontFamily: '"Space Grotesk", sans-serif', fontSize: 'clamp(38px,10vw,58px)', lineHeight: .98, letterSpacing: '-.05em' }}>Semua progression punya titik awal.<br />Ini punya lo.</h1>
           </SystemMoment>
           <SystemMoment delay={430}>
-            <p style={{ margin: '18px auto 0', maxWidth: 430, color: S.muted, fontSize: 14, lineHeight: 1.65 }}>
-              Nggak perlu punya semua jawaban. Ceritain hidup lo apa adanya.
-            </p>
+            <p style={{ margin: '18px auto 0', maxWidth: 430, color: S.muted, fontSize: 14, lineHeight: 1.65 }}>Nggak perlu punya semua jawaban. Ceritain hidup lo apa adanya.</p>
           </SystemMoment>
           <SystemMoment delay={560}>
-            <button type="button" onClick={() => setIntroDismissed(true)} style={{ width: '100%', minHeight: 50, marginTop: 30, border: 0, borderRadius: 13, background: S.amber, color: '#17120a', fontFamily: '"IBM Plex Mono", monospace', fontSize: 9.5, fontWeight: 800, letterSpacing: '.08em', cursor: 'pointer' }}>
-              MULAI →
-            </button>
+            <button type="button" onClick={() => setIntroDismissed(true)} style={{ width: '100%', minHeight: 50, marginTop: 30, border: 0, borderRadius: 13, background: S.amber, color: '#17120a', fontFamily: '"IBM Plex Mono", monospace', fontSize: 9.5, fontWeight: 800, letterSpacing: '.08em', cursor: 'pointer' }}>MULAI →</button>
           </SystemMoment>
         </main>
       </div>
@@ -369,145 +364,100 @@ export default function PlayerInitialization({
   }
 
   return (
-    <div style={{ minHeight: '100dvh', background: S.bg, color: S.ink, fontFamily: '"IBM Plex Sans", sans-serif', padding: '0 18px 72px' }}>
-      <main style={{ width: '100%', maxWidth: 620, margin: '0 auto', paddingTop: 34 }}>
-        {question && (
-          <>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                {canGoBack && (
-                  <button
-                    type="button"
-                    onClick={() => { void goBack() }}
-                    aria-label="Kembali ke pertanyaan sebelumnya"
-                    style={{ border: 0, padding: '4px 0', background: 'transparent', color: S.muted, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, fontWeight: 700, letterSpacing: '.07em', cursor: 'pointer' }}
-                  >
-                    ← KEMBALI
-                  </button>
-                )}
-                <SystemEyebrow>SYSTEM</SystemEyebrow>
-              </div>
-              <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: question.origin === 'adaptive' ? S.gold : S.muted, fontSize: 8.5, fontWeight: 700, letterSpacing: '.08em' }}>
-                {questionNumber ? `${questionNumber} / ${totalBasic}` : '•'}
-              </div>
+    <div style={{ minHeight: '100dvh', background: S.bg, color: S.ink, fontFamily: '"IBM Plex Sans", sans-serif', padding: '0 18px 76px' }}>
+      <main style={{ width: '100%', maxWidth: 680, margin: '0 auto', paddingTop: 28 }}>
+        <header style={{ position: 'sticky', top: 0, zIndex: 3, background: 'linear-gradient(180deg,#0c0f14 78%,rgba(12,15,20,0))', padding: '5px 0 19px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              {canGoBack && (
+                <button type="button" onClick={() => { void goBack() }} aria-label="Kembali ke pertanyaan sebelumnya" style={{ border: 0, padding: '4px 0', background: 'transparent', color: S.muted, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, fontWeight: 700, letterSpacing: '.07em', cursor: 'pointer' }}>← KEMBALI</button>
+              )}
+              <SystemEyebrow>CALIBRATION</SystemEyebrow>
             </div>
-            <div style={{ height: 4, marginTop: 11, borderRadius: 99, overflow: 'hidden', background: '#1b212a' }}>
-              <div style={{ width: `${question.origin === 'adaptive' ? 100 : progress}%`, height: '100%', borderRadius: 99, background: S.amber, boxShadow: '0 0 15px rgba(246,178,75,.3)', transition: 'width 280ms ease' }} />
+            <div style={{ fontFamily: '"IBM Plex Mono", monospace', color: question?.origin === 'adaptive' ? S.gold : S.muted, fontSize: 8.5, fontWeight: 700, letterSpacing: '.08em' }}>
+              {questionNumber ? `${questionNumber} / ${totalBasic}` : question?.origin === 'adaptive' ? 'FOLLOW-UP' : `${Math.min(addressedBasic, totalBasic)} / ${totalBasic}`}
             </div>
-          </>
-        )}
+          </div>
+          <div style={{ height: 3, marginTop: 11, borderRadius: 99, overflow: 'hidden', background: '#1b212a' }}>
+            <div style={{ width: `${question?.origin === 'adaptive' ? 100 : progress}%`, height: '100%', borderRadius: 99, background: S.amber, boxShadow: '0 0 15px rgba(246,178,75,.3)', transition: 'width 280ms ease' }} />
+          </div>
+        </header>
 
-        {question ? (
-          <section style={{ marginTop: 'clamp(46px,9vh,82px)' }}>
-            {feedback ? (
-              <div aria-live="polite" style={{ minHeight: 280, display: 'grid', placeItems: 'center', textAlign: 'center' }}>
-                <div>
-                  <div style={{ width: 48, height: 48, margin: '0 auto', display: 'grid', placeItems: 'center', border: `1px solid ${S.line}`, borderRadius: 16, color: S.amber, background: S.panel, fontSize: 20 }}>✓</div>
-                  <div style={{ marginTop: 15, color: S.ink, fontFamily: '"Space Grotesk", sans-serif', fontSize: 23, fontWeight: 700 }}>{feedback.replace('✓ ', '')}</div>
-                </div>
-              </div>
-            ) : (
-              <>
-                {adaptiveLead && (
-                  <p style={{ margin: '0 0 12px', color: S.amber, fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, fontWeight: 700, letterSpacing: '.08em' }}>
-                    {adaptiveLead}
-                  </p>
-                )}
-                <h1 style={{ margin: 0, maxWidth: 590, fontFamily: '"Space Grotesk", sans-serif', fontSize: 'clamp(30px,7.4vw,44px)', fontWeight: 700, lineHeight: 1.08, letterSpacing: '-.04em' }}>
-                  {question.prompt}
-                </h1>
-                {questionHelper && (
-                  <p style={{ margin: '12px 0 0', maxWidth: 520, color: S.muted, fontSize: 12.5, lineHeight: 1.55 }}>
-                    {questionHelper}
-                  </p>
-                )}
+        <section data-conversation-thread="onboarding" style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 10 }}>
+          {conversationHistory.map(item => (
+            <div key={item.id} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <ConversationBubble actor="system" compact>{item.prompt}</ConversationBubble>
+              <ConversationBubble actor="player" compact>{visiblePlayerAnswer(item)}</ConversationBubble>
+            </div>
+          ))}
 
-                <div style={{ position: 'relative', minHeight: 132, marginTop: 26, border: `1px solid ${voiceState === 'recording' ? '#4a3a23' : S.line}`, borderRadius: 16, background: S.panel2, overflow: 'hidden', transition: 'border-color 180ms ease, box-shadow 180ms ease', boxShadow: voiceState === 'recording' ? '0 0 0 1px rgba(246,178,75,.08), 0 16px 42px rgba(0,0,0,.16)' : 'none' }}>
-                  {voiceState === 'idle' && (
-                    <textarea
-                      value={answer}
-                      onChange={event => setAnswer(event.target.value)}
-                      disabled={systemBusy}
-                      placeholder="Ceritain di sini…"
-                      rows={5}
-                      maxLength={5000}
-                      autoFocus
-                      style={{ width: '100%', minHeight: 132, boxSizing: 'border-box', resize: 'none', border: 0, background: 'transparent', color: S.ink, padding: '15px 58px 15px 15px', outline: 'none', fontFamily: '"IBM Plex Sans", sans-serif', fontSize: 14, lineHeight: 1.6 }}
-                    />
+          {question ? (
+            <>
+              <ConversationBubble actor="system">
+                {adaptiveLead && <div style={{ marginBottom: 6, color: S.amber, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, fontWeight: 700, letterSpacing: '.07em' }}>{adaptiveLead}</div>}
+                <div style={{ fontFamily: '"Space Grotesk", sans-serif', fontSize: 'clamp(18px,4vw,23px)', fontWeight: 680, lineHeight: 1.35, letterSpacing: '-.02em' }}>{question.prompt}</div>
+                {questionHelper && <div style={{ marginTop: 8, color: S.muted, fontSize: 11.8, lineHeight: 1.55 }}>{questionHelper}</div>}
+              </ConversationBubble>
+
+              {feedback ? (
+                <ConversationStatus>{feedback.replace('✓ ', '')}</ConversationStatus>
+              ) : (
+                <section data-player-answer-composer style={{ width: 'min(94%, 590px)', alignSelf: 'flex-end' }}>
+                  <div style={{ position: 'relative', minHeight: 116, border: `1px solid ${voiceState === 'recording' ? '#4a3a23' : S.line}`, borderRadius: '17px 17px 6px 17px', background: S.panel2, overflow: 'hidden', transition: 'border-color 180ms ease, box-shadow 180ms ease', boxShadow: voiceState === 'recording' ? '0 0 0 1px rgba(246,178,75,.08), 0 16px 42px rgba(0,0,0,.16)' : 'none' }}>
+                    {voiceState === 'idle' && (
+                      <textarea
+                        value={answer}
+                        onChange={event => setAnswer(event.target.value)}
+                        disabled={systemBusy}
+                        placeholder="Balas System…"
+                        rows={4}
+                        maxLength={5000}
+                        autoFocus
+                        style={{ width: '100%', minHeight: 116, boxSizing: 'border-box', resize: 'none', border: 0, background: 'transparent', color: S.ink, padding: '14px 58px 14px 14px', outline: 'none', fontFamily: '"IBM Plex Sans", sans-serif', fontSize: 14, lineHeight: 1.6 }}
+                      />
+                    )}
+                    <VoiceAnswerRecorder key={question.id} ref={voiceRef} playerId={playerId} questionId={question.id} disabled={systemBusy} textPresent={hasTextAnswer} onStateChange={setVoiceState} />
+                  </div>
+
+                  {!voiceBusy && (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 9 }}>
+                      <button type="button" onClick={() => { void skip() }} disabled={!canSkip} style={{ border: 0, padding: '6px 2px', background: 'transparent', color: canSkip ? S.muted : S.muted2, fontFamily: '"IBM Plex Sans", sans-serif', fontSize: 11.5, cursor: canSkip ? 'pointer' : 'default' }}>Lewati</button>
+                      <button type="button" onClick={() => { void submit() }} disabled={!canContinue} style={{ minHeight: 40, border: 0, borderRadius: 11, background: canContinue ? S.amber : '#252b34', color: canContinue ? '#17120a' : S.muted2, padding: '0 16px', fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.8, fontWeight: 800, letterSpacing: '.08em', cursor: canContinue ? 'pointer' : 'default' }}>{saving ? 'SAVING…' : 'KIRIM →'}</button>
+                    </div>
                   )}
-                  <VoiceAnswerRecorder
-                    key={question.id}
-                    ref={voiceRef}
-                    playerId={playerId}
-                    questionId={question.id}
-                    disabled={systemBusy}
-                    textPresent={hasTextAnswer}
-                    onStateChange={setVoiceState}
-                  />
-                </div>
-
-                {!voiceBusy && (
-                  <button type="button" onClick={() => { void submit() }} disabled={!canContinue} style={{ width: '100%', minHeight: 49, marginTop: 14, border: 0, borderRadius: 13, background: canContinue ? S.amber : '#252b34', color: canContinue ? '#17120a' : S.muted2, fontFamily: '"IBM Plex Mono", monospace', fontSize: 9.5, fontWeight: 800, letterSpacing: '.08em', cursor: canContinue ? 'pointer' : 'default', transition: 'background 160ms ease, color 160ms ease, transform 160ms ease' }}>
-                    {saving ? 'SAVING…' : 'LANJUT →'}
-                  </button>
-                )}
-                {voiceState === 'idle' && (
-                  <button type="button" onClick={() => { void skip() }} disabled={!canSkip} style={{ display: 'block', margin: '13px auto 0', border: 0, padding: '4px 8px', background: 'transparent', color: canSkip ? S.muted : S.muted2, fontFamily: '"IBM Plex Sans", sans-serif', fontSize: 11.5, cursor: canSkip ? 'pointer' : 'default' }}>
-                    Lewati
-                  </button>
-                )}
-              </>
-            )}
-          </section>
-        ) : state.readiness !== 'ready' ? (
-          <section style={{ marginTop: 'clamp(58px,11vh,104px)', textAlign: 'center' }}>
-            {jobStatus === 'queued' || jobStatus === 'running' ? (
-              <>
-                <SystemPulse size={54} />
-                <h1 style={{ margin: '19px auto 0', maxWidth: 500, fontFamily: '"Space Grotesk", sans-serif', fontSize: 'clamp(31px,7vw,43px)', lineHeight: 1.05, letterSpacing: '-.04em' }}>Oke. Sebentar.</h1>
-                <p style={{ margin: '11px auto 0', maxWidth: 430, color: S.ink, fontSize: 13.5, lineHeight: 1.6 }}>Gue lagi nyambungin semua yang lo ceritain.</p>
-                <div style={{ width: '100%', maxWidth: 420, margin: '26px auto 0' }}><SystemLine /></div>
-                <p aria-live="polite" style={{ margin: '13px auto 0', minHeight: 20, fontSize: 12.5, lineHeight: 1.55 }}><WaitingCopy elapsedSeconds={waitingSeconds} /></p>
-                <p style={{ margin: '22px auto 0', maxWidth: 420, color: S.muted2, fontSize: 11.5, lineHeight: 1.55 }}>Kalau masih ada yang kurang, gue bakal nanya. Kalau nggak, kita mulai.</p>
-              </>
-            ) : answeredThisCycle > 0 ? (
-              <>
-                {currentCalibrationVersion === 0 && (
-                  <div style={{ width: 50, height: 50, margin: '0 auto', display: 'grid', placeItems: 'center', border: `1px solid ${S.line}`, borderRadius: 16, color: S.amber, background: S.panel, fontSize: 20 }}>✓</div>
-                )}
-                <div style={{ marginTop: currentCalibrationVersion === 0 ? 17 : 0 }}><SystemEyebrow>{currentCalibrationVersion === 0 ? `${totalBasic} / ${totalBasic}` : 'SYSTEM'}</SystemEyebrow></div>
-                <h1 style={{ margin: '17px auto 0', maxWidth: 500, fontFamily: '"Space Grotesk", sans-serif', fontSize: 'clamp(31px,7vw,43px)', lineHeight: 1.05, letterSpacing: '-.04em' }}>
-                  {currentCalibrationVersion === 0 ? 'Oke. Sebentar.' : 'Got it. Gue cek lagi.'}
-                </h1>
-                <p style={{ margin: '11px auto 0', maxWidth: 430, color: S.muted, fontSize: 12.5, lineHeight: 1.6 }}>
-                  {currentCalibrationVersion === 0
-                    ? 'Gue bakal nyambungin semua yang lo ceritain.'
-                    : 'Kalau udah cukup, kita mulai. Kalau belum, gue tanya seperlunya.'}
-                </p>
-                {currentCalibrationVersion === 0 && (
-                  <p style={{ margin: '10px auto 0', maxWidth: 430, color: S.muted2, fontSize: 11.5, lineHeight: 1.55 }}>Kalau masih ada yang kurang, gue bakal nanya. Kalau nggak, kita mulai.</p>
-                )}
-                {canGoBack && (
-                  <button type="button" onClick={() => { void goBack() }} style={{ width: '100%', minHeight: 44, marginTop: 21, border: `1px solid ${S.line}`, borderRadius: 13, background: 'transparent', color: S.muted, fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, fontWeight: 700, letterSpacing: '.07em', cursor: 'pointer' }}>
-                    ← KEMBALI
-                  </button>
-                )}
-                <button type="button" onClick={() => { void calibrate() }} disabled={systemBusy} style={{ width: '100%', minHeight: 49, marginTop: canGoBack ? 10 : 25, border: 0, borderRadius: 13, background: systemBusy ? '#252b34' : S.amber, color: systemBusy ? S.muted2 : '#17120a', fontFamily: '"IBM Plex Mono", monospace', fontSize: 9.5, fontWeight: 800, letterSpacing: '.08em', cursor: systemBusy ? 'default' : 'pointer' }}>
-                  {saving ? 'STARTING…' : currentCalibrationVersion === 0 ? 'LANJUT →' : 'CEK LAGI →'}
-                </button>
-              </>
-            ) : skippedThisCycle > 0 ? (
-              <>
-                <SystemEyebrow>SYSTEM</SystemEyebrow>
-                <h1 style={{ margin: '18px auto 0', maxWidth: 500, fontFamily: '"Space Grotesk", sans-serif', fontSize: 'clamp(30px,7vw,42px)', lineHeight: 1.05, letterSpacing: '-.04em' }}>Masih ada satu bagian yang kosong.</h1>
-                <p style={{ margin: '11px auto 0', maxWidth: 420, color: S.muted, fontSize: 12.5, lineHeight: 1.55 }}>Balik sebentar. Cukup jawab yang lo bisa.</p>
-                <button type="button" onClick={() => { void reviewSkipped() }} disabled={systemBusy} style={{ width: '100%', minHeight: 49, marginTop: 25, border: 0, borderRadius: 13, background: systemBusy ? '#252b34' : S.amber, color: systemBusy ? S.muted2 : '#17120a', fontFamily: '"IBM Plex Mono", monospace', fontSize: 9.5, fontWeight: 800, letterSpacing: '.08em', cursor: systemBusy ? 'default' : 'pointer' }}>
-                  BALIK KE PERTANYAAN →
-                </button>
-              </>
-            ) : null}
-          </section>
-        ) : null}
+                </section>
+              )}
+            </>
+          ) : state.readiness !== 'ready' ? (
+            <>
+              {jobStatus === 'queued' || jobStatus === 'running' ? (
+                <>
+                  <ConversationBubble actor="system">
+                    <div style={{ fontFamily: '"Space Grotesk", sans-serif', fontSize: 19, fontWeight: 680 }}>Oke. Sebentar.</div>
+                    <div style={{ marginTop: 7, color: S.muted, fontSize: 12.5 }}>Gue lagi nyambungin semua yang lo ceritain.</div>
+                  </ConversationBubble>
+                  <ConversationStatus><WaitingCopy elapsedSeconds={waitingSeconds} /></ConversationStatus>
+                </>
+              ) : answeredThisCycle > 0 ? (
+                <>
+                  <ConversationBubble actor="system">
+                    <div style={{ fontFamily: '"Space Grotesk", sans-serif', fontSize: 19, fontWeight: 680 }}>{currentCalibrationVersion === 0 ? 'Oke. Gue sambungin dulu semuanya.' : 'Got it. Gue cek lagi.'}</div>
+                    <div style={{ marginTop: 7, color: S.muted, fontSize: 12.2 }}>{currentCalibrationVersion === 0 ? 'Kalau masih ada yang kurang, gue bakal nanya. Kalau nggak, kita mulai.' : 'Kalau udah cukup, kita mulai. Kalau belum, gue tanya seperlunya.'}</div>
+                  </ConversationBubble>
+                  <div style={{ width: 'min(94%, 590px)', alignSelf: 'flex-end', display: 'flex', gap: 9, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                    {canGoBack && <button type="button" onClick={() => { void goBack() }} style={{ minHeight: 40, border: `1px solid ${S.line}`, borderRadius: 11, background: 'transparent', color: S.muted, padding: '0 14px', fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, fontWeight: 700, letterSpacing: '.07em', cursor: 'pointer' }}>← KEMBALI</button>}
+                    <button type="button" onClick={() => { void calibrate() }} disabled={systemBusy} style={{ minHeight: 40, border: 0, borderRadius: 11, background: systemBusy ? '#252b34' : S.amber, color: systemBusy ? S.muted2 : '#17120a', padding: '0 16px', fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.8, fontWeight: 800, letterSpacing: '.08em', cursor: systemBusy ? 'default' : 'pointer' }}>{saving ? 'STARTING…' : currentCalibrationVersion === 0 ? 'LANJUT →' : 'CEK LAGI →'}</button>
+                  </div>
+                </>
+              ) : skippedThisCycle > 0 ? (
+                <>
+                  <ConversationBubble actor="system">Masih ada satu bagian yang kosong. Balik sebentar; cukup jawab yang lo bisa.</ConversationBubble>
+                  <div style={{ alignSelf: 'flex-end' }}><button type="button" onClick={() => { void reviewSkipped() }} disabled={systemBusy} style={{ minHeight: 40, border: 0, borderRadius: 11, background: systemBusy ? '#252b34' : S.amber, color: systemBusy ? S.muted2 : '#17120a', padding: '0 16px', fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.8, fontWeight: 800, letterSpacing: '.08em', cursor: systemBusy ? 'default' : 'pointer' }}>BALIK KE PERTANYAAN →</button></div>
+                </>
+              ) : null}
+            </>
+          ) : null}
+        </section>
 
         {error && <div role="alert" style={{ marginTop: 18, padding: '11px 12px', border: '1px solid #482631', borderRadius: 12, background: '#171116', color: S.red, fontSize: 11.5, lineHeight: 1.5 }}>{error}</div>}
       </main>
