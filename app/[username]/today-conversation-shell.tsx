@@ -88,7 +88,12 @@ export default function TodayConversationShell({
   }, [reload, snapshot?.session?.state])
 
   const session = snapshot?.session ?? null
-  const copy = session ? STATE_COPY[session.state] : null
+  const workerStep = typeof session?.metadata.workerStep === 'string' ? session.metadata.workerStep : ''
+  const copy = session
+    ? workerStep === 'quest_generation' || workerStep === 'quest_repair'
+      ? { eyebrow: 'SYSTEM · PREPARING QUEST', title: 'Next move udah kepilih. Gue lagi bikin quest-nya jelas dan executable.' }
+      : STATE_COPY[session.state]
+    : null
   const waitingForDailyContext = session?.state === 'waiting' && session.metadata.reason === 'daily_context'
   const hideTodayBody = Boolean(session && stateNeedsFocus(session.state))
 
