@@ -79,6 +79,8 @@ export default function PlayerInitialization({
     const next = await loadPlayerInitialization(supabase, playerId)
     setState(next.state)
     setQuestions(next.questions)
+    const current = nextQuestion(next.questions)
+    setAnswer(current?.answerText ?? '')
 
     if (next.state.readiness === 'ready') {
       if (participatedRef.current) setIdentified(true)
@@ -119,10 +121,6 @@ export default function PlayerInitialization({
   }, [jobStatus])
 
   const question = useMemo(() => nextQuestion(questions), [questions])
-
-  useEffect(() => {
-    setAnswer(question?.answerText ?? '')
-  }, [question?.id, question?.answerText])
 
   const basicQuestions = useMemo(
     () => questions.filter(item => item.origin === 'basic').sort((left, right) => left.sequence - right.sequence),
