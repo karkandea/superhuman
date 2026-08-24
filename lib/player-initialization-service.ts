@@ -31,7 +31,9 @@ export interface PlayerInitializationQuestion {
   sequence: number
   calibrationVersion: number
   status: InitializationQuestionStatus
+  answerMode: 'text' | 'audio'
   answerText: string | null
+  transcriptText: string | null
   answeredAt: string | null
 }
 
@@ -69,13 +71,15 @@ function mapQuestion(row: Record<string, unknown>): PlayerInitializationQuestion
     sequence: Number(row.sequence ?? 0),
     calibrationVersion: Number(row.calibration_version ?? 0),
     status: row.status as InitializationQuestionStatus,
+    answerMode: row.answer_mode === 'audio' ? 'audio' : 'text',
     answerText: row.answer_text ? String(row.answer_text) : null,
+    transcriptText: row.transcript_text ? String(row.transcript_text) : null,
     answeredAt: row.answered_at ? String(row.answered_at) : null,
   }
 }
 
 const STATE_COLUMNS = 'user_id,stage,readiness,readiness_dimensions,readiness_reason,calibration_version,last_calibrated_at,ready_at,updated_at'
-const QUESTION_COLUMNS = 'id,origin,question_key,dimension,prompt,reason,priority,sequence,calibration_version,status,answer_text,answered_at'
+const QUESTION_COLUMNS = 'id,origin,question_key,dimension,prompt,reason,priority,sequence,calibration_version,status,answer_mode,answer_text,transcript_text,answered_at'
 
 export async function ensurePlayerInitialization(client: SupabaseClient): Promise<PlayerInitializationState> {
   const { data, error } = await client.rpc('ensure_player_initialization')
