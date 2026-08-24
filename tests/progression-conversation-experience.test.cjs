@@ -22,6 +22,17 @@ test('progression episodes are private readable history with narrow write RPCs',
   assert.match(sql, /grant execute on function public\.ensure_progression_session_operator\(uuid,date,uuid\) to service_role/)
 })
 
+test('progression answer migrations keep CASE bounded inside BETWEEN grammar', () => {
+  for (const file of [
+    'supabase/sql/add_progression_conversation_experience.sql',
+    'supabase/sql/harden_progression_conversation_experience.sql',
+  ]) {
+    const sql = source(file)
+    assert.doesNotMatch(sql, /not between 1 and case when/)
+    assert.match(sql, /not between 1 and \(case when/)
+  }
+})
+
 test('progression move is a bounded decision gate instead of an always-quest agent', () => {
   const runtime = source('lib/ai/progression-conversation-intelligence.ts')
   const contract = source('lib/progression-conversation.ts')
