@@ -1,4 +1,6 @@
-import type { ReactNode } from 'react'
+'use client'
+
+import { useMemo, useState, type ReactNode } from 'react'
 
 const S = {
   panel: '#13171f',
@@ -16,16 +18,26 @@ export default function ConversationBubble({
   children,
   meta,
   compact = false,
+  collapsible = 'auto',
+  collapseThreshold = 360,
 }: {
   actor: 'system' | 'player'
   children: ReactNode
   meta?: ReactNode
   compact?: boolean
+  collapsible?: boolean | 'auto'
+  collapseThreshold?: number
 }) {
   const system = actor === 'system'
+  const [expanded, setExpanded] = useState(false)
+  const plainText = useMemo(() => typeof children === 'string' ? children.trim() : '', [children])
+  const canCollapse = collapsible === true || (collapsible === 'auto' && plainText.length > collapseThreshold)
+  const collapsed = canCollapse && !expanded
+
   return (
     <div
       data-conversation-bubble={actor}
+      data-collapsible={canCollapse ? 'true' : 'false'}
       style={{
         width: 'fit-content',
         maxWidth: system ? '88%' : '82%',
@@ -50,7 +62,7 @@ export default function ConversationBubble({
         }}
       >
         {system && <span aria-hidden="true" style={{ width: 5, height: 5, borderRadius: 99, background: S.amber, boxShadow: '0 0 9px rgba(246,178,75,.45)' }} />}
-        <span>{system ? 'SYSTEM' : 'PLAYER'}</span>
+        <span>{system ? 'SUPERHUMAN' : 'PLAYER'}</span>
         {meta ? <span style={{ color: S.muted2, fontWeight: 600 }}>{meta}</span> : null}
       </div>
       <div
@@ -62,11 +74,57 @@ export default function ConversationBubble({
           padding: compact ? '9px 11px' : '11px 13px',
           fontSize: compact ? 12.5 : 13,
           lineHeight: 1.58,
-          whiteSpace: 'pre-wrap',
           boxShadow: system ? '0 9px 30px rgba(0,0,0,.12), inset 0 1px 0 rgba(255,255,255,.015)' : 'none',
         }}
       >
-        {children}
+        <div style={{ position: 'relative' }}>
+          <div
+            style={{
+              whiteSpace: 'pre-wrap',
+              maxHeight: collapsed ? (compact ? 88 : 112) : 'none',
+              overflow: collapsed ? 'hidden' : 'visible',
+            }}
+          >
+            {children}
+          </div>
+          {collapsed ? (
+            <div
+              aria-hidden="true"
+              style={{
+                position: 'absolute',
+                left: 0,
+                right: 0,
+                bottom: 0,
+                height: 38,
+                pointerEvents: 'none',
+                background: `linear-gradient(180deg, transparent, ${system ? S.panel : S.panel2})`,
+              }}
+            />
+          ) : null}
+        </div>
+
+        {canCollapse ? (
+          <button
+            type="button"
+            onClick={() => setExpanded(value => !value)}
+            aria-expanded={expanded}
+            style={{
+              display: 'block',
+              margin: '7px 0 -1px',
+              border: 0,
+              padding: '3px 0',
+              background: 'transparent',
+              color: system ? S.gold : S.muted,
+              fontFamily: '"IBM Plex Mono", monospace',
+              fontSize: 8.2,
+              fontWeight: 700,
+              letterSpacing: '.04em',
+              cursor: 'pointer',
+            }}
+          >
+            {expanded ? 'Ringkas ↑' : 'Lihat selengkapnya ↓'}
+          </button>
+        ) : null}
       </div>
     </div>
   )
