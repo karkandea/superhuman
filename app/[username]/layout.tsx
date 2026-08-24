@@ -5,6 +5,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { useParams, usePathname, useRouter } from 'next/navigation'
 import FirstQuestReveal from './first-quest-reveal'
 import PlayerInitialization from './player-initialization'
+import TodayConversationShell from './today-conversation-shell'
 import UpdateSystemComposer from './update-system-composer'
 import { ensurePlayerInitialization } from '@/lib/player-initialization-service'
 import { supabase } from '@/lib/supabase'
@@ -129,9 +130,15 @@ export default function PlayerRouteLayout({ children }: { children: ReactNode })
     { href: progressionPath, label: 'Progression', active: pathname.startsWith(progressionPath) },
   ]
 
+  const routedContent = pathname === todayPath ? (
+    <TodayConversationShell playerId={player.id} username={player.name}>
+      {children}
+    </TodayConversationShell>
+  ) : children
+
   return (
     <div style={{ minHeight: '100dvh', background: S.bg }}>
-      <div style={{ paddingBottom: showComposer ? 164 : 76 }}>{children}</div>
+      <div style={{ paddingBottom: showComposer ? 164 : 76 }}>{routedContent}</div>
 
       <FirstQuestReveal playerId={player.id} active={pathname === todayPath} />
 
