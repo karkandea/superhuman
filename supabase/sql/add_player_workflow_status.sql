@@ -226,6 +226,7 @@ begin
 
   v_eta_operation := case
     when found and v_step.step='quest_repair' then 'quest_repair'
+    when found and v_step.step='understanding' then 'understanding'
     when v_phase='preparing_quests' then 'quest_generation'
     when found and v_step.step='progression_target' then 'progression_target'
     else null
