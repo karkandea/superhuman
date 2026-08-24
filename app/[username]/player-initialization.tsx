@@ -8,7 +8,6 @@ import {
   loadPlayerInitialization,
   reopenPreviousPlayerInitializationQuestion,
   requestPlayerInitializationCalibration,
-  resetSkippedPlayerInitializationQuestions,
   skipPlayerInitializationQuestion,
   type PlayerInitializationQuestion,
   type PlayerInitializationState,
@@ -19,12 +18,11 @@ import VoiceAnswerRecorder, {
   type VoiceRecorderState,
 } from './voice-answer-recorder'
 import ConversationBubble, { ConversationStatus } from './conversation-bubble'
-import ConversationHeader from './conversation-header'
+import ConversationHeader, { AgentTypingIndicator } from './conversation-header'
 import {
   SystemEyebrow,
   SystemMoment,
   SystemPulse,
-  WaitingCopy,
 } from './system-moment'
 
 const S = {
@@ -80,7 +78,6 @@ export default function PlayerInitialization({
   const [saving, setSaving] = useState(false)
   const [introDismissed, setIntroDismissed] = useState(false)
   const [identified, setIdentified] = useState(false)
-  const [waitingSeconds, setWaitingSeconds] = useState(0)
   const [voiceState, setVoiceState] = useState<VoiceRecorderState>('idle')
   const [feedback, setFeedback] = useState<string | null>(null)
   const [jobStatus, setJobStatus] = useState<AiInferenceJobStatus | 'idle'>('idle')
@@ -89,6 +86,7 @@ export default function PlayerInitialization({
   const voiceRef = useRef<VoiceAnswerRecorderHandle | null>(null)
   const participatedRef = useRef(false)
   const threadEndRef = useRef<HTMLDivElement | null>(null)
+  const autoCalibrationRef = useRef(false)
 
   const reload = useCallback(async () => {
     await ensurePlayerInitialization(supabase)
@@ -125,17 +123,6 @@ export default function PlayerInitialization({
     }
   }, [reload])
 
-  useEffect(() => {
-    if (jobStatus !== 'queued' && jobStatus !== 'running') return
-
-    const startedAt = Date.now()
-    const timer = window.setInterval(() => {
-      setWaitingSeconds(Math.floor((Date.now() - startedAt) / 1000))
-    }, 1000)
-
-    return () => window.clearInterval(timer)
-  }, [jobStatus])
-
   const question = useMemo(() => nextQuestion(questions), [questions])
   const basicQuestions = useMemo(
     () => questions.filter(item => item.origin === 'basic').sort((left, right) => left.sequence - right.sequence),
@@ -167,11 +154,8 @@ export default function PlayerInitialization({
       && state.readiness !== 'ready'
       && !systemBusy
       && voiceState === 'idle'
-      && (
-        question?.origin === 'basic'
-          ? basicQuestions.some(item => item.status === 'answered' && item.sequence < question.sequence)
-          : !question && basicQuestions.some(item => item.status === 'answered')
-      ),
+      && question?.origin === 'basic'
+      && basicQuestions.some(item => item.status === 'answered' && item.sequence < question.sequence),
   )
   const showIntro = !introDismissed && addressedBasic === 0 && currentCalibrationVersion === 0 && isBasicQuestion
   const questionHelper = question
@@ -182,9 +166,18 @@ export default function PlayerInitialization({
   const adaptiveLead = question?.origin === 'adaptive'
     ? adaptiveAddressedThisCycle > 0 ? 'Oke. Satu lagi.' : 'Masih ada satu yang belum kebaca.'
     : null
+  const processing = jobStatus === 'queued' || jobStatus === 'running'
+  const pendingAutomaticCalibration = Boolean(
+    state
+      && state.readiness !== 'ready'
+      && !question
+      && (answeredThisCycle > 0 || skippedThisCycle > 0)
+      && jobStatus === 'idle',
+  )
+  const agentActive = processing || pendingAutomaticCalibration
   const headerStatus = question?.origin === 'adaptive'
     ? 'FOLLOW-UP · CALIBRATION'
-    : jobStatus === 'queued' || jobStatus === 'running'
+    : agentActive
       ? 'UNDERSTANDING'
       : 'CALIBRATION'
   const headerProgress = question?.origin === 'adaptive' ? 100 : progress
@@ -199,7 +192,7 @@ export default function PlayerInitialization({
       threadEndRef.current?.scrollIntoView({ block: 'end' })
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [conversationHistory.length, feedback, question?.id])
+  }, [conversationHistory.length, feedback, question?.id, processing])
 
   const watchJob = useCallback(async (jobId: string) => {
     if (watchedJobRef.current === jobId) return
@@ -230,21 +223,50 @@ export default function PlayerInitialization({
     }
   }, [reload])
 
+  const calibrate = useCallback(async () => {
+    setSaving(true)
+    setError(null)
+    try {
+      const job = await requestPlayerInitializationCalibration(supabase)
+      setJobStatus(job.status)
+      if (job.status === 'succeeded') await reload()
+      else if (job.status !== 'failed' && job.status !== 'blocked_auth') void watchJob(job.id)
+      else setError('Belum bisa lanjut sekarang. Jawaban lo aman; coba lagi.')
+    } catch {
+      setJobStatus('failed')
+      setError('Belum bisa lanjut sekarang. Jawaban lo aman; coba lagi.')
+    } finally {
+      setSaving(false)
+    }
+  }, [reload, watchJob])
+
+  useEffect(() => {
+    if (!pendingAutomaticCalibration || saving || voiceState !== 'idle' || autoCalibrationRef.current) return
+    autoCalibrationRef.current = true
+    const timer = window.setTimeout(() => {
+      void calibrate().finally(() => {
+        autoCalibrationRef.current = false
+      })
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [calibrate, pendingAutomaticCalibration, saving, voiceState])
+
   async function acknowledge(message: string) {
     setFeedback(message)
-    await sleep(420)
+    await sleep(320)
   }
 
   async function submit() {
     if (!question || !canContinue) return
     setError(null)
-    const message = question.origin === 'adaptive' ? '✓ Got it. Gue cek lagi.' : '✓ Got it.'
+    const message = question.origin === 'adaptive' ? '✓ Got it.' : '✓ Got it.'
 
     if (hasVoiceDraft) {
       const saved = await voiceRef.current?.save()
       if (!saved) return
       await acknowledge(message)
       setAnswer('')
+      setJobStatus('idle')
       await reload()
       setFeedback(null)
       return
@@ -255,6 +277,7 @@ export default function PlayerInitialization({
       await answerPlayerInitializationQuestion(supabase, question.id, answer)
       await acknowledge(message)
       setAnswer('')
+      setJobStatus('idle')
       await reload()
       setFeedback(null)
     } catch {
@@ -273,6 +296,7 @@ export default function PlayerInitialization({
       await skipPlayerInitializationQuestion(supabase, question.id)
       await acknowledge('✓ Lewat.')
       setAnswer('')
+      setJobStatus('idle')
       await reload()
       setFeedback(null)
     } catch {
@@ -299,39 +323,6 @@ export default function PlayerInitialization({
       await reload()
     } catch {
       setError('Jawaban sebelumnya belum bisa dibuka. Coba sekali lagi.')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  async function calibrate() {
-    if (systemBusy || voiceState !== 'idle') return
-    setWaitingSeconds(0)
-    setSaving(true)
-    setError(null)
-    try {
-      const job = await requestPlayerInitializationCalibration(supabase)
-      setJobStatus(job.status)
-      if (job.status === 'succeeded') await reload()
-      else if (job.status !== 'failed' && job.status !== 'blocked_auth') void watchJob(job.id)
-      else setError('Belum bisa lanjut sekarang. Jawaban lo aman; coba lagi.')
-    } catch {
-      setJobStatus('failed')
-      setError('Belum bisa lanjut sekarang. Jawaban lo aman; coba lagi.')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  async function reviewSkipped() {
-    if (systemBusy || voiceState !== 'idle') return
-    setSaving(true)
-    setError(null)
-    try {
-      await resetSkippedPlayerInitializationQuestions(supabase)
-      await reload()
-    } catch {
-      setError('Pertanyaannya belum bisa dibuka lagi. Coba sekali lagi.')
     } finally {
       setSaving(false)
     }
@@ -394,6 +385,7 @@ export default function PlayerInitialization({
           onBack={canGoBack ? () => { void goBack() } : null}
           progress={headerProgress}
           progressLabel={headerProgressLabel}
+          agentActive={agentActive}
         />
 
         <section
@@ -402,48 +394,33 @@ export default function PlayerInitialization({
         >
           {conversationHistory.map(item => (
             <div key={item.id} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <ConversationBubble actor="system" compact>{item.prompt}</ConversationBubble>
-              <ConversationBubble actor="player" compact>{visiblePlayerAnswer(item)}</ConversationBubble>
+              <ConversationBubble actor="system" compact playerName={playerName}>{item.prompt}</ConversationBubble>
+              <ConversationBubble actor="player" compact playerName={playerName}>{visiblePlayerAnswer(item)}</ConversationBubble>
             </div>
           ))}
 
           {question ? (
             <>
-              <ConversationBubble actor="system" collapsible={false}>
+              <ConversationBubble actor="system" collapsible={false} playerName={playerName}>
                 {adaptiveLead && <div style={{ marginBottom: 6, color: S.amber, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, fontWeight: 700, letterSpacing: '.07em' }}>{adaptiveLead}</div>}
                 <div style={{ fontFamily: '"Space Grotesk", sans-serif', fontSize: 'clamp(18px,4vw,23px)', fontWeight: 680, lineHeight: 1.35, letterSpacing: '-.02em' }}>{question.prompt}</div>
                 {questionHelper && <div style={{ marginTop: 8, color: S.muted, fontSize: 12.5, lineHeight: 1.55 }}>{questionHelper}</div>}
               </ConversationBubble>
               {feedback ? <ConversationStatus>{feedback.replace('✓ ', '')}</ConversationStatus> : null}
             </>
-          ) : state.readiness !== 'ready' ? (
-            <>
-              {jobStatus === 'queued' || jobStatus === 'running' ? (
-                <>
-                  <ConversationBubble actor="system" collapsible={false}>
-                    <div style={{ fontFamily: '"Space Grotesk", sans-serif', fontSize: 19, fontWeight: 680 }}>Oke. Sebentar.</div>
-                    <div style={{ marginTop: 7, color: S.muted, fontSize: 12.5 }}>Gue lagi nyambungin semua yang lo ceritain.</div>
-                  </ConversationBubble>
-                  <ConversationStatus><WaitingCopy elapsedSeconds={waitingSeconds} /></ConversationStatus>
-                </>
-              ) : answeredThisCycle > 0 ? (
-                <>
-                  <ConversationBubble actor="system" collapsible={false}>
-                    <div style={{ fontFamily: '"Space Grotesk", sans-serif', fontSize: 19, fontWeight: 680 }}>{currentCalibrationVersion === 0 ? 'Oke. Gue sambungin dulu semuanya.' : 'Got it. Gue cek lagi.'}</div>
-                    <div style={{ marginTop: 7, color: S.muted, fontSize: 12.2 }}>{currentCalibrationVersion === 0 ? 'Kalau masih ada yang kurang, gue bakal nanya. Kalau nggak, kita mulai.' : 'Kalau udah cukup, kita mulai. Kalau belum, gue tanya seperlunya.'}</div>
-                  </ConversationBubble>
-                  <div style={{ width: 'min(94%, 590px)', alignSelf: 'flex-end', display: 'flex', gap: 9, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                    {canGoBack && <button type="button" onClick={() => { void goBack() }} style={{ minHeight: 40, border: `1px solid ${S.line}`, borderRadius: 11, background: 'transparent', color: S.muted, padding: '0 14px', fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, fontWeight: 700, letterSpacing: '.07em', cursor: 'pointer' }}>← KEMBALI</button>}
-                    <button type="button" onClick={() => { void calibrate() }} disabled={systemBusy} style={{ minHeight: 40, border: 0, borderRadius: 11, background: systemBusy ? '#252b34' : S.amber, color: systemBusy ? S.muted2 : '#17120a', padding: '0 16px', fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.8, fontWeight: 800, letterSpacing: '.08em', cursor: systemBusy ? 'default' : 'pointer' }}>{saving ? 'STARTING…' : currentCalibrationVersion === 0 ? 'LANJUT →' : 'CEK LAGI →'}</button>
-                  </div>
-                </>
-              ) : skippedThisCycle > 0 ? (
-                <>
-                  <ConversationBubble actor="system" collapsible={false}>Masih ada satu bagian yang kosong. Balik sebentar; cukup jawab yang lo bisa.</ConversationBubble>
-                  <div style={{ alignSelf: 'flex-end' }}><button type="button" onClick={() => { void reviewSkipped() }} disabled={systemBusy} style={{ minHeight: 40, border: 0, borderRadius: 11, background: systemBusy ? '#252b34' : S.amber, color: systemBusy ? S.muted2 : '#17120a', padding: '0 16px', fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.8, fontWeight: 800, letterSpacing: '.08em', cursor: systemBusy ? 'default' : 'pointer' }}>BALIK KE PERTANYAAN →</button></div>
-                </>
-              ) : null}
-            </>
+          ) : state.readiness !== 'ready' && (agentActive || saving) ? (
+            <ConversationBubble actor="system" collapsible={false} playerName={playerName} systemActive>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <AgentTypingIndicator label="Superhuman lagi menyusun konteks" />
+                <span style={{ color: S.gold, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.2, fontWeight: 700, letterSpacing: '.05em' }}>MENYUSUN KONTEKS</span>
+              </div>
+              <div style={{ marginTop: 10, fontFamily: '"Space Grotesk", sans-serif', fontSize: 18, fontWeight: 680, lineHeight: 1.4 }}>
+                Gue lagi nyusun semua yang lo ceritain biar nyambung.
+              </div>
+              <div style={{ marginTop: 8, color: S.muted, fontSize: 12.5, lineHeight: 1.6 }}>
+                Mungkin agak lebih lama dari biasanya, tapi tenang aja jawaban lo tetap kesimpan.
+              </div>
+            </ConversationBubble>
           ) : null}
 
           {!question && error && <div role="alert" style={{ padding: '11px 12px', border: '1px solid #482631', borderRadius: 12, background: '#171116', color: S.red, fontSize: 11.5, lineHeight: 1.5 }}>{error}</div>}
@@ -464,7 +441,7 @@ export default function PlayerInitialization({
                     value={answer}
                     onChange={event => setAnswer(event.target.value)}
                     disabled={systemBusy}
-                    placeholder="Balas System…"
+                    placeholder="Balas Superhuman…"
                     rows={2}
                     maxLength={5000}
                     autoFocus
