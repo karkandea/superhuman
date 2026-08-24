@@ -12,28 +12,78 @@ const S = {
   gold: '#ffd488',
 } as const
 
-function SystemAvatar({ size = 38 }: { size?: number }) {
+function SystemAvatar({ size = 38, active = false }: { size?: number; active?: boolean }) {
   return (
     <div
+      data-superhuman-orb
+      data-active={active ? 'true' : 'false'}
       aria-hidden="true"
       style={{
         width: size,
         height: size,
         flex: `0 0 ${size}px`,
+        position: 'relative',
         display: 'grid',
         placeItems: 'center',
         borderRadius: 999,
-        border: '1px solid rgba(246,178,75,.5)',
-        background: 'radial-gradient(circle at 35% 30%, rgba(255,212,136,.22), rgba(246,178,75,.08) 42%, #11161e 72%)',
-        boxShadow: '0 0 0 3px rgba(246,178,75,.04), 0 8px 24px rgba(0,0,0,.26)',
-        color: S.gold,
-        fontFamily: '"Space Grotesk", sans-serif',
-        fontSize: Math.round(size * .38),
-        fontWeight: 700,
-        letterSpacing: '-.06em',
+        overflow: 'hidden',
+        border: `1px solid ${active ? 'rgba(255,212,136,.72)' : 'rgba(246,178,75,.48)'}`,
+        background: '#10141b',
+        boxShadow: active
+          ? '0 0 0 3px rgba(246,178,75,.07), 0 0 24px rgba(246,178,75,.28), 0 8px 24px rgba(0,0,0,.3)'
+          : '0 0 0 3px rgba(246,178,75,.035), 0 8px 24px rgba(0,0,0,.26)',
+        transition: 'border-color 220ms ease, box-shadow 220ms ease',
       }}
     >
-      S
+      <style jsx>{`
+        @keyframes superhumanOrbDrift {
+          0% { transform: translate3d(-7%, -4%, 0) rotate(0deg) scale(1.02); }
+          45% { transform: translate3d(7%, 5%, 0) rotate(155deg) scale(1.12); }
+          100% { transform: translate3d(-7%, -4%, 0) rotate(360deg) scale(1.02); }
+        }
+        @keyframes superhumanOrbBreathe {
+          0%, 100% { transform: scale(.88); opacity: .48; }
+          50% { transform: scale(1.12); opacity: .88; }
+        }
+        @keyframes superhumanOrbActive {
+          0%, 100% { transform: scale(.94); opacity: .68; }
+          50% { transform: scale(1.2); opacity: 1; }
+        }
+        .orb-field {
+          position: absolute;
+          inset: -34%;
+          border-radius: 42%;
+          background:
+            radial-gradient(circle at 30% 28%, rgba(255,239,193,.95), transparent 18%),
+            radial-gradient(circle at 67% 39%, rgba(246,178,75,.92), transparent 30%),
+            radial-gradient(circle at 48% 76%, rgba(165,86,24,.72), transparent 35%),
+            conic-gradient(from 20deg, rgba(246,178,75,.08), rgba(255,212,136,.74), rgba(94,44,18,.32), rgba(246,178,75,.08));
+          filter: blur(${Math.max(2, Math.round(size * .07))}px) saturate(1.12);
+          animation: superhumanOrbDrift ${active ? '2.4s' : '6.8s'} linear infinite;
+        }
+        .orb-core {
+          position: absolute;
+          width: 52%;
+          height: 52%;
+          border-radius: 999px;
+          background: radial-gradient(circle at 38% 30%, rgba(255,247,221,.98), rgba(255,201,108,.82) 28%, rgba(128,57,18,.28) 67%, transparent 72%);
+          filter: blur(.4px);
+          animation: ${active ? 'superhumanOrbActive 1.05s' : 'superhumanOrbBreathe 3.6s'} ease-in-out infinite;
+        }
+        .orb-glass {
+          position: absolute;
+          inset: 0;
+          border-radius: inherit;
+          background: radial-gradient(circle at 31% 24%, rgba(255,255,255,.22), transparent 29%), linear-gradient(145deg, rgba(255,255,255,.035), rgba(0,0,0,.18));
+          box-shadow: inset 0 0 ${Math.round(size * .32)}px rgba(255,212,136,.15);
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .orb-field, .orb-core { animation: none !important; }
+        }
+      `}</style>
+      <span className="orb-field" />
+      <span className="orb-core" />
+      <span className="orb-glass" />
     </div>
   )
 }
@@ -62,6 +112,40 @@ function PlayerAvatar({ size = 30 }: { size?: number }) {
   )
 }
 
+function AgentTypingIndicator({ label = 'Superhuman lagi mikir' }: { label?: string }) {
+  return (
+    <div
+      data-agent-typing
+      role="status"
+      aria-label={label}
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, minHeight: 18 }}
+    >
+      <style jsx>{`
+        @keyframes superhumanTypingWave {
+          0%, 60%, 100% { transform: translateY(0); opacity: .42; }
+          30% { transform: translateY(-4px); opacity: 1; }
+        }
+        .typing-dot {
+          width: 6px;
+          height: 6px;
+          border-radius: 999px;
+          background: #ffd488;
+          box-shadow: 0 0 8px rgba(246,178,75,.25);
+          animation: superhumanTypingWave 1.05s ease-in-out infinite;
+        }
+        .typing-dot:nth-child(2) { animation-delay: .14s; }
+        .typing-dot:nth-child(3) { animation-delay: .28s; }
+        @media (prefers-reduced-motion: reduce) {
+          .typing-dot { animation: none !important; opacity: .72; }
+        }
+      `}</style>
+      <span className="typing-dot" />
+      <span className="typing-dot" />
+      <span className="typing-dot" />
+    </div>
+  )
+}
+
 export default function ConversationHeader({
   playerName,
   statusLabel,
@@ -69,6 +153,7 @@ export default function ConversationHeader({
   action,
   progress,
   progressLabel,
+  agentActive = false,
 }: {
   playerName: string
   statusLabel?: string
@@ -76,6 +161,7 @@ export default function ConversationHeader({
   action?: ReactNode
   progress?: number
   progressLabel?: string
+  agentActive?: boolean
 }) {
   const boundedProgress = typeof progress === 'number' ? Math.min(100, Math.max(0, progress)) : null
 
@@ -115,14 +201,15 @@ export default function ConversationHeader({
           </button>
         ) : null}
 
-        <SystemAvatar />
+        <SystemAvatar active={agentActive} />
 
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ color: S.ink, fontFamily: '"Space Grotesk", sans-serif', fontSize: 15.5, fontWeight: 700, lineHeight: 1.15, letterSpacing: '-.02em' }}>
             Superhuman
           </div>
-          <div style={{ marginTop: 3, color: S.amber, fontFamily: '"IBM Plex Mono", monospace', fontSize: 7.8, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {statusLabel ?? 'AI PROGRESSION AGENT'}
+          <div style={{ marginTop: 3, display: 'flex', alignItems: 'center', gap: 6, color: S.amber, fontFamily: '"IBM Plex Mono", monospace', fontSize: 7.8, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            <span>{statusLabel ?? 'AI PROGRESSION AGENT'}</span>
+            {agentActive ? <AgentTypingIndicator label="Superhuman sedang memproses" /> : null}
           </div>
         </div>
 
@@ -152,4 +239,4 @@ export default function ConversationHeader({
   )
 }
 
-export { PlayerAvatar, SystemAvatar }
+export { AgentTypingIndicator, PlayerAvatar, SystemAvatar }
