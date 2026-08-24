@@ -128,7 +128,9 @@ export function validateProgressionMoveDecision(
     throw new Error('Progression move has invalid nextAction')
   }
   const nextAction = row.nextAction as ProgressionNextAction
-  if (input.requireResearch && nextAction !== 'research') throw new Error('Initial progression decision requires external research before action')
+  if (input.requireResearch && ['quest', 'decide', 'wait'].includes(nextAction)) {
+    throw new Error('Initial progression decision requires external research before action')
+  }
   if (!input.canQuest && nextAction === 'quest') throw new Error('Progression move cannot produce a quest before Daily Context exists')
   if (nextAction === 'research' && input.researchBudgetRemaining < 1) throw new Error('Progression research budget is exhausted for this session')
 
