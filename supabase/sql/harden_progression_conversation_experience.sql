@@ -38,7 +38,7 @@ begin
   if v_question.response_type in ('free_text','short_text') then
     if jsonb_typeof(p_answer)<>'string' then raise exception 'text answer required'; end if;
     v_text := btrim(p_answer #>> '{}');
-    if char_length(v_text) not between 1 and case when v_question.response_type='short_text' then 800 else 5000 end then
+    if char_length(v_text) not between 1 and (case when v_question.response_type='short_text' then 800 else 5000 end) then
       raise exception 'answer length invalid';
     end if;
   elsif v_question.response_type='single_choice' then
