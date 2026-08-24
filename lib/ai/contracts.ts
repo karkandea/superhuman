@@ -10,6 +10,8 @@ export type AiOperation =
   | 'review_quest_responses'
   | 'derive_player_response_model'
   | 'choose_progression_target'
+  | 'choose_progression_move'
+  | 'research_progression_context'
   | 'generate_daily_quests'
   | 'repair_daily_quest_output'
   | 'assess_materiality'
@@ -23,11 +25,18 @@ export interface QuestOutputRepairContext extends ProgressionIntelligenceContext
   }
 }
 
+export interface ProgressionConversationModelContext {
+  playerId: string
+  date: string
+  [key: string]: unknown
+}
+
 export type AiRequestContext =
   | RetrievedPlayerContext
   | MaterialityContext
   | ProgressionIntelligenceContext
   | QuestOutputRepairContext
+  | ProgressionConversationModelContext
   | (RetrievedPlayerContext & { initialization: unknown })
 
 export interface StructuredModelAttachment {
