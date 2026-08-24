@@ -35,6 +35,12 @@ export interface PlayerInitializationQuestion {
   answeredAt: string | null
 }
 
+export interface ReopenedInitializationAnswer {
+  questionId: string
+  answerMode: 'text' | 'audio'
+  answerText: string | null
+}
+
 function mapState(row: Record<string, unknown>): PlayerInitializationState {
   return {
     userId: String(row.user_id),
@@ -123,6 +129,25 @@ export async function skipPlayerInitializationQuestion(
     p_skip: true,
   })
   if (error) throw new Error(`skip Player Initialization question: ${error.message}`)
+}
+
+export async function reopenPreviousPlayerInitializationQuestion(
+  client: SupabaseClient,
+  currentQuestionId: string | null = null,
+): Promise<ReopenedInitializationAnswer | null> {
+  const { data, error } = await client.rpc('reopen_previous_player_initialization_question', {
+    p_current_question_id: currentQuestionId,
+  })
+  if (error) throw new Error(`reopen Player Initialization question: ${error.message}`)
+  if (!data || typeof data !== 'object') return null
+
+  const row = data as Record<string, unknown>
+  if (!row.questionId) return null
+  return {
+    questionId: String(row.questionId),
+    answerMode: row.answerMode === 'audio' ? 'audio' : 'text',
+    answerText: row.answerText ? String(row.answerText) : null,
+  }
 }
 
 export async function resetSkippedPlayerInitializationQuestions(client: SupabaseClient): Promise<number> {
