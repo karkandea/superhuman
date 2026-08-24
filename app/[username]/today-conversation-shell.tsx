@@ -219,7 +219,7 @@ export default function TodayConversationShell({
                 ))}
 
                 {snapshot?.question && (
-                  <QuestionComposer question={snapshot.question} playerName={username} onAnswered={reload} />
+                  <QuestionComposer key={snapshot.question.id} question={snapshot.question} playerName={username} onAnswered={reload} />
                 )}
 
                 {systemWorking && copy && (
@@ -278,13 +278,6 @@ function QuestionComposer({
     speechRef.current?.abort()
     speechRef.current = null
   }, [])
-
-  useEffect(() => {
-    speechRef.current?.abort()
-    speechRef.current = null
-    setListening(false)
-    setSpeechError(null)
-  }, [question.id])
 
   const answer = useMemo(() => {
     if (question.responseType === 'single_choice') return single
