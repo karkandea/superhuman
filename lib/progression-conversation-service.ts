@@ -78,7 +78,7 @@ function mapSession(value: unknown): ProgressionConversationSession | null {
     title: string(item.title),
     kind: item.kind as ProgressionSessionKind,
     state: item.state as ProgressionSessionState,
-    status: (item.status as 'active' | 'closed') || 'active',
+    status: item.status === 'closed' ? 'closed' : 'active',
     ...(string(item.targetDate) ? { targetDate: string(item.targetDate) } : {}),
     metadata: row(item.metadata),
     openedAt: string(item.openedAt),
@@ -88,6 +88,29 @@ function mapSession(value: unknown): ProgressionConversationSession | null {
 
 function mapSnapshot(value: unknown): ProgressionConversationSnapshot {
   const data = row(value)
+  const initialAnswers: ProgressionInitializationAnswer[] = (Array.isArray(data.initialAnswers) ? data.initialAnswers : []).map(raw => {
+    const item = row(raw)
+    return {
+      id: string(item.id),
+      prompt: string(item.prompt),
+      answer: string(item.answer),
+      origin: item.origin === 'adaptive' ? 'adaptive' : 'basic',
+      ...(string(item.answeredAt) ? { answeredAt: string(item.answeredAt) } : {}),
+    }
+  }).filter(item => item.answer)
+  const recentSessions: ProgressionSessionSummary[] = (Array.isArray(data.recentSessions) ? data.recentSessions : []).map(raw => {
+    const item = row(raw)
+    return {
+      id: string(item.id),
+      title: string(item.title),
+      kind: item.kind as ProgressionSessionKind,
+      state: item.state as ProgressionSessionState,
+      status: item.status === 'closed' ? 'closed' : 'active',
+      openedAt: string(item.openedAt),
+      ...(string(item.closedAt) ? { closedAt: string(item.closedAt) } : {}),
+    }
+  }).filter(item => item.id)
+
   return {
     session: mapSession(data.session),
     messages: (Array.isArray(data.messages) ? data.messages : []).map(raw => {
@@ -112,28 +135,8 @@ function mapSnapshot(value: unknown): ProgressionConversationSnapshot {
         createdAt: string(item.createdAt),
       }
     })() : null,
-    initialAnswers: (Array.isArray(data.initialAnswers) ? data.initialAnswers : []).map(raw => {
-      const item = row(raw)
-      return {
-        id: string(item.id),
-        prompt: string(item.prompt),
-        answer: string(item.answer),
-        origin: item.origin === 'adaptive' ? 'adaptive' : 'basic',
-        ...(string(item.answeredAt) ? { answeredAt: string(item.answeredAt) } : {}),
-      }
-    }).filter(item => item.answer),
-    recentSessions: (Array.isArray(data.recentSessions) ? data.recentSessions : []).map(raw => {
-      const item = row(raw)
-      return {
-        id: string(item.id),
-        title: string(item.title),
-        kind: item.kind as ProgressionSessionKind,
-        state: item.state as ProgressionSessionState,
-        status: item.status === 'closed' ? 'closed' : 'active',
-        openedAt: string(item.openedAt),
-        ...(string(item.closedAt) ? { closedAt: string(item.closedAt) } : {}),
-      }
-    }).filter(item => item.id),
+    initialAnswers,
+    recentSessions,
   }
 }
 
