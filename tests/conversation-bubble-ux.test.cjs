@@ -32,8 +32,8 @@ test('onboarding keeps cinematic system moments but questions run as one convers
   assert.match(onboarding, /<ConversationBubble actor="player"/)
   assert.match(onboarding, /data-player-answer-composer/)
   assert.match(onboarding, /data-sticky-chat-composer/)
-  assert.match(onboarding, /placeholder="Balas System…"/)
-  assert.match(onboarding, /← KEMBALI/)
+  assert.match(onboarding, /placeholder="Balas Superhuman…"/)
+  assert.match(onboarding, /onBack=\{canGoBack \? \(\) => \{ void goBack\(\) \} : null\}/)
 })
 
 test('material clarification on Home is presented as a system bubble plus sticky player reply composer', () => {
