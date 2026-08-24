@@ -133,8 +133,7 @@ export default function PlayerRouteLayout({ children }: { children: ReactNode })
   ]
 
   const routedContent = pathname === todayPath ? (
-    <TodayConversationShell
-      playerId={player.id}
+    <TodayConversationShell playerId={player.id}
       username={player.name}
       onConversationInputModeChange={setTodayConversationNeedsInput}
     >
