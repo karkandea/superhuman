@@ -52,6 +52,9 @@ test('basic onboarding can go back and replace prior evidence before calibration
   assert.match(page, /reopenPreviousPlayerInitializationQuestion/)
   assert.match(page, /currentCalibrationVersion === 0/)
   assert.match(page, /state\.lastCalibratedAt === null/)
+  assert.match(page, /const current = nextQuestion\(next\.questions\)/)
+  assert.match(page, /setAnswer\(current\?\.answerText \?\? ''\)/)
+  assert.doesNotMatch(page, /useEffect\(\(\) => \{\s*setAnswer\(question\?\.answerText/)
   assert.match(service, /reopen_previous_player_initialization_question/)
 
   assert.match(sql, /origin='basic'/)
@@ -59,6 +62,7 @@ test('basic onboarding can go back and replace prior evidence before calibration
   assert.match(sql, /sequence < v_before_sequence/)
   assert.match(sql, /processing_status='ignored'/)
   assert.match(sql, /status='pending'/)
+  assert.match(sql, /answer_text=case when v_previous_mode='text' then v_previous_answer else null end/)
   assert.match(sql, /calibration_version<>0/)
   assert.match(sql, /revoke all on function public\.reopen_previous_player_initialization_question\(uuid\) from public,anon/)
   assert.match(sql, /grant execute on function public\.reopen_previous_player_initialization_question\(uuid\) to authenticated/)
