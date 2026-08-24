@@ -13,7 +13,6 @@ test('worker-facing TypeScript wrappers expose runtime names explicitly across p
   const orchestrator = source('lib/ai/orchestrator.ts')
 
   for (const name of [
-    'chooseProgressionTarget',
     'loadQuestGenerationIntelligence',
     'refreshPlayerResponseModel',
     'reviewQuestResponses',
@@ -24,6 +23,12 @@ test('worker-facing TypeScript wrappers expose runtime names explicitly across p
       `${name} must be an explicit runtime re-export; export * is not safe through the root CommonJS package boundary`,
     )
   }
+
+  assert.match(
+    progression,
+    /export \{ chooseProgressionTarget \} from '\.\/progression-conversation-intelligence'/,
+    'chooseProgressionTarget must explicitly route through the bounded conversation decision gate',
+  )
   assert.match(progression, /export \{ refreshProgressionMap \} from '\.\/player-initialization-progression'/)
 
   for (const name of [

@@ -253,6 +253,63 @@ async function activateTemporaryChat(page, deadline) {
   await throwIfProviderRateLimited(page)
 }
 
+async function activateWebSearch(page, deadline) {
+  const alreadySelected = await firstVisible(page, [
+    '[data-testid*="search"][aria-pressed="true"]',
+    'button[aria-label*="Search"][aria-pressed="true"]',
+    '[role="button"][aria-label*="Search"][aria-pressed="true"]',
+  ])
+  if (alreadySelected) return
+
+  const toolsButton = await firstVisible(page, [
+    'button[data-testid="composer-plus-btn"]',
+    'button[aria-label*="View all tools"]',
+    'button[aria-label*="Tools"]',
+    'button[aria-label^="Add"]',
+  ])
+  if (toolsButton) {
+    await toolsButton.click({ timeout: timeoutUntil(deadline) }).catch(() => {})
+    await sleep(150)
+    const searchItem = await firstVisible(page, [
+      '[role="menuitem"]:has-text("Search")',
+      '[role="option"]:has-text("Search")',
+      'button:has-text("Search")',
+      '[role="menuitem"]:has-text("Web search")',
+      'button:has-text("Web search")',
+    ])
+    if (searchItem) {
+      await searchItem.click({ timeout: timeoutUntil(deadline) })
+      await sleep(200)
+      await throwIfProviderRateLimited(page)
+      return
+    }
+  }
+
+  // Official ChatGPT Search also exposes a slash-command picker. Use one
+  // deterministic compatibility path if the tools menu markup changes.
+  const composer = await waitForComposer(page, deadline)
+  try {
+    await composer.fill('/', { timeout: timeoutUntil(deadline) })
+  } catch {
+    throw new WorkerError('web_search_unavailable', 'ChatGPT Search could not be activated from the composer', true)
+  }
+  await sleep(200)
+  const slashSearch = await firstVisible(page, [
+    '[role="option"]:has-text("Search")',
+    '[role="menuitem"]:has-text("Search")',
+    'button:has-text("Search")',
+    '[role="option"]:has-text("Find on the web")',
+    '[role="menuitem"]:has-text("Find on the web")',
+  ])
+  if (!slashSearch) {
+    await composer.fill('').catch(() => {})
+    throw new WorkerError('web_search_unavailable', 'ChatGPT Search is not available for this browser session', true)
+  }
+  await slashSearch.click({ timeout: timeoutUntil(deadline) })
+  await sleep(200)
+  await throwIfProviderRateLimited(page)
+}
+
 async function openFreshChat(page, deadline, temporaryChat) {
   await page.goto(CHATGPT_URL, {
     waitUntil: 'domcontentloaded',
@@ -326,7 +383,7 @@ async function chatGptContext() {
 }
 
 export class PlaywrightChatGptTransport {
-  async execute({ prompt, correlationId, timeoutMs, attachments = [], conversationRef, temporaryChat = true }) {
+  async execute({ prompt, correlationId, timeoutMs, attachments = [], conversationRef, temporaryChat = true, webSearch = false }) {
     const materialized = await materializeAttachments(attachments)
     const context = await chatGptContext()
     const page = await context.newPage()
@@ -343,6 +400,7 @@ export class PlaywrightChatGptTransport {
         await openFreshChat(page, deadline, temporaryChat)
       }
 
+      if (webSearch) await activateWebSearch(page, deadline)
       const composer = await waitForComposer(page, deadline)
       const assistantMessages = page.locator('[data-message-author-role="assistant"]')
       const previousCount = await assistantMessages.count()
@@ -381,7 +439,7 @@ export class PlaywrightChatGptTransport {
       return {
         text,
         conversationRef: match?.[1],
-        modelLabel: 'chatgpt-consumer-auto',
+        modelLabel: webSearch ? 'chatgpt-consumer-search' : 'chatgpt-consumer-auto',
       }
     } catch (error) {
       if (error instanceof WorkerError && correlationId) {
@@ -418,5 +476,5 @@ export async function loginMode() {
 }
 
 export function browserRuntimeSummary() {
-  return `ChatGPT profile: ${PROFILE_DIR}; cdp=${CDP_URL}; headless=${HEADLESS}; freshChats=temporary-ui`
+  return `ChatGPT profile: ${PROFILE_DIR}; cdp=${CDP_URL}; headless=${HEADLESS}; freshChats=temporary-ui; research=search-ui`
 }
