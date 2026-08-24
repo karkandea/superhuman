@@ -84,14 +84,17 @@ test('final onboarding or adaptive answer automatically starts calibration witho
   assert.match(onboarding, /Mungkin agak lebih lama dari biasanya, tapi tenang aja jawaban lo tetap kesimpan\./)
 })
 
-test('Home uses one sticky answer composer when System needs clarification', () => {
+test('Home uses one mobile-safe answer composer when System needs clarification', () => {
   const home = source('app/[username]/today-conversation-shell.tsx')
   const layout = source('app/[username]/layout.tsx')
 
   assert.match(home, /onConversationInputModeChange/)
   assert.match(home, /data-sticky-chat-composer/)
-  assert.match(home, /bottom: 'calc\(62px \+ env\(safe-area-inset-bottom\)\)'/)
   assert.match(home, /placeholder="Balas Superhuman…"/)
+  assert.match(home, /fontSize: 16/)
+  assert.match(home, /aria-label=\{listening \? 'Stop voice input' : 'Jawab dengan suara'\}/)
+  assert.match(home, /minHeight: 44/)
+  assert.doesNotMatch(home, /bottom: 'calc\(62px \+ env\(safe-area-inset-bottom\)\)'/)
   assert.match(layout, /todayConversationNeedsInput/)
   assert.match(layout, /showUpdateComposer = showComposer && !\(pathname === todayPath && todayConversationNeedsInput\)/)
   assert.match(layout, /onConversationInputModeChange=\{setTodayConversationNeedsInput\}/)
