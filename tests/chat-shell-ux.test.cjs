@@ -19,7 +19,18 @@ test('long plain-text chat bubbles are collapsed by default and explicitly expan
   assert.match(bubble, /aria-expanded=\{expanded\}/)
 })
 
-test('active chat surfaces identify Superhuman and the player with a sticky participant header', () => {
+test('every chat bubble carries the correct participant avatar and player identity', () => {
+  const bubble = source('app/[username]/conversation-bubble.tsx')
+  const history = source('app/[username]/history/sessions/[sessionId]/page.tsx')
+
+  assert.match(bubble, /<SystemAvatar size=\{compact \? 24 : 28\}/)
+  assert.match(bubble, /<PlayerAvatar size=\{compact \? 24 : 28\}/)
+  assert.match(bubble, /playerName = 'Player'/)
+  assert.match(bubble, /system \? 'SUPERHUMAN' : playerName/)
+  assert.match(history, /playerName=\{username\}/)
+})
+
+test('active chat surfaces identify Superhuman and the player with a sticky animated participant header', () => {
   const header = source('app/[username]/conversation-header.tsx')
   const onboarding = source('app/[username]/player-initialization.tsx')
   const home = source('app/[username]/today-conversation-shell.tsx')
@@ -28,11 +39,25 @@ test('active chat surfaces identify Superhuman and the player with a sticky part
   assert.match(header, /position: 'sticky'/)
   assert.match(header, />\s*Superhuman\s*</)
   assert.match(header, /data-player-identity/)
-  assert.match(header, /AI PROGRESSION AGENT/)
-  assert.match(onboarding, /<ConversationHeader/)
-  assert.match(onboarding, /playerName=\{playerName\}/)
-  assert.match(home, /<ConversationHeader/)
-  assert.match(home, /playerName=\{username\}/)
+  assert.match(header, /data-superhuman-orb/)
+  assert.match(header, /superhumanOrbDrift/)
+  assert.match(header, /superhumanOrbActive/)
+  assert.match(header, /prefers-reduced-motion/)
+  assert.match(onboarding, /agentActive=\{agentActive\}/)
+  assert.match(home, /agentActive=\{systemWorking\}/)
+})
+
+test('agent working state uses a three-dot waving typing indicator', () => {
+  const header = source('app/[username]/conversation-header.tsx')
+  const onboarding = source('app/[username]/player-initialization.tsx')
+  const home = source('app/[username]/today-conversation-shell.tsx')
+
+  assert.match(header, /data-agent-typing/)
+  assert.match(header, /superhumanTypingWave/)
+  assert.match(header, /typing-dot:nth-child\(2\)/)
+  assert.match(header, /typing-dot:nth-child\(3\)/)
+  assert.match(onboarding, /<AgentTypingIndicator/)
+  assert.match(home, /<AgentTypingIndicator/)
 })
 
 test('onboarding keeps the thread scrollable while the active reply composer stays anchored', () => {
@@ -43,7 +68,20 @@ test('onboarding keeps the thread scrollable while the active reply composer sta
   assert.match(onboarding, /data-sticky-chat-composer/)
   assert.match(onboarding, /data-player-answer-composer/)
   assert.match(onboarding, /threadEndRef\.current\?\.scrollIntoView/)
-  assert.match(onboarding, /placeholder="Balas System…"/)
+  assert.match(onboarding, /placeholder="Balas Superhuman…"/)
+})
+
+test('final onboarding or adaptive answer automatically starts calibration without a second CTA', () => {
+  const onboarding = source('app/[username]/player-initialization.tsx')
+
+  assert.match(onboarding, /pendingAutomaticCalibration/)
+  assert.match(onboarding, /autoCalibrationRef/)
+  assert.match(onboarding, /void calibrate\(\)\.finally/)
+  assert.match(onboarding, /requestPlayerInitializationCalibration/)
+  assert.doesNotMatch(onboarding, /CEK LAGI →/)
+  assert.doesNotMatch(onboarding, /LANJUT →/)
+  assert.match(onboarding, /Gue lagi nyusun semua yang lo ceritain biar nyambung\./)
+  assert.match(onboarding, /Mungkin agak lebih lama dari biasanya, tapi tenang aja jawaban lo tetap kesimpan\./)
 })
 
 test('Home uses one sticky answer composer when System needs clarification', () => {
