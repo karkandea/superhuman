@@ -8,18 +8,21 @@ function source(relativePath) {
   return fs.readFileSync(path.join(process.cwd(), relativePath), 'utf8')
 }
 
-test('onboarding audio fills prompt before multi-file attachment processing', () => {
+test('onboarding audio fills and verifies prompt before multi-file attachment processing', () => {
   const transport = source('workers/chatgpt-consumer/browser-transport.mjs')
   const executeStart = transport.indexOf('export class PlaywrightChatGptTransport')
   const executeSource = transport.slice(executeStart)
-  const fillIndex = executeSource.indexOf('await composer.fill(prompt')
+  const verifiedFillIndex = executeSource.indexOf('await fillComposerVerified(composer, prompt, deadline)')
   const attachIndex = executeSource.indexOf('await attachFiles(page, materialized.paths, deadline)')
 
-  assert.ok(fillIndex >= 0, 'composer fill must exist')
+  assert.ok(verifiedFillIndex >= 0, 'verified composer fill must exist')
   assert.ok(attachIndex >= 0, 'attachment upload must exist')
-  assert.ok(fillIndex < attachIndex, 'prompt must be filled before attachments are processed')
+  assert.ok(verifiedFillIndex < attachIndex, 'prompt must be filled and verified before attachments are processed')
+  assert.match(transport, /async function fillComposerVerified\(composer, prompt, deadline\)/)
+  assert.match(transport, /await composer\.fill\(prompt/)
+  assert.match(transport, /composer_fill_unverified/)
   assert.match(executeSource, /waitForSendReady\(page, deadline\)/)
-  assert.match(executeSource, /composer_fill_timeout/)
+  assert.match(transport, /composer_fill_timeout/)
   assert.match(executeSource, /attachment_upload_timeout/)
   assert.match(executeSource, /\[requestId=\$\{correlationId\}\]/)
 })
