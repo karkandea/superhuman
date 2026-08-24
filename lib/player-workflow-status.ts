@@ -21,6 +21,7 @@ export interface PlayerWorkflowStatus {
   questCount: number
   noQuest: boolean
   canStart: boolean
+  recoveryAvailable?: boolean
   activeSince?: string
   etaOperation?: 'progression_target' | 'quest_generation' | 'quest_repair'
   etaSampleCount?: number
@@ -77,6 +78,7 @@ function mapWorkflowStatus(value: unknown): PlayerWorkflowStatus {
     questCount: numberValue(row.questCount) ?? 0,
     noQuest: row.noQuest === true,
     canStart: row.canStart === true,
+    ...(row.recoveryAvailable === true ? { recoveryAvailable: true } : {}),
     ...(activeSince ? { activeSince } : {}),
     ...(etaOperation === 'progression_target' || etaOperation === 'quest_generation' || etaOperation === 'quest_repair' ? { etaOperation } : {}),
     ...(etaSampleCount !== undefined ? { etaSampleCount } : {}),
@@ -89,7 +91,7 @@ function mapWorkflowStatus(value: unknown): PlayerWorkflowStatus {
 
 export async function getPlayerWorkflowStatus(client: SupabaseClient, targetDate: string): Promise<PlayerWorkflowStatus> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) throw new Error('targetDate must use YYYY-MM-DD')
-  const { data, error } = await client.rpc('get_player_workflow_status', { p_target_date: targetDate })
+  const { data, error } = await client.rpc('get_player_workflow_status_v2', { p_target_date: targetDate })
   if (error) throw new Error(`load player workflow status: ${error.message}`)
   return mapWorkflowStatus(data)
 }
