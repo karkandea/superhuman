@@ -88,7 +88,7 @@ function mapSession(value: unknown): ProgressionConversationSession | null {
 
 function mapSnapshot(value: unknown): ProgressionConversationSnapshot {
   const data = row(value)
-  const initialAnswers: ProgressionInitializationAnswer[] = (Array.isArray(data.initialAnswers) ? data.initialAnswers : []).map(raw => {
+  const initialAnswers = (Array.isArray(data.initialAnswers) ? data.initialAnswers : []).map((raw): ProgressionInitializationAnswer => {
     const item = row(raw)
     return {
       id: string(item.id),
@@ -98,7 +98,7 @@ function mapSnapshot(value: unknown): ProgressionConversationSnapshot {
       ...(string(item.answeredAt) ? { answeredAt: string(item.answeredAt) } : {}),
     }
   }).filter(item => item.answer)
-  const recentSessions: ProgressionSessionSummary[] = (Array.isArray(data.recentSessions) ? data.recentSessions : []).map(raw => {
+  const recentSessions = (Array.isArray(data.recentSessions) ? data.recentSessions : []).map((raw): ProgressionSessionSummary => {
     const item = row(raw)
     return {
       id: string(item.id),
