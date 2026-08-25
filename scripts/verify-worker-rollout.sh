@@ -53,20 +53,23 @@ echo
 echo "=== WORKER RUNTIME ENV ==="
 if [[ ! -f "$WORKER_ENV_FILE" ]]; then
   echo "Missing worker runtime env: $WORKER_ENV_FILE" >&2
-  echo "Run workers/chatgpt-consumer/install-linux-systemd.sh as the worker owner before live preflight." >&2
+  echo "Existing production worker runtime is not installed for this user." >&2
   exit 1
 fi
+# Load the existing dedicated browser/CDP configuration without printing secrets.
+# The old production env may predate CHATGPT_REASONING_LEVEL; the new runtime
+# defaults fail-closed to High, and the post-merge installer refresh persists it.
 # shellcheck disable=SC1090
 set -a
 source "$WORKER_ENV_FILE"
 set +a
+export CHATGPT_REASONING_LEVEL="${CHATGPT_REASONING_LEVEL:-high}"
 printf 'profile=%s\n' "${CHATGPT_BROWSER_PROFILE_DIR:-<missing>}"
 printf 'cdp=%s\n' "${CHATGPT_CDP_URL:-<missing>}"
-printf 'reasoning=%s\n' "${CHATGPT_REASONING_LEVEL:-<missing>}"
+printf 'reasoning=%s\n' "$CHATGPT_REASONING_LEVEL"
 
-if [[ "${CHATGPT_REASONING_LEVEL:-}" != "high" ]]; then
-  echo "Worker runtime is not configured for CHATGPT_REASONING_LEVEL=high." >&2
-  echo "Refresh the worker installer/config before rollout." >&2
+if [[ "$CHATGPT_REASONING_LEVEL" != "high" ]]; then
+  echo "Worker runtime explicitly requests '$CHATGPT_REASONING_LEVEL'; rollout requires high." >&2
   exit 1
 fi
 
