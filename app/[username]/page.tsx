@@ -219,7 +219,10 @@ export default function DailyQuestPage() {
 
   useEffect(() => {
     if (!userId || !workflow) return
-    const shouldPoll = workflow.turnOwner === 'system' || workflow.activity === 'stalled'
+    const shouldPoll = workflow.turnOwner === 'system' && (
+      ['queued', 'running', 'stalled'].includes(workflow.activity)
+      || (workflow.activity === 'failed' && workflow.recoveryAvailable)
+    )
     if (!shouldPoll) return
     const delayMs = workflow.activity === 'stalled' ? 10000 : 3000
     const timer = window.setInterval(() => {
@@ -567,14 +570,19 @@ function SystemEmptyState({
   }
 
   const systemOwnsTurn = workflow.turnOwner === 'system'
-  const recovering = systemOwnsTurn && ['stalled', 'failed'].includes(workflow.activity)
+  const recoveryExhausted = systemOwnsTurn && workflow.activity === 'failed' && !workflow.recoveryAvailable
+  const recovering = systemOwnsTurn && ['stalled', 'failed'].includes(workflow.activity) && !recoveryExhausted
   const active = systemOwnsTurn && ['queued', 'running', 'stalled', 'failed'].includes(workflow.activity)
   if (active) {
     return (
-      <section style={{ marginTop: 12, background: S.panel, border: `1px solid ${recovering ? '#443a24' : S.line}`, borderRadius: 17, padding: '20px 16px' }}>
-        <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, color: recovering ? S.gold : S.amber, letterSpacing: '.13em' }}>SYSTEM YANG LANJUT</div>
-        <div style={{ marginTop: 8, fontFamily: '"Space Grotesk", sans-serif', fontSize: 19, fontWeight: 700 }}>{recovering ? 'System lagi memulihkan proses' : 'Lagi nyiapin quest lo'}</div>
-        {recovering ? (
+      <section style={{ marginTop: 12, background: S.panel, border: `1px solid ${recovering || recoveryExhausted ? '#443a24' : S.line}`, borderRadius: 17, padding: '20px 16px' }}>
+        <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, color: recovering || recoveryExhausted ? S.gold : S.amber, letterSpacing: '.13em' }}>{recoveryExhausted ? 'SYSTEM MASIH PEGANG' : 'SYSTEM YANG LANJUT'}</div>
+        <div style={{ marginTop: 8, fontFamily: '"Space Grotesk", sans-serif', fontSize: 19, fontWeight: 700 }}>{recoveryExhausted ? 'System belum bisa menyelesaikan proses' : recovering ? 'System lagi memulihkan proses' : 'Lagi nyiapin quest lo'}</div>
+        {recoveryExhausted ? (
+          <div style={{ display: 'grid', gap: 7, marginTop: 14 }}>
+            <WorkflowLine done>Checkpoint dan jawaban lo tetap aman</WorkflowLine>
+          </div>
+        ) : recovering ? (
           <div style={{ display: 'grid', gap: 7, marginTop: 14 }}>
             <WorkflowLine active>Lagi melanjutkan dari checkpoint terakhir</WorkflowLine>
           </div>
@@ -587,8 +595,8 @@ function SystemEmptyState({
             {workflow.phase === 'preparing_quests' && <WorkflowLine active>Lagi nyusun quest</WorkflowLine>}
           </div>
         )}
-        <div style={{ marginTop: 15, color: S.ink, fontSize: 12, lineHeight: 1.48, fontWeight: 600 }}>Bola ada di System. Lo nggak perlu ngapa-ngapain.</div>
-        <div style={{ marginTop: 4, color: workflow.longerThanUsual || recovering ? S.gold : S.muted2, fontSize: 10.5, lineHeight: 1.45 }}>{recovering ? 'System akan mencoba lanjut otomatis.' : workflowEtaCopy(workflow)}</div>
+        <div style={{ marginTop: 15, color: S.ink, fontSize: 12, lineHeight: 1.48, fontWeight: 600 }}>{recoveryExhausted ? 'Ini tetap masalah di System, bukan giliran lo.' : 'Bola ada di System. Lo nggak perlu ngapa-ngapain.'}</div>
+        <div style={{ marginTop: 4, color: workflow.longerThanUsual || recovering || recoveryExhausted ? S.gold : S.muted2, fontSize: 10.5, lineHeight: 1.45 }}>{recoveryExhausted ? 'System nggak akan mengulang proses tanpa batas.' : recovering ? 'System akan mencoba lanjut otomatis.' : workflowEtaCopy(workflow)}</div>
       </section>
     )
   }
