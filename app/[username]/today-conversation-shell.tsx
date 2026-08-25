@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   answerProgressionQuestion,
   ensureProgressionSession,
@@ -13,6 +13,7 @@ import {
 import { supabase } from '@/lib/supabase'
 import ConversationBubble from './conversation-bubble'
 import ConversationHeader, { AgentTypingIndicator } from './conversation-header'
+import ProgressionVoiceAnswerRecorder from './progression-voice-answer-recorder'
 
 const S = {
   panel: '#13171f', panel2: '#10141b', line: '#232a35', ink: '#ECEAE3', muted: '#7e8795',
@@ -27,46 +28,6 @@ const STATE_COPY: Record<ProgressionSessionState, { eyebrow: string; title: stri
   quest_ready: { eyebrow: 'SYSTEM · READY', title: 'Next move udah siap.' },
   waiting: { eyebrow: 'SYSTEM · OBSERVING', title: 'Belum perlu nambah action sembarangan.' },
   stopped: { eyebrow: 'SYSTEM · STOPPED', title: 'Prosesnya lagi berhenti.' },
-}
-
-interface BrowserSpeechRecognition {
-  lang: string
-  continuous: boolean
-  interimResults: boolean
-  start: () => void
-  stop: () => void
-  abort: () => void
-  onresult: ((event: BrowserSpeechRecognitionEvent) => void) | null
-  onerror: ((event: { error?: string }) => void) | null
-  onend: (() => void) | null
-}
-
-interface BrowserSpeechRecognitionEvent {
-  results: {
-    length: number
-    [index: number]: {
-      0?: { transcript?: string }
-    }
-  }
-}
-
-function createSpeechRecognition(): BrowserSpeechRecognition | null {
-  if (typeof window === 'undefined') return null
-  const speechWindow = window as typeof window & {
-    SpeechRecognition?: new () => BrowserSpeechRecognition
-    webkitSpeechRecognition?: new () => BrowserSpeechRecognition
-  }
-  const Recognition = speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition
-  return Recognition ? new Recognition() : null
-}
-
-function MicIcon({ active = false }: { active?: boolean }) {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" style={{ width: 18, height: 18, display: 'block' }}>
-      <path d="M12 14.25a3.25 3.25 0 0 0 3.25-3.25V6a3.25 3.25 0 1 0-6.5 0v5A3.25 3.25 0 0 0 12 14.25Z" fill={active ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.7" />
-      <path d="M6.75 10.75a5.25 5.25 0 0 0 10.5 0M12 16v3.25M9.5 19.25h5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-    </svg>
-  )
 }
 
 function stateNeedsFocus(state: ProgressionSessionState) {
@@ -219,7 +180,13 @@ export default function TodayConversationShell({
                 ))}
 
                 {snapshot?.question && (
-                  <QuestionComposer key={snapshot.question.id} question={snapshot.question} playerName={username} onAnswered={reload} />
+                  <QuestionComposer
+                    key={snapshot.question.id}
+                    question={snapshot.question}
+                    playerId={playerId}
+                    playerName={username}
+                    onAnswered={reload}
+                  />
                 )}
 
                 {systemWorking && copy && (
@@ -254,10 +221,12 @@ export default function TodayConversationShell({
 
 function QuestionComposer({
   question,
+  playerId,
   playerName,
   onAnswered,
 }: {
   question: ProgressionConversationQuestion
+  playerId: string
   playerName: string
   onAnswered: () => Promise<unknown>
 }) {
@@ -266,19 +235,9 @@ function QuestionComposer({
   const [multi, setMulti] = useState<string[]>([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [listening, setListening] = useState(false)
-  const [speechError, setSpeechError] = useState<string | null>(null)
-  const speechRef = useRef<BrowserSpeechRecognition | null>(null)
-  const speechBaseRef = useRef('')
 
   const textQuestion = question.responseType === 'free_text' || question.responseType === 'short_text'
   const maxTextLength = question.responseType === 'short_text' ? 800 : 5000
-
-  useEffect(() => () => {
-    speechRef.current?.abort()
-    speechRef.current = null
-  }, [])
-
   const answer = useMemo(() => {
     if (question.responseType === 'single_choice') return single
     if (question.responseType === 'multiple_choice') return multi
@@ -286,56 +245,8 @@ function QuestionComposer({
   }, [multi, question.responseType, single, text])
   const canSend = Array.isArray(answer) ? answer.length > 0 : Boolean(answer)
 
-  function toggleVoiceInput() {
-    setSpeechError(null)
-    if (listening) {
-      speechRef.current?.stop()
-      return
-    }
-
-    const recognition = createSpeechRecognition()
-    if (!recognition) {
-      setSpeechError('Voice-to-text belum didukung browser ini. Pakai dictation keyboard atau ketik jawaban.')
-      return
-    }
-
-    speechBaseRef.current = text.trim()
-    recognition.lang = 'id-ID'
-    recognition.continuous = true
-    recognition.interimResults = true
-    recognition.onresult = event => {
-      let spoken = ''
-      for (let index = 0; index < event.results.length; index += 1) {
-        spoken += `${event.results[index]?.[0]?.transcript ?? ''} `
-      }
-      const combined = [speechBaseRef.current, spoken.trim()].filter(Boolean).join(' ').slice(0, maxTextLength)
-      setText(combined)
-    }
-    recognition.onerror = event => {
-      setListening(false)
-      speechRef.current = null
-      const denied = event.error === 'not-allowed' || event.error === 'service-not-allowed'
-      setSpeechError(denied ? 'Mic belum diizinkan. Aktifkan izin microphone lalu coba lagi.' : 'Mic keputus. Coba lagi atau lanjut ketik.')
-    }
-    recognition.onend = () => {
-      setListening(false)
-      speechRef.current = null
-    }
-
-    speechRef.current = recognition
-    try {
-      recognition.start()
-      setListening(true)
-    } catch {
-      speechRef.current = null
-      setListening(false)
-      setSpeechError('Mic belum bisa dimulai. Coba lagi.')
-    }
-  }
-
   async function submit() {
     if (!canSend || saving) return
-    speechRef.current?.stop()
     setSaving(true)
     setError(null)
     try {
@@ -360,28 +271,29 @@ function QuestionComposer({
 
       <div data-sticky-chat-composer style={{ width: '100%', marginTop: 2 }}>
         <section style={{ width: '100%', boxSizing: 'border-box', padding: '0 0 8px' }}>
-          <div style={{ border: `1px solid ${listening ? '#4a3a23' : S.line}`, borderRadius: 16, background: 'rgba(16,20,27,.98)', padding: '10px', boxShadow: '0 12px 34px rgba(0,0,0,.22)', backdropFilter: 'blur(18px)' }}>
+          <div style={{ border: `1px solid ${S.line}`, borderRadius: 16, background: 'rgba(16,20,27,.98)', padding: '10px', boxShadow: '0 12px 34px rgba(0,0,0,.22)', backdropFilter: 'blur(18px)' }}>
+            <div style={{ margin: '1px 4px 8px', color: S.gold, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8, fontWeight: 700, letterSpacing: '.08em' }}>
+              BALAS PERTANYAAN SYSTEM
+            </div>
+
             {textQuestion && (
               <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6 }}>
                 <textarea
                   value={text}
-                  onChange={event => { setText(event.target.value); setSpeechError(null) }}
+                  onChange={event => setText(event.target.value)}
                   rows={question.responseType === 'short_text' ? 1 : 2}
                   maxLength={maxTextLength}
-                  placeholder="Balas Superhuman…"
+                  placeholder="Tulis jawaban lo…"
                   autoFocus
                   style={{ flex: 1, minWidth: 0, minHeight: 48, maxHeight: 132, boxSizing: 'border-box', resize: 'none', border: 0, background: 'transparent', color: S.ink, padding: '8px 5px', outline: 'none', fontFamily: '"IBM Plex Sans", sans-serif', fontSize: 16, lineHeight: 1.45 }}
                 />
-                <button
-                  type="button"
-                  onClick={toggleVoiceInput}
+                <ProgressionVoiceAnswerRecorder
+                  playerId={playerId}
+                  questionId={question.id}
                   disabled={saving}
-                  aria-label={listening ? 'Stop voice input' : 'Jawab dengan suara'}
-                  title={listening ? 'Stop voice input' : 'Jawab dengan suara'}
-                  style={{ width: 44, height: 44, flexShrink: 0, border: `1px solid ${listening ? '#5b4528' : S.line}`, borderRadius: 12, background: listening ? 'rgba(246,178,75,.12)' : '#151a22', color: listening ? S.amber : S.gold, display: 'grid', placeItems: 'center', cursor: saving ? 'default' : 'pointer' }}
-                >
-                  <MicIcon active={listening} />
-                </button>
+                  textPresent={Boolean(text.trim())}
+                  onAnswered={onAnswered}
+                />
               </div>
             )}
 
@@ -408,8 +320,6 @@ function QuestionComposer({
               </div>
             )}
 
-            {listening && <div role="status" style={{ marginTop: 7, color: S.amber, fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.2, letterSpacing: '.05em' }}>● MENDENGARKAN…</div>}
-            {speechError && <div role="status" style={{ marginTop: 7, color: S.red, fontSize: 11, lineHeight: 1.45 }}>{speechError}</div>}
             {error && <div role="status" style={{ marginTop: 8, color: S.red, fontSize: 11 }}>{error}</div>}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 9 }}>
               <div style={{ minWidth: 0, color: S.muted2, fontFamily: '"IBM Plex Mono", monospace', fontSize: 7.8, letterSpacing: '.06em', overflow: 'hidden', textOverflow: 'ellipsis' }}>{playerName.toUpperCase()}</div>
