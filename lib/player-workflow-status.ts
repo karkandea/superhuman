@@ -21,7 +21,7 @@ export interface PlayerWorkflowStatus {
   questCount: number
   noQuest: boolean
   canStart: boolean
-  recoveryAvailable?: boolean
+  recoveryAvailable: boolean
   activeSince?: string
   etaOperation?: 'progression_target' | 'quest_generation' | 'quest_repair'
   etaSampleCount?: number
@@ -78,7 +78,7 @@ function mapWorkflowStatus(value: unknown): PlayerWorkflowStatus {
     questCount: numberValue(row.questCount) ?? 0,
     noQuest: row.noQuest === true,
     canStart: row.canStart === true,
-    ...(row.recoveryAvailable === true ? { recoveryAvailable: true } : {}),
+    recoveryAvailable: row.recoveryAvailable === true,
     ...(activeSince ? { activeSince } : {}),
     ...(etaOperation === 'progression_target' || etaOperation === 'quest_generation' || etaOperation === 'quest_repair' ? { etaOperation } : {}),
     ...(etaSampleCount !== undefined ? { etaSampleCount } : {}),

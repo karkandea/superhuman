@@ -19,8 +19,9 @@ test('recoverable transport failures reopen the normal progression request path'
 
 test('player workflow client consumes the hardened recovery status', () => {
   assert.match(workflow, /get_player_workflow_status_v2/)
-  assert.match(workflow, /recoveryAvailable\?: boolean/)
-  assert.match(workflow, /row\.recoveryAvailable === true/)
+  assert.match(workflow, /recoveryAvailable: boolean/)
+  assert.match(workflow, /recoveryAvailable: row\.recoveryAvailable === true/)
+  assert.doesNotMatch(workflow, /recoveryAvailable\?: boolean/)
 })
 
 test('terminal job state stops stale deciding sessions and requeue resets them', () => {
