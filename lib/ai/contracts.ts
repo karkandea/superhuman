@@ -63,6 +63,7 @@ export interface AiProviderResponse {
   modelId: string
   requestId?: string
   conversationRef?: string
+  outputRepairAttemptCount?: number
   usage?: {
     inputTokens?: number
     outputTokens?: number
