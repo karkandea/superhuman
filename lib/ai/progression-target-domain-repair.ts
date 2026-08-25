@@ -99,7 +99,7 @@ class ProgressionTargetRepairProvider implements AiProvider {
           validatorDiagnostic: boundedDiagnostic(initialValidationError),
           repairAttempt: 1,
         },
-      },
+      } as StructuredModelRequest['context'],
     }
 
     console.warn(
