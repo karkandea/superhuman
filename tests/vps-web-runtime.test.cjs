@@ -58,3 +58,12 @@ test('Nginx keeps the Next.js port private while providing request and error log
   assert.match(tls, /DNS is not pointing/)
   assert.match(tls, /certbot --nginx/)
 })
+
+test('root preflight reads Git state as the repo owner without weakening global safe-directory policy', () => {
+  const preflight = source('ops/vps-web/preflight.sh')
+
+  assert.match(preflight, /SUPERHUMAN_REPO_USER:-superhuman-ai/)
+  assert.match(preflight, /sudo -u "\$REPO_USER" -H git -C "\$REPO_DIR" status --short/)
+  assert.match(preflight, /sudo -u "\$REPO_USER" -H git -C "\$REPO_DIR" rev-parse HEAD/)
+  assert.doesNotMatch(preflight, /safe\.directory|git config --global/)
+})
