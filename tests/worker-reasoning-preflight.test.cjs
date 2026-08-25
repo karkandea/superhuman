@@ -23,12 +23,21 @@ test('consumer worker blocks startup until configured reasoning level is verifie
 test('reasoning preflight recognizes the actual ChatGPT High aria-haspopup menu trigger', () => {
   const preflight = source('workers/chatgpt-consumer/reasoning-level-preflight-v3.mjs')
 
-  assert.match(preflight, /\[aria-haspopup="menu"\]/)
+  assert.match(preflight, /button\[aria-haspopup="menu"\]/)
   assert.match(preflight, /matchedLevelLabel/)
   assert.match(preflight, /descriptor\.innerText, descriptor\.ariaLabel, descriptor\.title/)
   assert.match(preflight, /findReasoningTrigger/)
   assert.match(preflight, /detected current=/)
   assert.match(preflight, /EXCLUDED.*profile.*account.*sidebar/)
+})
+
+test('reasoning preflight waits for delayed composer reasoning controls before failing', () => {
+  const preflight = source('workers/chatgpt-consumer/reasoning-level-preflight-v3.mjs')
+
+  assert.match(preflight, /REASONING_TRIGGER_WAIT_MS = 12_000/)
+  assert.match(preflight, /waitForReasoningTrigger/)
+  assert.match(preflight, /await sleep\(250\)/)
+  assert.match(preflight, /after waiting for composer controls/)
 })
 
 test('reasoning preflight selects High when another exact reasoning trigger is active', () => {
