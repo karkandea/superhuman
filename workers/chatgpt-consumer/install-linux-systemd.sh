@@ -170,6 +170,8 @@ CHATGPT_CHROME_BIN=$CHROME_BIN
 CHATGPT_CDP_PORT=$CDP_PORT
 CHATGPT_CDP_URL=$CDP_URL
 CHATGPT_HEADLESS=true
+CHATGPT_REASONING_LEVEL=high
+CHATGPT_REASONING_PREFLIGHT_TIMEOUT_MS=45000
 SUPERHUMAN_WORKER_ID=superhuman-vps-$(hostname -s)
 EOF_ENV
 chmod 600 "$ENV_FILE"
@@ -186,6 +188,8 @@ sudo tee "$SERVICE_FILE" >/dev/null <<EOF_SERVICE
 Description=Superhuman ChatGPT consumer AI worker
 Wants=network-online.target
 After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
 
 [Service]
 Type=simple
@@ -195,8 +199,9 @@ WorkingDirectory=$SCRIPT_DIR
 EnvironmentFile=$ENV_FILE
 Environment=PATH=$NODE_DIR:/usr/local/bin:/usr/bin:/bin
 ExecStart=$NPM_BIN start
-Restart=always
+Restart=on-failure
 RestartSec=5
+RestartPreventExitStatus=78
 TimeoutStopSec=20
 KillMode=mixed
 NoNewPrivileges=true
@@ -222,4 +227,5 @@ After login succeeds, that helper enables and starts:
 
 Environment: $ENV_FILE (mode 600)
 Browser profile: $PROFILE_DIR
+Required ChatGPT reasoning level: high (startup blocks if selection cannot be verified)
 EOF_DONE
