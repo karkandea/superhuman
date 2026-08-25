@@ -36,3 +36,12 @@ test('Today-state backend read self-heals lifecycle but never fabricates Daily C
   assert.match(migration, /perform public\.request_progression_cycle\(p_target_date\)/)
   assert.doesNotMatch(migration, /insert into public\.daily_contexts/i)
 })
+
+test('rotating a prior-day active session is treated as a newly bootstrapped Today session', () => {
+  const migration = source('supabase/sql/fix_progression_session_rollover_bootstrap.sql')
+
+  assert.match(migration, /v_previous_session_id uuid/)
+  assert.match(migration, /v_session\.id <> v_previous_session_id/)
+  assert.match(migration, /v_state:='waiting'/)
+  assert.match(migration, /jsonb_build_object\('reason','daily_context'\)/)
+})
