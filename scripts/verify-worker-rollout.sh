@@ -3,12 +3,11 @@ set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
 WORKER_DIR="$ROOT/workers/chatgpt-consumer"
-WORKER_ENV_FILE="$HOME/.config/superhuman/consumer-worker.env"
+USER_WORKER_ENV_FILE="$HOME/.config/superhuman/consumer-worker.env"
+ROOT_MANAGED_ENV_FILE="/etc/superhuman-ai/consumer-worker.env"
 
 # Public Supabase client config is required while Next prerenders pages during the
 # VPS verification build. These values are intentionally public/browser-safe.
-# Prefer operator-provided values when present so key rotation does not require
-# editing this script immediately.
 BUILD_SUPABASE_URL="${NEXT_PUBLIC_SUPABASE_URL:-https://ispfhvdelglwvixaspza.supabase.co}"
 BUILD_SUPABASE_PUBLISHABLE_KEY="${NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:-${NEXT_PUBLIC_SUPABASE_ANON_KEY:-sb_publishable_0BLLi-rB2gXk3f7WtEWPAg_qTlu7qd-}}"
 
@@ -53,19 +52,33 @@ node --check worker-v2.mjs
 
 echo
 echo "=== WORKER RUNTIME ENV ==="
-if [[ ! -f "$WORKER_ENV_FILE" ]]; then
-  echo "Missing worker runtime env: $WORKER_ENV_FILE" >&2
-  echo "Existing production worker runtime is not installed for this user." >&2
+if [[ -r "$USER_WORKER_ENV_FILE" ]]; then
+  # Developer/non-root install path.
+  # shellcheck disable=SC1090
+  set -a
+  source "$USER_WORKER_ENV_FILE"
+  set +a
+  RUNTIME_SOURCE="$USER_WORKER_ENV_FILE"
+elif [[ -e "$ROOT_MANAGED_ENV_FILE" ]]; then
+  # Production VPS is root-managed. The service user intentionally cannot read
+  # /etc/superhuman-ai/consumer-worker.env because it contains the Supabase
+  # backend key. Preflight needs only the dedicated browser/CDP settings, whose
+  # canonical paths are defined by bootstrap-vps-root.sh.
+  export CHATGPT_BROWSER_PROFILE_DIR="${CHATGPT_BROWSER_PROFILE_DIR:-/var/lib/superhuman-ai/chatgpt-profile}"
+  export CHATGPT_CHROME_BIN="${CHATGPT_CHROME_BIN:-/usr/local/bin/superhuman-chrome}"
+  export CHATGPT_CDP_PORT="${CHATGPT_CDP_PORT:-9222}"
+  export CHATGPT_CDP_URL="${CHATGPT_CDP_URL:-http://127.0.0.1:9222}"
+  export CHATGPT_HEADLESS="${CHATGPT_HEADLESS:-false}"
+  RUNTIME_SOURCE="$ROOT_MANAGED_ENV_FILE (root-managed; browser-only canonical values used)"
+else
+  echo "No installed worker runtime was found." >&2
+  echo "Checked: $USER_WORKER_ENV_FILE and $ROOT_MANAGED_ENV_FILE" >&2
   exit 1
 fi
-# Load the existing dedicated browser/CDP configuration without printing secrets.
-# The old production env may predate CHATGPT_REASONING_LEVEL; the new runtime
-# defaults fail-closed to High, and the post-merge installer refresh persists it.
-# shellcheck disable=SC1090
-set -a
-source "$WORKER_ENV_FILE"
-set +a
+
 export CHATGPT_REASONING_LEVEL="${CHATGPT_REASONING_LEVEL:-high}"
+export CHATGPT_REASONING_PREFLIGHT_TIMEOUT_MS="${CHATGPT_REASONING_PREFLIGHT_TIMEOUT_MS:-45000}"
+printf 'runtime=%s\n' "$RUNTIME_SOURCE"
 printf 'profile=%s\n' "${CHATGPT_BROWSER_PROFILE_DIR:-<missing>}"
 printf 'cdp=%s\n' "${CHATGPT_CDP_URL:-<missing>}"
 printf 'reasoning=%s\n' "$CHATGPT_REASONING_LEVEL"
