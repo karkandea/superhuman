@@ -34,6 +34,17 @@ test('repair preserves decision intent and never bypasses validation', () => {
   )
 })
 
+test('repair context preserves the required progression date with a real typed shape', () => {
+  assert.match(repair, /ProgressionConversationModelContext/)
+  assert.match(repair, /function progressionMoveContext/)
+  assert.match(repair, /choose_progression_move context is missing date/)
+  assert.match(repair, /const repairContext: ProgressionConversationModelContext/)
+  assert.match(repair, /date: context\.date/)
+  assert.match(repair, /context: repairContext/)
+  assert.doesNotMatch(repair, /as StructuredModelRequest\['context'\]/)
+  assert.doesNotMatch(repair, /as unknown as/)
+})
+
 test('repair stays inside the same structured operation so existing envelope repair and System voice still apply', () => {
   assert.match(repair, /const repairRequest: StructuredModelRequest = \{[\s\S]*\.\.\.request/)
   assert.doesNotMatch(repair, /operation:\s*'repair_/)
