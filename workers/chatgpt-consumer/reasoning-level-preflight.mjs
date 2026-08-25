@@ -18,10 +18,12 @@ const LEVEL_LABELS = {
   instant: ['instant', 'instan'],
   medium: ['medium', 'sedang'],
   high: ['high', 'tinggi'],
-  extra_high: ['extra high', 'ekstra tinggi'],
+  extra_high: ['extra high', 'sangat tinggi', 'ekstra tinggi'],
   pro: ['pro'],
 }
 
+const PICKER_HINT = /\b(gpt(?:[-\s]?5(?:\.\d+)?)?|sol|model|reasoning|thinking|instant|medium|high|extra high|pro|auto|configure|instan|sedang|tinggi)\b/i
+const EXCLUDE_CONTROL = /\b(send|submit|voice|record|microphone|mic|attach|upload|tools?|search|canvas|image|plus)\b/i
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
 
 function labelsFor(level) {
@@ -34,7 +36,13 @@ function normalized(value) {
 
 function textMatchesLevel(value, level) {
   const text = normalized(value)
-  return labelsFor(level).some(label => text === label || text.includes(` ${label}`) || text.startsWith(`${label} `))
+  return labelsFor(level).some(label => {
+    const normalizedLabel = normalized(label)
+    return text === normalizedLabel
+      || text.startsWith(`${normalizedLabel} `)
+      || text.endsWith(` ${normalizedLabel}`)
+      || text.includes(` ${normalizedLabel} `)
+  })
 }
 
 async function cdpReady() {
@@ -93,35 +101,95 @@ async function firstVisible(page, selectors) {
   return null
 }
 
-async function locatorText(locator) {
-  const [innerText, ariaLabel, title] = await Promise.all([
+async function controlDescriptor(locator) {
+  const [innerText, ariaLabel, title, testId, role, state, checked, selected, pressed, hasPopup] = await Promise.all([
     locator.innerText().catch(() => ''),
     locator.getAttribute('aria-label').catch(() => ''),
     locator.getAttribute('title').catch(() => ''),
+    locator.getAttribute('data-testid').catch(() => ''),
+    locator.getAttribute('role').catch(() => ''),
+    locator.getAttribute('data-state').catch(() => ''),
+    locator.getAttribute('aria-checked').catch(() => ''),
+    locator.getAttribute('aria-selected').catch(() => ''),
+    locator.getAttribute('aria-pressed').catch(() => ''),
+    locator.getAttribute('aria-haspopup').catch(() => ''),
   ])
-  return [innerText, ariaLabel, title].filter(Boolean).join(' ')
+  return {
+    text: [innerText, ariaLabel, title, testId].filter(Boolean).join(' '),
+    innerText,
+    ariaLabel,
+    title,
+    testId,
+    role,
+    state,
+    checked,
+    selected,
+    pressed,
+    hasPopup,
+  }
+}
+
+function descriptorSelected(descriptor) {
+  return descriptor.checked === 'true'
+    || descriptor.selected === 'true'
+    || descriptor.pressed === 'true'
+    || ['checked', 'on', 'active', 'selected'].includes(normalized(descriptor.state))
+}
+
+async function composerBox(page) {
+  return page.locator('#prompt-textarea, textarea, div[contenteditable="true"]').first().boundingBox().catch(() => null)
+}
+
+function distanceFromComposer(box, composer) {
+  if (!box || !composer) return Number.POSITIVE_INFINITY
+  const dx = Math.max(0, composer.x - (box.x + box.width), box.x - (composer.x + composer.width))
+  const dy = Math.max(0, composer.y - (box.y + box.height), box.y - (composer.y + composer.height))
+  return Math.sqrt(dx * dx + dy * dy)
 }
 
 async function currentLevelDetected(page, level) {
-  const explicit = await firstVisible(page, [
-    'button[data-testid="model-switcher-dropdown-button"]',
-    '[data-testid="model-switcher-dropdown-button"]',
-    '[data-testid*="model-switcher"] button',
-    'button[aria-label*="model" i]',
-    'button[aria-label*="reasoning" i]',
-  ])
-  if (explicit && textMatchesLevel(await locatorText(explicit), level)) return true
+  const controls = page.locator('button, [role="button"], [role="radio"], [role="menuitemradio"], [role="option"]')
+  const count = Math.min(await controls.count(), 200)
+  for (let index = 0; index < count; index += 1) {
+    const control = controls.nth(index)
+    if (!await control.isVisible().catch(() => false)) continue
+    const descriptor = await controlDescriptor(control)
+    if (!textMatchesLevel(descriptor.text, level)) continue
 
-  for (const label of labelsFor(level)) {
-    const selected = await firstVisible(page, [
-      `[role="radio"][aria-checked="true"]:has-text("${label}")`,
-      `[role="menuitemradio"][aria-checked="true"]:has-text("${label}")`,
-      `[role="option"][aria-selected="true"]:has-text("${label}")`,
-      `button[aria-pressed="true"]:has-text("${label}")`,
-    ])
-    if (selected) return true
+    if (descriptorSelected(descriptor)) return true
+    if (/model|reasoning|thinking|gpt|sol/i.test(descriptor.testId || descriptor.ariaLabel || descriptor.title)) return true
+
+    const box = await control.boundingBox().catch(() => null)
+    if (distanceFromComposer(box, await composerBox(page)) <= 180) return true
   }
   return false
+}
+
+async function dumpRelevantControls(page) {
+  const controls = page.locator('button, [role="button"], [aria-haspopup]')
+  const count = Math.min(await controls.count(), 160)
+  const composer = await composerBox(page)
+  const rows = []
+
+  for (let index = 0; index < count; index += 1) {
+    const control = controls.nth(index)
+    if (!await control.isVisible().catch(() => false)) continue
+    const descriptor = await controlDescriptor(control)
+    const box = await control.boundingBox().catch(() => null)
+    const distance = distanceFromComposer(box, composer)
+    if (!PICKER_HINT.test(descriptor.text) && distance > 220) continue
+    rows.push({
+      i: index,
+      text: normalized(descriptor.text).slice(0, 180),
+      testid: descriptor.testId || null,
+      role: descriptor.role || null,
+      popup: descriptor.hasPopup || null,
+      distance: Number.isFinite(distance) ? Math.round(distance) : null,
+    })
+    if (rows.length >= 20) break
+  }
+
+  process.stderr.write(`[reasoning-preflight] controls=${JSON.stringify(rows)}\n`)
 }
 
 async function modelPicker(page) {
@@ -129,18 +197,61 @@ async function modelPicker(page) {
     'button[data-testid="model-switcher-dropdown-button"]',
     '[data-testid="model-switcher-dropdown-button"]',
     '[data-testid*="model-switcher"] button',
+    'button[data-testid*="model" i]',
+    '[role="button"][data-testid*="model" i]',
+    'button[data-testid*="reasoning" i]',
+    '[role="button"][data-testid*="reasoning" i]',
     'button[aria-label*="model" i]',
+    '[role="button"][aria-label*="model" i]',
     'button[aria-label*="reasoning" i]',
+    '[role="button"][aria-label*="reasoning" i]',
+    'button[aria-label*="thinking" i]',
+    '[role="button"][aria-label*="thinking" i]',
   ])
   if (explicit) return explicit
 
-  const buttons = page.locator('button')
-  const count = Math.min(await buttons.count(), 120)
+  const composer = await composerBox(page)
+  const controls = page.locator('button, [role="button"]')
+  const count = Math.min(await controls.count(), 200)
+  let best = null
+
   for (let index = 0; index < count; index += 1) {
-    const button = buttons.nth(index)
-    if (!await button.isVisible().catch(() => false)) continue
-    const text = normalized(await locatorText(button))
-    if (/\b(instant|medium|high|extra high|pro|instan|sedang|tinggi|ekstra tinggi)\b/.test(text)) return button
+    const control = controls.nth(index)
+    if (!await control.isVisible().catch(() => false)) continue
+    const descriptor = await controlDescriptor(control)
+    const text = normalized(descriptor.text)
+    if (!text || EXCLUDE_CONTROL.test(text)) continue
+
+    const box = await control.boundingBox().catch(() => null)
+    const distance = distanceFromComposer(box, composer)
+    let score = 0
+
+    if (/model|reasoning|thinking/i.test(descriptor.testId || descriptor.ariaLabel || descriptor.title)) score += 20
+    if (/gpt|sol/i.test(text)) score += 14
+    if (/instant|medium|high|extra high|pro|auto|configure|instan|sedang|tinggi/i.test(text)) score += 12
+    if (descriptor.hasPopup === 'menu' || descriptor.hasPopup === 'listbox') score += 4
+    if (distance <= 180) score += 8
+    else if (distance <= 300) score += 3
+
+    if (score > 0 && (!best || score > best.score)) best = { locator: control, score }
+  }
+
+  if (best) return best.locator
+  await dumpRelevantControls(page)
+  return null
+}
+
+async function findLevelOption(page, level) {
+  const labels = labelsFor(level).map(normalized)
+  const candidates = page.locator('[role="menuitemradio"], [role="menuitem"], [role="option"], [role="radio"], button, [role="button"]')
+  const count = Math.min(await candidates.count(), 220)
+
+  for (let index = 0; index < count; index += 1) {
+    const candidate = candidates.nth(index)
+    if (!await candidate.isVisible().catch(() => false)) continue
+    const descriptor = await controlDescriptor(candidate)
+    const text = normalized(descriptor.text)
+    if (labels.some(label => text === label || text.startsWith(`${label} `))) return candidate
   }
   return null
 }
@@ -149,29 +260,39 @@ async function selectLevel(page, level, deadline) {
   if (await currentLevelDetected(page, level)) return
 
   const picker = await modelPicker(page)
-  if (!picker) throw new Error('ChatGPT reasoning/model picker was not found in the composer')
+  if (!picker) throw new Error('ChatGPT reasoning/model picker was not found in or near the composer')
+
   await picker.click({ timeout: Math.max(1000, Math.min(10_000, deadline - Date.now())) })
-  await sleep(250)
+  await sleep(350)
 
-  let option = null
-  for (const label of labelsFor(level)) {
-    option = await firstVisible(page, [
-      `[role="menuitemradio"]:has-text("${label}")`,
-      `[role="menuitem"]:has-text("${label}")`,
-      `[role="option"]:has-text("${label}")`,
-      `[role="radio"]:has-text("${label}")`,
-      `button:has-text("${label}")`,
-    ])
-    if (option) break
+  const option = await findLevelOption(page, level)
+  if (!option) {
+    await dumpRelevantControls(page)
+    throw new Error(`ChatGPT reasoning option ${level} was not found after opening the picker`)
   }
 
-  if (!option) throw new Error(`ChatGPT reasoning option ${level} is not available for this account/session`)
   await option.click({ timeout: Math.max(1000, Math.min(10_000, deadline - Date.now())) })
-  await sleep(500)
+  await sleep(650)
 
-  if (!await currentLevelDetected(page, level)) {
-    throw new Error(`ChatGPT reasoning option ${level} was clicked but could not be verified as selected`)
+  if (await currentLevelDetected(page, level)) return
+
+  const reopen = await modelPicker(page)
+  if (reopen) {
+    await reopen.click().catch(() => {})
+    await sleep(250)
+    const selectedOption = await findLevelOption(page, level)
+    if (selectedOption) {
+      const descriptor = await controlDescriptor(selectedOption)
+      if (descriptorSelected(descriptor)) {
+        await page.keyboard.press('Escape').catch(() => {})
+        return
+      }
+    }
+    await page.keyboard.press('Escape').catch(() => {})
   }
+
+  await dumpRelevantControls(page)
+  throw new Error(`ChatGPT reasoning option ${level} was clicked but could not be verified as selected`)
 }
 
 async function verifyFreshChatPersistence(context, level, deadline) {
@@ -186,7 +307,18 @@ async function verifyFreshChatPersistence(context, level, deadline) {
       state: 'visible',
       timeout: Math.max(1000, Math.min(15_000, deadline - Date.now())),
     })
-    return currentLevelDetected(page, level)
+
+    if (await currentLevelDetected(page, level)) return true
+
+    const picker = await modelPicker(page)
+    if (!picker) return false
+    await picker.click({ timeout: Math.max(1000, Math.min(10_000, deadline - Date.now())) }).catch(() => {})
+    await sleep(250)
+    const option = await findLevelOption(page, level)
+    if (!option) return false
+    const descriptor = await controlDescriptor(option)
+    await page.keyboard.press('Escape').catch(() => {})
+    return descriptorSelected(descriptor)
   } finally {
     await page.close().catch(() => {})
   }
