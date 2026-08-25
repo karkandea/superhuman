@@ -45,6 +45,11 @@ function textMatchesLevel(value, level) {
   })
 }
 
+function exactLevelLabel(value, level) {
+  const text = normalized(value)
+  return labelsFor(level).some(label => text === normalized(label))
+}
+
 async function cdpReady() {
   try {
     const response = await fetch(`${CDP_URL}/json/version`)
@@ -161,8 +166,8 @@ async function dumpControls(page) {
 }
 
 async function currentLevelDetected(page, level) {
-  const controls = page.locator('button, [role="button"], [role="radio"], [role="menuitemradio"], [role="option"]')
-  const count = Math.min(await controls.count(), 220)
+  const controls = page.locator('button, [role="button"], [role="radio"], [role="menuitemradio"], [role="option"], [aria-haspopup]')
+  const count = Math.min(await controls.count(), 240)
 
   for (let i = 0; i < count; i += 1) {
     const control = controls.nth(i)
@@ -171,6 +176,7 @@ async function currentLevelDetected(page, level) {
     if (excluded(d) || !textMatchesLevel(d.text, level)) continue
     if (selected(d)) return true
     if (/model|reasoning|thinking|gpt|sol/.test(metadataText(d))) return true
+    if ((d.popup === 'menu' || d.popup === 'listbox') && exactLevelLabel(d.text, level)) return true
   }
   return false
 }
@@ -180,16 +186,22 @@ async function explicitPicker(page) {
     'button[data-testid="model-switcher-dropdown-button"]',
     '[role="button"][data-testid="model-switcher-dropdown-button"]',
     '[data-testid*="model-switcher"] button',
+    '[aria-haspopup][data-testid*="model-switcher" i]',
     'button[data-testid*="model" i]',
     '[role="button"][data-testid*="model" i]',
+    '[aria-haspopup][data-testid*="model" i]',
     'button[data-testid*="reasoning" i]',
     '[role="button"][data-testid*="reasoning" i]',
+    '[aria-haspopup][data-testid*="reasoning" i]',
     'button[aria-label*="model" i]',
     '[role="button"][aria-label*="model" i]',
+    '[aria-haspopup][aria-label*="model" i]',
     'button[aria-label*="reasoning" i]',
     '[role="button"][aria-label*="reasoning" i]',
+    '[aria-haspopup][aria-label*="reasoning" i]',
     'button[aria-label*="thinking" i]',
     '[role="button"][aria-label*="thinking" i]',
+    '[aria-haspopup][aria-label*="thinking" i]',
   ]
 
   for (const selector of selectors) {
@@ -206,8 +218,8 @@ async function modelPicker(page) {
   if (explicit) return explicit
 
   const composer = await composerBox(page)
-  const controls = page.locator('button, [role="button"]')
-  const count = Math.min(await controls.count(), 220)
+  const controls = page.locator('button, [role="button"], [aria-haspopup]')
+  const count = Math.min(await controls.count(), 240)
   let best = null
 
   for (let i = 0; i < count; i += 1) {
@@ -229,7 +241,7 @@ async function modelPicker(page) {
     if (/model|reasoning|thinking/.test(meta)) score += 30
     if (/\b(chatgpt|gpt(?:[-\s]?5(?:\.\d+)?)?|sol)\b/.test(text)) score += 20
     if (/\b(instant|medium|high|extra high|pro|auto|configure|instan|sedang|tinggi)\b/.test(text)) score += 16
-    if (d.popup === 'menu' || d.popup === 'listbox') score += 6
+    if (d.popup === 'menu' || d.popup === 'listbox') score += 12
     if (dist <= 180) score += 4
     else if (dist <= 320) score += 2
 
@@ -237,7 +249,7 @@ async function modelPicker(page) {
   }
 
   if (best) {
-    process.stderr.write(`[reasoning-preflight] picker=${JSON.stringify({ text: normalized(best.d.text).slice(0, 160), testid: best.d.testId || null, score: best.score })}\n`)
+    process.stderr.write(`[reasoning-preflight] picker=${JSON.stringify({ text: normalized(best.d.text).slice(0, 160), testid: best.d.testId || null, popup: best.d.popup || null, score: best.score })}\n`)
     return best.locator
   }
 
@@ -247,8 +259,8 @@ async function modelPicker(page) {
 
 async function findLevelOption(page, level) {
   const labels = labelsFor(level).map(normalized)
-  const candidates = page.locator('[role="menuitemradio"], [role="menuitem"], [role="option"], [role="radio"], button, [role="button"]')
-  const count = Math.min(await candidates.count(), 260)
+  const candidates = page.locator('[role="menuitemradio"], [role="menuitem"], [role="option"], [role="radio"], button, [role="button"], [aria-haspopup]')
+  const count = Math.min(await candidates.count(), 280)
 
   for (let i = 0; i < count; i += 1) {
     const candidate = candidates.nth(i)
