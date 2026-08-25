@@ -2,10 +2,11 @@
 set -euo pipefail
 
 REPO_DIR=${SUPERHUMAN_REPO_DIR:-/opt/superhuman}
+REPO_USER=${SUPERHUMAN_REPO_USER:-superhuman-ai}
 DOMAIN=${SUPERHUMAN_WEB_DOMAIN:-superhuman.dualangka.com}
 
 printf '=== SUPERHUMAN WEB VPS PREFLIGHT ===\n'
-printf 'repo=%s\ndomain=%s\n\n' "$REPO_DIR" "$DOMAIN"
+printf 'repo=%s\nrepo_user=%s\ndomain=%s\n\n' "$REPO_DIR" "$REPO_USER" "$DOMAIN"
 
 printf '%s\n' '--- memory ---'
 free -h
@@ -18,9 +19,17 @@ npm --version
 
 printf '\n%s\n' '--- repo ---'
 if [[ -d "$REPO_DIR/.git" ]]; then
-  git -C "$REPO_DIR" status --short
-  printf 'branch=' && git -C "$REPO_DIR" branch --show-current
-  printf 'head=' && git -C "$REPO_DIR" rev-parse HEAD
+  if ! id "$REPO_USER" >/dev/null 2>&1; then
+    echo "missing repo user: $REPO_USER"
+  elif [[ ${EUID:-$(id -u)} -eq 0 ]]; then
+    sudo -u "$REPO_USER" -H git -C "$REPO_DIR" status --short
+    printf 'branch=' && sudo -u "$REPO_USER" -H git -C "$REPO_DIR" branch --show-current
+    printf 'head=' && sudo -u "$REPO_USER" -H git -C "$REPO_DIR" rev-parse HEAD
+  else
+    git -C "$REPO_DIR" status --short
+    printf 'branch=' && git -C "$REPO_DIR" branch --show-current
+    printf 'head=' && git -C "$REPO_DIR" rev-parse HEAD
+  fi
 else
   echo "missing repo: $REPO_DIR"
 fi
