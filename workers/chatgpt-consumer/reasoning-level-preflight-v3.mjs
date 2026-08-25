@@ -34,8 +34,15 @@ function requiredLabels(level) {
   return (LEVEL_LABELS[level] || [level.replaceAll('_', ' ')]).map(normalize)
 }
 
-function isExactLevel(text, labels) {
-  return labels.includes(normalize(text))
+function exactLabel(value, labels) {
+  return labels.includes(normalize(value))
+}
+
+function matchedLevelLabel(descriptor, labels) {
+  for (const value of [descriptor.innerText, descriptor.ariaLabel, descriptor.title]) {
+    if (exactLabel(value, labels)) return normalize(value)
+  }
+  return null
 }
 
 async function cdpReady() {
@@ -129,8 +136,9 @@ async function findReasoningTrigger(page, labels = ALL_LEVEL_LABELS.map(normaliz
     if (!await candidate.isVisible().catch(() => false)) continue
     const descriptor = await describe(candidate)
     if (excluded(descriptor)) continue
-    if (!isExactLevel(descriptor.innerText, labels)) continue
-    return { locator: candidate, descriptor }
+    const matchedLabel = matchedLevelLabel(descriptor, labels)
+    if (!matchedLabel) continue
+    return { locator: candidate, descriptor, matchedLabel }
   }
   return null
 }
@@ -145,7 +153,7 @@ async function findReasoningOption(page, level) {
     if (!await candidate.isVisible().catch(() => false)) continue
     const descriptor = await describe(candidate)
     if (excluded(descriptor)) continue
-    if (isExactLevel(descriptor.innerText, labels)) return candidate
+    if (matchedLevelLabel(descriptor, labels)) return candidate
   }
   return null
 }
@@ -154,19 +162,22 @@ async function dumpReasoningControls(page) {
   const candidates = page.locator('[aria-haspopup], [role="menuitemradio"], [role="menuitem"], [role="option"], [role="radio"]')
   const rows = []
   const count = Math.min(await candidates.count(), 220)
+  const allLabels = ALL_LEVEL_LABELS.map(normalize)
 
   for (let index = 0; index < count; index += 1) {
     const candidate = candidates.nth(index)
     if (!await candidate.isVisible().catch(() => false)) continue
     const descriptor = await describe(candidate)
-    const text = normalize(descriptor.innerText)
-    if (!ALL_LEVEL_LABELS.map(normalize).includes(text) && !/model|reasoning|thinking|gpt|sol/i.test(descriptor.combined)) continue
+    const matchedLabel = matchedLevelLabel(descriptor, allLabels)
+    if (!matchedLabel && !/model|reasoning|thinking|gpt|sol/i.test(descriptor.combined)) continue
     rows.push({
       index,
-      text,
+      label: matchedLabel,
+      innerText: normalize(descriptor.innerText) || null,
       popup: descriptor.popup || null,
       testid: descriptor.testId || null,
       aria: descriptor.ariaLabel || null,
+      title: descriptor.title || null,
     })
     if (rows.length >= 20) break
   }
@@ -178,7 +189,7 @@ async function ensureLevel(page, level, deadline) {
   const wanted = requiredLabels(level)
   const alreadySelected = await findReasoningTrigger(page, wanted)
   if (alreadySelected) {
-    process.stdout.write(`[reasoning-preflight] detected current=${normalize(alreadySelected.descriptor.innerText)}\n`)
+    process.stdout.write(`[reasoning-preflight] detected current=${alreadySelected.matchedLabel}\n`)
     return
   }
 
@@ -188,7 +199,7 @@ async function ensureLevel(page, level, deadline) {
     throw new Error('ChatGPT reasoning trigger was not found')
   }
 
-  process.stdout.write(`[reasoning-preflight] detected current=${normalize(trigger.descriptor.innerText)} selecting=${level}\n`)
+  process.stdout.write(`[reasoning-preflight] detected current=${trigger.matchedLabel} selecting=${level}\n`)
   await trigger.locator.click({
     timeout: Math.max(1000, Math.min(10_000, deadline - Date.now())),
     force: true,
@@ -213,7 +224,7 @@ async function ensureLevel(page, level, deadline) {
     throw new Error(`ChatGPT reasoning level ${level} could not be verified after selection`)
   }
 
-  process.stdout.write(`[reasoning-preflight] selected current=${normalize(verified.descriptor.innerText)}\n`)
+  process.stdout.write(`[reasoning-preflight] selected current=${verified.matchedLabel}\n`)
 }
 
 async function verifyFreshChat(context, level, deadline) {
@@ -232,7 +243,7 @@ async function verifyFreshChat(context, level, deadline) {
       return false
     }
 
-    process.stdout.write(`[reasoning-preflight] fresh-chat current=${normalize(trigger.descriptor.innerText)}\n`)
+    process.stdout.write(`[reasoning-preflight] fresh-chat current=${trigger.matchedLabel}\n`)
     return true
   } finally {
     await page.close().catch(() => {})
