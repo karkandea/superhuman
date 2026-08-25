@@ -9,24 +9,34 @@ function source(relativePath) {
 
 test('consumer worker blocks startup until configured reasoning level is verified', () => {
   const workerPackage = JSON.parse(source('workers/chatgpt-consumer/package.json'))
-  const preflight = source('workers/chatgpt-consumer/reasoning-level-preflight-v2.mjs')
+  const preflight = source('workers/chatgpt-consumer/reasoning-level-preflight-v3.mjs')
 
   assert.match(workerPackage.scripts.start, /npm run preflight/)
   assert.match(workerPackage.scripts.once, /npm run preflight/)
-  assert.match(workerPackage.scripts.preflight, /reasoning-level-preflight-v2\.mjs/)
+  assert.match(workerPackage.scripts.preflight, /reasoning-level-preflight-v3\.mjs/)
   assert.match(preflight, /CHATGPT_REASONING_LEVEL \|\| 'high'/)
-  assert.match(preflight, /freshChatHasLevel/)
+  assert.match(preflight, /verifyFreshChat/)
   assert.match(preflight, /reasoning-preflight.*verified/)
   assert.match(preflight, /DO_NOT_RESTART_EXIT_CODE = 78/)
 })
 
-test('reasoning preflight recognizes current ChatGPT High trigger even when it is only aria-haspopup', () => {
-  const preflight = source('workers/chatgpt-consumer/reasoning-level-preflight-v2.mjs')
+test('reasoning preflight recognizes the actual ChatGPT High aria-haspopup menu trigger', () => {
+  const preflight = source('workers/chatgpt-consumer/reasoning-level-preflight-v3.mjs')
 
-  assert.match(preflight, /\[aria-haspopup\]/)
-  assert.match(preflight, /exactLevelLabel/)
-  assert.match(preflight, /d\.popup === 'menu'/)
-  assert.match(preflight, /EXCLUDED_SIGNAL.*profile.*account.*sidebar/)
+  assert.match(preflight, /\[aria-haspopup="menu"\]/)
+  assert.match(preflight, /isExactLevel/)
+  assert.match(preflight, /findReasoningTrigger/)
+  assert.match(preflight, /detected current=/)
+  assert.match(preflight, /EXCLUDED.*profile.*account.*sidebar/)
+})
+
+test('reasoning preflight selects High when another exact reasoning trigger is active', () => {
+  const preflight = source('workers/chatgpt-consumer/reasoning-level-preflight-v3.mjs')
+
+  assert.match(preflight, /findReasoningOption/)
+  assert.match(preflight, /selecting=\$\{level\}/)
+  assert.match(preflight, /selected current=/)
+  assert.match(preflight, /force: true/)
 })
 
 test('non-root systemd installer configures High reasoning and avoids restart storms when preflight blocks', () => {
