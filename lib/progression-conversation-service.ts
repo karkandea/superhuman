@@ -164,3 +164,16 @@ export async function answerProgressionQuestion(
   if (error) throw new Error(`answer progression question: ${error.message}`)
   return row(data)
 }
+
+export async function answerProgressionQuestionWithVoice(
+  client: SupabaseClient,
+  questionId: string,
+  knowledgeEntryId: string,
+) {
+  const { data, error } = await client.rpc('answer_progression_question_voice', {
+    p_question_id: questionId,
+    p_knowledge_entry_id: knowledgeEntryId,
+  })
+  if (error) throw new Error(`answer progression question with voice: ${error.message}`)
+  return row(data)
+}
