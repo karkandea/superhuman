@@ -24,7 +24,8 @@ test('reasoning preflight recognizes the actual ChatGPT High aria-haspopup menu 
   const preflight = source('workers/chatgpt-consumer/reasoning-level-preflight-v3.mjs')
 
   assert.match(preflight, /\[aria-haspopup="menu"\]/)
-  assert.match(preflight, /isExactLevel/)
+  assert.match(preflight, /matchedLevelLabel/)
+  assert.match(preflight, /descriptor\.innerText, descriptor\.ariaLabel, descriptor\.title/)
   assert.match(preflight, /findReasoningTrigger/)
   assert.match(preflight, /detected current=/)
   assert.match(preflight, /EXCLUDED.*profile.*account.*sidebar/)
