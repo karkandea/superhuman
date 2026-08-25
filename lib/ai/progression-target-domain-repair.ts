@@ -4,14 +4,11 @@ import type {
   ProgressionConversationModelContext,
   StructuredModelRequest,
 } from './contracts'
-import type { DailyQuestContextRetriever } from './orchestrator'
-import { chooseProgressionTarget as chooseProgressionTargetBase } from './progression-conversation-intelligence'
 import {
   PROGRESSION_RESEARCH_MAX_PER_SESSION,
   validateProgressionMoveDecision,
 } from '../progression-conversation'
 import type { ProgressionMapSnapshot } from '../progression-intelligence'
-import type { ProgressionIntelligenceStore } from '../supabase/progression-intelligence-store'
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -136,16 +133,6 @@ class ProgressionTargetRepairProvider implements AiProvider {
   }
 }
 
-export async function chooseProgressionTarget(
-  dependencies: {
-    provider: AiProvider
-    contextRetriever: DailyQuestContextRetriever
-    store: ProgressionIntelligenceStore
-  },
-  input: { playerId: string; date: string; limit?: number },
-) {
-  return chooseProgressionTargetBase({
-    ...dependencies,
-    provider: new ProgressionTargetRepairProvider(dependencies.provider),
-  }, input)
+export function withProgressionTargetDomainRepair(provider: AiProvider): AiProvider {
+  return new ProgressionTargetRepairProvider(provider)
 }

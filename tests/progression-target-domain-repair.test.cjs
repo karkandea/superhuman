@@ -4,12 +4,13 @@ const fs = require('node:fs')
 
 const repair = fs.readFileSync('lib/ai/progression-target-domain-repair.ts', 'utf8')
 const barrel = fs.readFileSync('lib/ai/progression-intelligence.ts', 'utf8')
+const conversation = fs.readFileSync('lib/ai/progression-conversation-intelligence.ts', 'utf8')
 
-test('progression target uses a dedicated validator-repair provider', () => {
-  assert.match(barrel, /chooseProgressionTarget.*progression-target-domain-repair/)
-  assert.match(repair, /request\.operation !== 'choose_progression_move'/)
-  assert.match(repair, /validateProgressionMoveDecision/)
-  assert.match(repair, /new ProgressionTargetRepairProvider\(dependencies\.provider\)/)
+test('worker boundary still routes progression target through the bounded conversation gate', () => {
+  assert.match(barrel, /export \{ chooseProgressionTarget \} from '\.\/progression-conversation-intelligence'/)
+  assert.match(conversation, /chooseProgressionTargetCore/)
+  assert.match(conversation, /withProgressionTargetDomainRepair\(dependencies\.provider\)/)
+  assert.doesNotMatch(barrel, /chooseProgressionTarget.*progression-target-domain-repair/)
 })
 
 test('progression target validator repair is bounded to one attempt', () => {
@@ -49,4 +50,5 @@ test('repair stays inside the same structured operation so existing envelope rep
   assert.match(repair, /const repairRequest: StructuredModelRequest = \{[\s\S]*\.\.\.request/)
   assert.doesNotMatch(repair, /operation:\s*'repair_/)
   assert.match(repair, /await this\.delegate\.invokeStructured\(repairRequest\)/)
+  assert.match(repair, /export function withProgressionTargetDomainRepair/)
 })
