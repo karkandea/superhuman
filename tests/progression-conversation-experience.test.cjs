@@ -34,8 +34,11 @@ test('progression answer migrations keep CASE bounded inside BETWEEN grammar', (
 })
 
 test('progression move is a bounded decision gate instead of an always-quest agent', () => {
-  const runtime = source('lib/ai/progression-conversation-intelligence.ts')
+  const boundary = source('lib/ai/progression-conversation-intelligence.ts')
+  const runtime = source('lib/ai/progression-conversation-intelligence-core.ts')
   const contract = source('lib/progression-conversation.ts')
+  assert.match(boundary, /chooseProgressionTargetCore/)
+  assert.match(boundary, /withProgressionTargetDomainRepair\(dependencies\.provider\)/)
   assert.match(contract, /'ask' \| 'research' \| 'quest' \| 'decide' \| 'wait'/)
   assert.match(contract, /PROGRESSION_RESEARCH_MAX_PER_SESSION = 2/)
   assert.match(contract, /PLAYER_UPDATE_MAX = 2/)
@@ -48,7 +51,7 @@ test('progression move is a bounded decision gate instead of an always-quest age
 })
 
 test('initial progression requires real external research without leaking player identity into the research payload', () => {
-  const runtime = source('lib/ai/progression-conversation-intelligence.ts')
+  const runtime = source('lib/ai/progression-conversation-intelligence-core.ts')
   const transport = source('workers/chatgpt-consumer/browser-transport.mjs')
   const provider = source('lib/ai/chatgpt-consumer-provider.ts')
   const researchFunction = runtime.slice(runtime.indexOf('async function runExternalResearch'), runtime.indexOf('async function chooseMove'))
