@@ -39,7 +39,9 @@ npx next build
 echo
 echo "=== WORKER DEPENDENCIES ==="
 cd "$WORKER_DIR"
-npm ci --no-audit --no-fund
+# The worker package intentionally has no package-lock.json today, so npm ci is
+# invalid here. Match the production installer without dirtying the checkout.
+npm install --package-lock=false --no-audit --no-fund
 
 echo
 echo "=== WORKER STATIC SYNTAX ==="
