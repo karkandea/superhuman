@@ -36,17 +36,21 @@ test('onboarding keeps cinematic system moments but questions run as one convers
   assert.match(onboarding, /onBack=\{canGoBack \? \(\) => \{ void goBack\(\) \} : null\}/)
 })
 
-test('material clarification on Home is presented as a system bubble plus mobile-safe player reply composer', () => {
+test('material clarification on Home is presented as a system bubble plus explicit mobile-safe reply composer', () => {
   const home = source('app/[username]/today-conversation-shell.tsx')
+  const voice = source('app/[username]/progression-voice-answer-recorder.tsx')
 
   assert.match(home, /function QuestionComposer/)
   assert.match(home, /data-conversation-question/)
   assert.match(home, /<ConversationBubble actor="system"/)
   assert.match(home, /data-sticky-chat-composer/)
-  assert.match(home, /placeholder="Balas Superhuman…"/)
-  assert.match(home, /Jawab dengan suara/)
+  assert.match(home, /BALAS PERTANYAAN SYSTEM/)
+  assert.match(home, /placeholder="Tulis jawaban lo…"/)
+  assert.match(home, /ProgressionVoiceAnswerRecorder/)
+  assert.match(voice, /Jawab follow-up dengan suara/)
   assert.match(home, /minHeight: 44/)
   assert.doesNotMatch(home, /position: 'fixed'/)
   assert.match(home, /KIRIM →/)
+  assert.match(voice, /KIRIM SUARA →/)
   assert.doesNotMatch(home, /SYSTEM NANYA/)
 })
