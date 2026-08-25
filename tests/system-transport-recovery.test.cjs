@@ -43,3 +43,14 @@ test('player status exposes whether System still has automatic recovery availabl
   assert.match(client, /recoveryAvailable:\s*row\.recoveryAvailable === true/)
   assert.doesNotMatch(client, /row\.recoveryAvailable === true \? \{ recoveryAvailable: true \}/)
 })
+
+test('Today is truthful and stops polling after automatic System recovery is exhausted', () => {
+  const page = source('app/[username]/page.tsx')
+
+  assert.match(page, /workflow\.activity === 'failed' && !workflow\.recoveryAvailable/)
+  assert.match(page, /System belum bisa menyelesaikan proses/)
+  assert.match(page, /Ini tetap masalah di System, bukan giliran lo\./)
+  assert.match(page, /System nggak akan mengulang proses tanpa batas\./)
+  assert.match(page, /workflow\.activity === 'failed' && workflow\.recoveryAvailable/)
+  assert.doesNotMatch(page, /const shouldPoll = workflow\.turnOwner === 'system' \|\|/)
+})
