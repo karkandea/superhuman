@@ -143,6 +143,8 @@ CHATGPT_CHROME_BIN=$CHROME_WRAPPER
 CHATGPT_CDP_PORT=$CDP_PORT
 CHATGPT_CDP_URL=$CDP_URL
 CHATGPT_HEADLESS=false
+CHATGPT_REASONING_LEVEL=high
+CHATGPT_REASONING_PREFLIGHT_TIMEOUT_MS=45000
 SUPERHUMAN_WORKER_ID=superhuman-vps-$(hostname -s)
 EOF_ENV
 chmod 600 "$ENV_FILE"
@@ -184,6 +186,8 @@ cat > "$WORKER_SERVICE_FILE" <<EOF_WORKER
 Description=Superhuman ChatGPT consumer AI worker
 Requires=$BROWSER_SERVICE
 After=network-online.target $BROWSER_SERVICE
+StartLimitIntervalSec=300
+StartLimitBurst=3
 
 [Service]
 Type=simple
@@ -196,6 +200,7 @@ Environment=PATH=$NODE_DIR:/usr/local/bin:/usr/bin:/bin
 ExecStart=$NPM_BIN start
 Restart=always
 RestartSec=5
+RestartPreventExitStatus=78
 TimeoutStopSec=20
 KillMode=mixed
 NoNewPrivileges=true
@@ -217,6 +222,7 @@ VPS runtime bootstrap complete.
 - Browser profile: $PROFILE_DIR
 - Browser service: $BROWSER_SERVICE
 - Worker service: $WORKER_SERVICE
+- Required ChatGPT reasoning: high (worker startup blocks if verification fails)
 
 Starting one-time private ChatGPT login setup now...
 EOF_READY
