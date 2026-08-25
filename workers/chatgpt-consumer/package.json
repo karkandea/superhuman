@@ -5,7 +5,7 @@
   "scripts": {
     "install-browser": "playwright install chromium",
     "login": "node --import ./checkpoint-observer.mjs --import tsx worker-v2.mjs --login",
-    "preflight": "node reasoning-level-preflight.mjs",
+    "preflight": "node reasoning-level-preflight-v2.mjs",
     "start": "npm run preflight && node --import ./checkpoint-observer.mjs --import tsx worker-v2.mjs",
     "once": "npm run preflight && node --import ./checkpoint-observer.mjs --import tsx worker-v2.mjs --once"
   },
