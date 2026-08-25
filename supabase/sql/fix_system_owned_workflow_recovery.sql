@@ -62,10 +62,10 @@ $function$;
 revoke all on function public.start_progression_cycle_after_checkin(date) from public, anon;
 grant execute on function public.start_progression_cycle_after_checkin(date) to authenticated, service_role;
 
--- The mutating progression request primitive is server-only. Player clients use the
--- idempotent start_progression_cycle_after_checkin entrypoint above.
-revoke all on function public.request_progression_cycle(date) from public, anon, authenticated;
-grant execute on function public.request_progression_cycle(date) to service_role;
+-- Compatibility note: request_progression_cycle remains callable by authenticated
+-- during this first migration so the currently deployed frontend cannot break before
+-- the new one-shot start RPC is live. lock_down_legacy_progression_request.sql removes
+-- that legacy grant after the frontend rollout is verified.
 
 -- Raw workflow status is an internal primitive. Expose only v2 to player clients so
 -- the player-facing turn-owner contract cannot be bypassed.
