@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useState, type ReactNode } from 'react'
 import { useParams, usePathname, useRouter } from 'next/navigation'
+import DayRolloverBoundary from './day-rollover-boundary'
 import FirstQuestReveal from './first-quest-reveal'
 import PlayerInitialization from './player-initialization'
 import TodayConversationShell from './today-conversation-shell'
@@ -143,7 +144,9 @@ export default function PlayerRouteLayout({ children }: { children: ReactNode })
 
   return (
     <div style={{ minHeight: '100dvh', background: S.bg }}>
-      <div style={{ paddingBottom: showComposer ? 164 : 76 }}>{routedContent}</div>
+      <div style={{ paddingBottom: showComposer ? 164 : 76 }}>
+        <DayRolloverBoundary>{routedContent}</DayRolloverBoundary>
+      </div>
 
       <FirstQuestReveal playerId={player.id} active={pathname === todayPath} />
 
