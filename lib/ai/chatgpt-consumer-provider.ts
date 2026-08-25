@@ -280,7 +280,7 @@ export class ChatGptConsumerWebProvider implements AiProvider {
 
     if (execution.conversationRef) this.conversationRefs.push(execution.conversationRef)
 
-    let envelope: ConsumerEnvelope
+    let envelope: ConsumerEnvelope | null = null
     let finalRequestId = correlationId
     let outputRepairAttemptCount = 0
 
@@ -341,10 +341,15 @@ export class ChatGptConsumerWebProvider implements AiProvider {
       )
     }
 
+    if (!envelope) throw new Error('Consumer ChatGPT output repair ended without a validated envelope')
+    const modelId = request.operation === 'research_progression_context'
+      ? `chatgpt-consumer-${this.reasoningLevel}-search`
+      : `chatgpt-consumer-${this.reasoningLevel}`
+
     return {
       output: envelope.payload,
       providerId: this.id,
-      modelId: execution.modelLabel?.trim() || `chatgpt-consumer-${this.reasoningLevel}`,
+      modelId,
       requestId: finalRequestId,
       conversationRef: execution.conversationRef,
       outputRepairAttemptCount,
