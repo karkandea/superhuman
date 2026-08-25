@@ -9,14 +9,24 @@ function source(relativePath) {
 
 test('consumer worker blocks startup until configured reasoning level is verified', () => {
   const workerPackage = JSON.parse(source('workers/chatgpt-consumer/package.json'))
-  const preflight = source('workers/chatgpt-consumer/reasoning-level-preflight.mjs')
+  const preflight = source('workers/chatgpt-consumer/reasoning-level-preflight-v2.mjs')
 
   assert.match(workerPackage.scripts.start, /npm run preflight/)
   assert.match(workerPackage.scripts.once, /npm run preflight/)
+  assert.match(workerPackage.scripts.preflight, /reasoning-level-preflight-v2\.mjs/)
   assert.match(preflight, /CHATGPT_REASONING_LEVEL \|\| 'high'/)
-  assert.match(preflight, /verifyFreshChatPersistence/)
+  assert.match(preflight, /freshChatHasLevel/)
   assert.match(preflight, /reasoning-preflight.*verified/)
   assert.match(preflight, /DO_NOT_RESTART_EXIT_CODE = 78/)
+})
+
+test('reasoning preflight recognizes current ChatGPT High trigger even when it is only aria-haspopup', () => {
+  const preflight = source('workers/chatgpt-consumer/reasoning-level-preflight-v2.mjs')
+
+  assert.match(preflight, /\[aria-haspopup\]/)
+  assert.match(preflight, /exactLevelLabel/)
+  assert.match(preflight, /d\.popup === 'menu'/)
+  assert.match(preflight, /EXCLUDED_SIGNAL.*profile.*account.*sidebar/)
 })
 
 test('non-root systemd installer configures High reasoning and avoids restart storms when preflight blocks', () => {
