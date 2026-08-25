@@ -93,11 +93,11 @@ async function waitForComposer(page, deadline) {
   while (Date.now() < deadline) {
     await verifyChatGptPage(page)
     const composer = await firstVisible(page, selectors)
-    if (composer) return composer
+    if (composer && await composer.isEditable().catch(() => false)) return composer
     await sleep(500)
   }
 
-  throw new WorkerError('composer_not_found', 'ChatGPT prompt composer was not found', true)
+  throw new WorkerError('composer_not_found', 'ChatGPT prompt composer was not found or was not editable', true)
 }
 
 async function composerTextCandidates(composer) {
@@ -114,21 +114,30 @@ async function composerTextCandidates(composer) {
 }
 
 async function fillComposerVerified(composer, prompt, deadline) {
+  let fillError = null
   try {
-    await composer.fill(prompt, { timeout: timeoutUntil(deadline) })
-  } catch {
-    throw new WorkerError('composer_fill_timeout', 'ChatGPT composer did not accept the request before timeout', true)
+    await composer.fill(prompt, { timeout: timeoutUntil(deadline, 60_000) })
+  } catch (error) {
+    fillError = error
   }
 
   const candidates = await composerTextCandidates(composer)
-  if (!composerTextMatches(prompt, candidates)) {
-    const lengths = composerVerificationLengths(prompt, candidates)
+  if (composerTextMatches(prompt, candidates)) return
+
+  const lengths = composerVerificationLengths(prompt, candidates)
+  if (fillError) {
     throw new WorkerError(
-      'composer_fill_unverified',
-      `ChatGPT composer state did not match the request after fill (expectedChars=${lengths.expectedChars}, actualChars=${lengths.actualChars})`,
+      'composer_fill_timeout',
+      `ChatGPT composer fill timed out and the verified state did not match the request (expectedChars=${lengths.expectedChars}, actualChars=${lengths.actualChars})`,
       true,
     )
   }
+
+  throw new WorkerError(
+    'composer_fill_unverified',
+    `ChatGPT composer state did not match the request after fill (expectedChars=${lengths.expectedChars}, actualChars=${lengths.actualChars})`,
+    true,
+  )
 }
 
 async function waitForAssistantResponse(page, previousCount, deadline) {
