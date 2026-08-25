@@ -45,10 +45,10 @@ const JOB_COLUMNS = 'id,user_id,operation,target_date,status,attempt_count,max_a
 
 export async function requestDailyQuestGeneration(client: SupabaseClient, targetDate: string): Promise<AiInferenceJob> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) throw new Error('targetDate must use YYYY-MM-DD')
-  const { data, error } = await client.rpc('request_progression_cycle', { p_target_date: targetDate })
-  if (error) throw new Error(`request progression cycle: ${error.message}`)
+  const { data, error } = await client.rpc('start_progression_cycle_after_checkin', { p_target_date: targetDate })
+  if (error) throw new Error(`start progression cycle: ${error.message}`)
   const row = firstRow(data)
-  if (!row) throw new Error('request progression cycle returned no job')
+  if (!row) throw new Error('start progression cycle returned no job')
   return mapJob(row)
 }
 

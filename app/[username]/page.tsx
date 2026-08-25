@@ -549,8 +549,8 @@ function SystemEmptyState({
       <section style={{ marginTop: 12, background: S.panel, border: `1px solid ${S.line}`, borderRadius: 17, padding: '20px 16px' }}>
         <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, color: S.amber, letterSpacing: '.13em' }}>STATUS SYSTEM</div>
         <div style={{ marginTop: 8, fontFamily: '"Space Grotesk", sans-serif', fontSize: 19, fontWeight: 700 }}>Status belum kebaca</div>
-        <div style={{ marginTop: 6, color: S.muted, fontSize: 12, lineHeight: 1.5 }}>Data lo tetap aman. Cek lagi tanpa memulai proses baru.</div>
-        <button type="button" onClick={onCheckStatus} disabled={checking} style={{ minHeight: 40, marginTop: 13, borderRadius: 10, border: `1px solid ${S.lineStrong}`, background: 'transparent', color: S.ink, padding: '0 14px', fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, fontWeight: 700, cursor: 'pointer' }}>{checking ? 'MENGECEK…' : 'CEK STATUS'}</button>
+        <div style={{ marginTop: 6, color: S.muted, fontSize: 12, lineHeight: 1.5 }}>Data lo tetap aman. Muat ulang status ini cuma membaca keadaan terbaru dan nggak memulai proses baru.</div>
+        <button type="button" onClick={onCheckStatus} disabled={checking} style={{ minHeight: 40, marginTop: 13, borderRadius: 10, border: `1px solid ${S.lineStrong}`, background: 'transparent', color: S.ink, padding: '0 14px', fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, fontWeight: 700, cursor: 'pointer' }}>{checking ? 'MEMUAT…' : 'MUAT ULANG STATUS'}</button>
       </section>
     )
   }
@@ -566,33 +566,39 @@ function SystemEmptyState({
     )
   }
 
-  const active = workflow.turnOwner === 'system' && ['queued', 'running'].includes(workflow.activity)
+  const systemOwnsTurn = workflow.turnOwner === 'system'
+  const recovering = systemOwnsTurn && ['stalled', 'failed'].includes(workflow.activity)
+  const active = systemOwnsTurn && ['queued', 'running', 'stalled', 'failed'].includes(workflow.activity)
   if (active) {
     return (
-      <section style={{ marginTop: 12, background: S.panel, border: `1px solid ${S.line}`, borderRadius: 17, padding: '20px 16px' }}>
-        <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, color: S.amber, letterSpacing: '.13em' }}>SYSTEM YANG LANJUT</div>
-        <div style={{ marginTop: 8, fontFamily: '"Space Grotesk", sans-serif', fontSize: 19, fontWeight: 700 }}>Lagi nyiapin quest lo</div>
-        <div style={{ display: 'grid', gap: 7, marginTop: 14 }}>
-          {workflow.phase === 'understanding' && <WorkflowLine active>Lagi memahami jawaban lo</WorkflowLine>}
-          {workflow.phase !== 'understanding' && <WorkflowLine done>Cerita lo udah kebaca</WorkflowLine>}
-          {workflow.phase === 'choosing_focus' && <WorkflowLine active>Lagi nentuin fokus hari ini</WorkflowLine>}
-          {workflow.phase === 'preparing_quests' && <WorkflowLine done>Fokus hari ini udah dipilih</WorkflowLine>}
-          {workflow.phase === 'preparing_quests' && <WorkflowLine active>Lagi nyusun quest</WorkflowLine>}
-        </div>
-        <div style={{ marginTop: 15, color: S.ink, fontSize: 12, lineHeight: 1.48, fontWeight: 600 }}>Lo nggak perlu ngapa-ngapain.</div>
-        <div style={{ marginTop: 4, color: workflow.longerThanUsual ? S.gold : S.muted2, fontSize: 10.5, lineHeight: 1.45 }}>{workflowEtaCopy(workflow)}</div>
+      <section style={{ marginTop: 12, background: S.panel, border: `1px solid ${recovering ? '#443a24' : S.line}`, borderRadius: 17, padding: '20px 16px' }}>
+        <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, color: recovering ? S.gold : S.amber, letterSpacing: '.13em' }}>SYSTEM YANG LANJUT</div>
+        <div style={{ marginTop: 8, fontFamily: '"Space Grotesk", sans-serif', fontSize: 19, fontWeight: 700 }}>{recovering ? 'System lagi memulihkan proses' : 'Lagi nyiapin quest lo'}</div>
+        {recovering ? (
+          <div style={{ display: 'grid', gap: 7, marginTop: 14 }}>
+            <WorkflowLine active>Lagi melanjutkan dari checkpoint terakhir</WorkflowLine>
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gap: 7, marginTop: 14 }}>
+            {workflow.phase === 'understanding' && <WorkflowLine active>Lagi memahami jawaban lo</WorkflowLine>}
+            {workflow.phase !== 'understanding' && <WorkflowLine done>Cerita lo udah kebaca</WorkflowLine>}
+            {workflow.phase === 'choosing_focus' && <WorkflowLine active>Lagi nentuin fokus hari ini</WorkflowLine>}
+            {workflow.phase === 'preparing_quests' && <WorkflowLine done>Fokus hari ini udah dipilih</WorkflowLine>}
+            {workflow.phase === 'preparing_quests' && <WorkflowLine active>Lagi nyusun quest</WorkflowLine>}
+          </div>
+        )}
+        <div style={{ marginTop: 15, color: S.ink, fontSize: 12, lineHeight: 1.48, fontWeight: 600 }}>Bola ada di System. Lo nggak perlu ngapa-ngapain.</div>
+        <div style={{ marginTop: 4, color: workflow.longerThanUsual || recovering ? S.gold : S.muted2, fontSize: 10.5, lineHeight: 1.45 }}>{recovering ? 'System akan mencoba lanjut otomatis.' : workflowEtaCopy(workflow)}</div>
       </section>
     )
   }
 
-  const stalled = workflow.activity === 'stalled'
   return (
-    <section style={{ marginTop: 12, background: S.panel, border: `1px solid ${stalled ? '#443a24' : S.line}`, borderRadius: 17, padding: '20px 16px' }}>
-      <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, color: stalled ? S.gold : S.amber, letterSpacing: '.13em' }}>NGGAK ADA ACTION DARI LO</div>
-      <div style={{ marginTop: 8, fontFamily: '"Space Grotesk", sans-serif', fontSize: 19, fontWeight: 700 }}>{stalled ? 'Proses lagi berhenti' : 'Quest belum berhasil dibuat'}</div>
-      <div style={{ marginTop: 6, color: S.muted, fontSize: 12, lineHeight: 1.5 }}>Jawaban dan check-in lo tetap aman. Lo nggak perlu isi ulang.</div>
-      <div style={{ marginTop: 8, color: S.ink, fontSize: 12, lineHeight: 1.45, fontWeight: 600 }}>Nggak ada yang perlu lo lakukan sekarang.</div>
-      <button type="button" onClick={onCheckStatus} disabled={checking} style={{ minHeight: 40, marginTop: 13, borderRadius: 10, border: `1px solid ${S.lineStrong}`, background: 'transparent', color: S.ink, padding: '0 14px', fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, fontWeight: 700, cursor: 'pointer' }}>{checking ? 'MENGECEK…' : 'CEK STATUS'}</button>
+    <section style={{ marginTop: 12, background: S.panel, border: `1px solid ${S.line}`, borderRadius: 17, padding: '20px 16px' }}>
+      <div style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, color: S.amber, letterSpacing: '.13em' }}>STATUS SYSTEM</div>
+      <div style={{ marginTop: 8, fontFamily: '"Space Grotesk", sans-serif', fontSize: 19, fontWeight: 700 }}>Status belum siap</div>
+      <div style={{ marginTop: 6, color: S.muted, fontSize: 12, lineHeight: 1.5 }}>Muat ulang status untuk membaca keadaan terbaru. Ini nggak memulai atau mengulang proses AI.</div>
+      <button type="button" onClick={onCheckStatus} disabled={checking} style={{ minHeight: 40, marginTop: 13, borderRadius: 10, border: `1px solid ${S.lineStrong}`, background: 'transparent', color: S.ink, padding: '0 14px', fontFamily: '"IBM Plex Mono", monospace', fontSize: 8.5, fontWeight: 700, cursor: 'pointer' }}>{checking ? 'MEMUAT…' : 'MUAT ULANG STATUS'}</button>
     </section>
   )
 }
