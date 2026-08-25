@@ -67,3 +67,13 @@ test('root preflight reads Git state as the repo owner without weakening global 
   assert.match(preflight, /sudo -u "\$REPO_USER" -H git -C "\$REPO_DIR" rev-parse HEAD/)
   assert.doesNotMatch(preflight, /safe\.directory|git config --global/)
 })
+
+test('runtime installer reloads an already-running nginx after publishing the site config', () => {
+  const installer = source('ops/vps-web/install-runtime.sh')
+
+  assert.match(installer, /nginx -t/)
+  assert.match(installer, /systemctl is-active --quiet nginx/)
+  assert.match(installer, /systemctl reload nginx/)
+  assert.match(installer, /systemctl start nginx/)
+  assert.doesNotMatch(installer, /systemctl enable --now nginx/)
+})

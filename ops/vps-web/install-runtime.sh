@@ -39,7 +39,12 @@ fi
 install -m 0644 "$REPO_DIR/ops/vps-web/nginx-superhuman.conf" "$NGINX_SITE"
 ln -sfn "$NGINX_SITE" /etc/nginx/sites-enabled/superhuman-web.conf
 nginx -t
-systemctl enable --now nginx
+systemctl enable nginx >/dev/null
+if systemctl is-active --quiet nginx; then
+  systemctl reload nginx
+else
+  systemctl start nginx
+fi
 
 if [[ -f "$RUNTIME_DIR/current/server.js" ]]; then
   systemctl enable --now superhuman-web.service
