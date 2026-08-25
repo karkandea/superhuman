@@ -13,6 +13,7 @@ const HEADLESS = process.env.CHATGPT_HEADLESS !== 'false'
 const REQUIRED_LEVEL = String(process.env.CHATGPT_REASONING_LEVEL || 'high').trim().toLowerCase()
 const PREFLIGHT_TIMEOUT_MS = Number(process.env.CHATGPT_REASONING_PREFLIGHT_TIMEOUT_MS || 45_000)
 const DO_NOT_RESTART_EXIT_CODE = 78
+const REASONING_TRIGGER_WAIT_MS = 12_000
 
 const LEVEL_LABELS = {
   instant: ['instant', 'instan'],
@@ -128,8 +129,8 @@ function excluded(descriptor) {
 }
 
 async function findReasoningTrigger(page, labels = ALL_LEVEL_LABELS.map(normalize)) {
-  const candidates = page.locator('[aria-haspopup="menu"], [aria-haspopup="listbox"]')
-  const count = Math.min(await candidates.count(), 200)
+  const candidates = page.locator('button[aria-haspopup="menu"], button[aria-haspopup="listbox"], [role="button"][aria-haspopup="menu"], [role="button"][aria-haspopup="listbox"]')
+  const count = Math.min(await candidates.count(), 220)
 
   for (let index = 0; index < count; index += 1) {
     const candidate = candidates.nth(index)
@@ -143,10 +144,20 @@ async function findReasoningTrigger(page, labels = ALL_LEVEL_LABELS.map(normaliz
   return null
 }
 
+async function waitForReasoningTrigger(page, labels, deadline) {
+  const waitUntil = Math.min(deadline, Date.now() + REASONING_TRIGGER_WAIT_MS)
+  while (Date.now() < waitUntil) {
+    const trigger = await findReasoningTrigger(page, labels)
+    if (trigger) return trigger
+    await sleep(250)
+  }
+  return findReasoningTrigger(page, labels)
+}
+
 async function findReasoningOption(page, level) {
   const labels = requiredLabels(level)
   const candidates = page.locator('[role="menuitemradio"], [role="menuitem"], [role="option"], [role="radio"], button, [role="button"]')
-  const count = Math.min(await candidates.count(), 260)
+  const count = Math.min(await candidates.count(), 280)
 
   for (let index = 0; index < count; index += 1) {
     const candidate = candidates.nth(index)
@@ -159,9 +170,9 @@ async function findReasoningOption(page, level) {
 }
 
 async function dumpReasoningControls(page) {
-  const candidates = page.locator('[aria-haspopup], [role="menuitemradio"], [role="menuitem"], [role="option"], [role="radio"]')
+  const candidates = page.locator('button, [role="button"], [aria-haspopup], [role="menuitemradio"], [role="menuitem"], [role="option"], [role="radio"]')
   const rows = []
-  const count = Math.min(await candidates.count(), 220)
+  const count = Math.min(await candidates.count(), 320)
   const allLabels = ALL_LEVEL_LABELS.map(normalize)
 
   for (let index = 0; index < count; index += 1) {
@@ -170,6 +181,7 @@ async function dumpReasoningControls(page) {
     const descriptor = await describe(candidate)
     const matchedLabel = matchedLevelLabel(descriptor, allLabels)
     if (!matchedLabel && !/model|reasoning|thinking|gpt|sol/i.test(descriptor.combined)) continue
+    const box = await candidate.boundingBox().catch(() => null)
     rows.push({
       index,
       label: matchedLabel,
@@ -178,8 +190,9 @@ async function dumpReasoningControls(page) {
       testid: descriptor.testId || null,
       aria: descriptor.ariaLabel || null,
       title: descriptor.title || null,
+      box: box ? { x: Math.round(box.x), y: Math.round(box.y), w: Math.round(box.width), h: Math.round(box.height) } : null,
     })
-    if (rows.length >= 20) break
+    if (rows.length >= 24) break
   }
 
   process.stderr.write(`[reasoning-preflight] controls=${JSON.stringify(rows)}\n`)
@@ -187,16 +200,16 @@ async function dumpReasoningControls(page) {
 
 async function ensureLevel(page, level, deadline) {
   const wanted = requiredLabels(level)
-  const alreadySelected = await findReasoningTrigger(page, wanted)
+  const alreadySelected = await waitForReasoningTrigger(page, wanted, deadline)
   if (alreadySelected) {
     process.stdout.write(`[reasoning-preflight] detected current=${alreadySelected.matchedLabel}\n`)
     return
   }
 
-  const trigger = await findReasoningTrigger(page)
+  const trigger = await waitForReasoningTrigger(page, ALL_LEVEL_LABELS.map(normalize), deadline)
   if (!trigger) {
     await dumpReasoningControls(page)
-    throw new Error('ChatGPT reasoning trigger was not found')
+    throw new Error('ChatGPT reasoning trigger was not found after waiting for composer controls')
   }
 
   process.stdout.write(`[reasoning-preflight] detected current=${trigger.matchedLabel} selecting=${level}\n`)
@@ -216,9 +229,8 @@ async function ensureLevel(page, level, deadline) {
     timeout: Math.max(1000, Math.min(10_000, deadline - Date.now())),
     force: true,
   })
-  await sleep(650)
 
-  const verified = await findReasoningTrigger(page, wanted)
+  const verified = await waitForReasoningTrigger(page, wanted, deadline)
   if (!verified) {
     await dumpReasoningControls(page)
     throw new Error(`ChatGPT reasoning level ${level} could not be verified after selection`)
@@ -237,7 +249,7 @@ async function verifyFreshChat(context, level, deadline) {
     await verifySession(page)
     await waitForComposer(page, deadline)
 
-    const trigger = await findReasoningTrigger(page, requiredLabels(level))
+    const trigger = await waitForReasoningTrigger(page, requiredLabels(level), deadline)
     if (!trigger) {
       await dumpReasoningControls(page)
       return false
