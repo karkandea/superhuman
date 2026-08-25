@@ -9,13 +9,14 @@ function source(relativePath) {
 
 test('player generation uses an idempotent one-shot start RPC instead of the mutating progression primitive', () => {
   const service = source('lib/ai/inference-job-service.ts')
-  const sql = source('supabase/sql/fix_system_owned_workflow_recovery.sql')
+  const recoverySql = source('supabase/sql/fix_system_owned_workflow_recovery.sql')
+  const lockdownSql = source('supabase/sql/lock_down_legacy_progression_request.sql')
 
   assert.match(service, /client\.rpc\('start_progression_cycle_after_checkin'/)
   assert.doesNotMatch(service, /client\.rpc\('request_progression_cycle'/)
-  assert.match(sql, /create or replace function public\.start_progression_cycle_after_checkin/)
-  assert.match(sql, /on conflict \(user_id, operation, target_date\) do nothing/)
-  assert.match(sql, /revoke all on function public\.request_progression_cycle\(date\) from public, anon, authenticated/)
+  assert.match(recoverySql, /create or replace function public\.start_progression_cycle_after_checkin/)
+  assert.match(recoverySql, /on conflict \(user_id, operation, target_date\) do nothing/)
+  assert.match(lockdownSql, /revoke all on function public\.request_progression_cycle\(date\) from public, anon, authenticated/)
 })
 
 test('player workflow status is read-only and normalizes failed or stalled unowned work to System ownership', () => {
