@@ -122,12 +122,22 @@ The voice rules intentionally follow established UX-writing guidance rather than
 
 Normal regression tests remain deterministic and must not hit live ChatGPT.
 
-Before production rollout:
+**Worker validation is VPS-only. Do not use Vercel as the build/test runner for this worker rollout.**
+
+From the target VPS checkout, run the bundled verifier:
 
 ```bash
-npm test
-npm run build
+bash scripts/verify-worker-rollout.sh
 ```
+
+That verifier runs, on the VPS:
+
+- `npm ci`
+- domain tests
+- full app build (`lint + tests + Next build`)
+- worker dependency install
+- worker syntax checks
+- live authenticated ChatGPT reasoning preflight
 
 The Linux systemd installer changed, so the VPS rollout must refresh the generated env/unit rather than only restarting the old service definition:
 
@@ -135,7 +145,7 @@ The Linux systemd installer changed, so the VPS rollout must refresh the generat
 bash workers/chatgpt-consumer/install-linux-systemd.sh
 ```
 
-After the existing authenticated profile is ready, start the service and verify:
+After the existing authenticated profile is ready, start/restart the service and verify:
 
 ```bash
 sudo systemctl status superhuman-ai-worker.service
