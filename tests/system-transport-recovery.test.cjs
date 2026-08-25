@@ -34,8 +34,12 @@ test('transport recovery resets execution ownership but preserves durable step s
 
 test('player status exposes whether System still has automatic recovery available', () => {
   const sql = source('supabase/sql/extend_system_owned_transport_recovery.sql')
+  const client = source('lib/player-workflow-status.ts')
 
   assert.match(sql, /jsonb_build_object\('recoveryAvailable',v_recovery_available\)/)
   assert.match(sql, /'turnOwner','system'/)
   assert.doesNotMatch(sql, /request_progression_cycle/)
+  assert.match(client, /recoveryAvailable:\s*boolean/)
+  assert.match(client, /recoveryAvailable:\s*row\.recoveryAvailable === true/)
+  assert.doesNotMatch(client, /row\.recoveryAvailable === true \? \{ recoveryAvailable: true \}/)
 })
