@@ -8,10 +8,12 @@ Type=simple
 User=superhuman-ai
 Group=superhuman-ai
 WorkingDirectory=/opt/superhuman/workers/chatgpt-consumer
-EnvironmentFile=/etc/superhuman-ai/consumer-worker.env
+# Deliberately do not load production EnvironmentFile=/etc/superhuman-ai/consumer-worker.env here.
+# The QA browser owns an explicit browser-only environment so port/profile values cannot leak from production.
 Environment=HOME=/home/superhuman-ai
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 Environment=SUPERHUMAN_DISPLAY_NUMBER=100
+Environment=CHATGPT_CHROME_BIN=/usr/local/bin/superhuman-chrome
 Environment=CHATGPT_BROWSER_PROFILE_DIR=/var/lib/superhuman-ai/chatgpt-qa-profile
 Environment=CHATGPT_CDP_PORT=9223
 ExecStart=/bin/bash /opt/superhuman/workers/chatgpt-consumer/browser-vps.sh
@@ -20,7 +22,6 @@ RestartSec=5
 TimeoutStopSec=20
 KillMode=mixed
 NoNewPrivileges=true
-PrivateTmp=true
 ProtectSystem=full
 
 [Install]
