@@ -10,8 +10,11 @@ import { getWorkerQaScenario, WORKER_QA_FIXTURE_VERSION } from './qa-scenarios.m
 const ROOT_DIR = fileURLToPath(new URL('../..', import.meta.url))
 const WORKER_ID = process.env.SUPERHUMAN_QA_WORKER_ID || `superhuman-worker-qa:${process.pid}`
 const POLL_MS = Number(process.env.SUPERHUMAN_QA_POLL_MS || 2500)
-const LEASE_SECONDS = Number(process.env.SUPERHUMAN_QA_LEASE_SECONDS || 900)
+const LEASE_SECONDS = Number(process.env.SUPERHUMAN_QA_LEASE_SECONDS || 1800)
 const GENERATION_TIMEOUT_MS = Number(process.env.CHATGPT_GENERATION_TIMEOUT_MS || 180000)
+const INTER_ITERATION_PAUSE_MS = Number(process.env.SUPERHUMAN_QA_INTER_ITERATION_PAUSE_MS || 30000)
+const RATE_LIMIT_COOLDOWN_SECONDS = Number(process.env.SUPERHUMAN_QA_RATE_LIMIT_COOLDOWN_SECONDS || 900)
+const MAX_RATE_LIMIT_RETRIES = Number(process.env.SUPERHUMAN_QA_MAX_RATE_LIMIT_RETRIES || 2)
 const RELEASE_SHA = process.env.SUPERHUMAN_QA_RELEASE_SHA || currentReleaseSha()
 
 let stopping = false
@@ -191,6 +194,18 @@ async function completeIteration(client, claim, details) {
   if (error) throw new Error(`complete Worker QA iteration: ${error.message}`)
 }
 
+async function scheduleRateLimitRetry(client, claim, error) {
+  const { data, error: rpcError } = await client.rpc('schedule_worker_qa_rate_limit_retry', {
+    p_iteration_id: claim.iteration_id,
+    p_worker_id: WORKER_ID,
+    p_cooldown_seconds: RATE_LIMIT_COOLDOWN_SECONDS,
+    p_max_rate_limit_retries: MAX_RATE_LIMIT_RETRIES,
+    p_error_message: boundedMessage(error),
+  })
+  if (rpcError) throw new Error(`schedule Worker QA rate-limit retry: ${rpcError.message}`)
+  return typeof data === 'string' ? data : String(data || '')
+}
+
 async function processIteration(client, claim) {
   const startedAt = Date.now()
   const allCheckpoints = []
@@ -298,17 +313,24 @@ async function processIteration(client, claim) {
     })
     console.log(`[qa ${claim.run_id} #${claim.iteration_no}] succeeded scenario=${claim.scenario} recovery=${totalRecoveryCount}`)
   } catch (error) {
+    const code = errorCode(error)
+    if (code === 'provider_rate_limited') {
+      const nextStatus = await scheduleRateLimitRetry(client, claim, error)
+      console.warn(`[qa ${claim.run_id} #${claim.iteration_no}] provider rate limited; status=${nextStatus} cooldown=${RATE_LIMIT_COOLDOWN_SECONDS}s`)
+      return
+    }
+
     await completeIteration(client, claim, {
       status: 'failed',
       durationMs: Date.now() - startedAt,
-      validatorPassed: false,
+      validatorPassed: code === 'validator_failed' ? false : null,
       recoveryCount: totalRecoveryCount,
-      errorCode: errorCode(error),
+      errorCode: code,
       errorMessage: boundedMessage(error),
       output: outputs,
       checkpoints: allCheckpoints,
     })
-    console.error(`[qa ${claim.run_id} #${claim.iteration_no}] failed: ${errorCode(error)}: ${boundedMessage(error)}`)
+    console.error(`[qa ${claim.run_id} #${claim.iteration_no}] failed: ${code}: ${boundedMessage(error)}`)
   }
 }
 
@@ -316,6 +338,7 @@ async function main() {
   const client = createSupabase()
   console.log(`Superhuman Worker QA online as ${WORKER_ID}`)
   console.log(`QA fixture=${WORKER_QA_FIXTURE_VERSION}; release=${RELEASE_SHA}`)
+  console.log(`QA pacing: betweenIterations=${INTER_ITERATION_PAUSE_MS}ms; rateLimitCooldown=${RATE_LIMIT_COOLDOWN_SECONDS}s; rateLimitRetries=${MAX_RATE_LIMIT_RETRIES}`)
   console.log(browserRuntimeSummary())
 
   while (!stopping) {
@@ -325,6 +348,7 @@ async function main() {
       continue
     }
     await processIteration(client, claim)
+    if (!stopping && INTER_ITERATION_PAUSE_MS > 0) await sleep(INTER_ITERATION_PAUSE_MS)
   }
 }
 
