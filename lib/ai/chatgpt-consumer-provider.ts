@@ -4,6 +4,10 @@ import type {
   StructuredModelAttachment,
   StructuredModelRequest,
 } from './contracts'
+import {
+  acquireChatGptTrafficSlot,
+  recordChatGptTrafficResult,
+} from './chatgpt-traffic-controller'
 import { resolveConsumerConversation } from './reasoning-session'
 import { systemVoiceInstructions } from './system-voice'
 
@@ -263,11 +267,36 @@ export class ChatGptConsumerWebProvider implements AiProvider {
     this.reasoningLevel = options.reasoningLevel ?? 'high'
   }
 
+  private async executeTransport(input: Parameters<ConsumerChatTransport['execute']>[0]): Promise<ConsumerChatExecution> {
+    const { holderId } = await acquireChatGptTrafficSlot(input.correlationId)
+
+    try {
+      const execution = await this.transport.execute(input)
+      await recordChatGptTrafficResult(holderId, 'success')
+      return execution
+    } catch (error) {
+      const code = error && typeof error === 'object' && 'code' in error
+        ? String((error as { code?: unknown }).code || '')
+        : ''
+
+      if (code === 'provider_rate_limited') {
+        const state = await recordChatGptTrafficResult(holderId, 'rate_limited')
+        const cooldownUntil = typeof state?.cooldownUntil === 'string' ? Date.parse(state.cooldownUntil) : Number.NaN
+        if (error && typeof error === 'object' && Number.isFinite(cooldownUntil)) {
+          ;(error as { retryAfterSeconds?: number }).retryAfterSeconds = Math.max(1, Math.ceil((cooldownUntil - Date.now()) / 1000))
+        }
+      } else {
+        await recordChatGptTrafficResult(holderId, 'error')
+      }
+      throw error
+    }
+  }
+
   async invokeStructured(request: StructuredModelRequest): Promise<AiProviderResponse> {
     const correlationId = this.idFactory()
     const prompt = buildConsumerChatPrompt(request, correlationId)
     const conversation = await resolveConsumerConversation(request)
-    let execution = await this.transport.execute({
+    let execution = await this.executeTransport({
       prompt,
       correlationId,
       timeoutMs: this.timeoutMs,
@@ -304,7 +333,7 @@ export class ChatGptConsumerWebProvider implements AiProvider {
         `[consumer-output-repair] operation=${request.operation} initialRequestId=${correlationId} repairRequestId=${repairCorrelationId} reason=${boundedDiagnostic(initialParseError)} previousChars=${execution.text.length}`,
       )
 
-      const repairExecution = await this.transport.execute({
+      const repairExecution = await this.executeTransport({
         prompt: repairPrompt,
         correlationId: repairCorrelationId,
         timeoutMs: this.timeoutMs,
