@@ -7,7 +7,8 @@
     "login": "node --import ./checkpoint-observer.mjs --import tsx worker-v2.mjs --login",
     "preflight": "node reasoning-level-preflight-v3.mjs",
     "start": "npm run preflight && node --import ./checkpoint-observer.mjs --import tsx worker-v2.mjs",
-    "once": "npm run preflight && node --import ./checkpoint-observer.mjs --import tsx worker-v2.mjs --once"
+    "once": "npm run preflight && node --import ./checkpoint-observer.mjs --import tsx worker-v2.mjs --once",
+    "qa:fingerprint": "node browser-fingerprint-qa.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
