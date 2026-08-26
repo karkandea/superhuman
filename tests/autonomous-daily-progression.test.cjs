@@ -13,6 +13,7 @@ const dailyContextService = source('lib/daily-context-service.ts')
 const worker = source('workers/chatgpt-consumer/worker-v2.mjs')
 const composer = source('app/[username]/update-system-composer.tsx')
 const layout = source('app/[username]/layout.tsx')
+const interruptSql = source('supabase/sql/add_materiality_interrupts.sql')
 
 
 test('System owns the normal daily default instead of requiring player acknowledgement', () => {
@@ -68,9 +69,12 @@ test('sticky Today update remains the correction path and triggers materiality-b
 })
 
 
-test('autonomy does not replace the whole day when context changes', () => {
+test('reevaluation changes only active affected quests and never rewrites completed work', () => {
   assert.doesNotMatch(migration, /delete from public\.daily_quests/i)
   assert.doesNotMatch(migration, /update public\.daily_quests/i)
   assert.match(worker, /affectedQuestIds/)
   assert.match(worker, /generateSystemInterrupt/)
+  assert.match(interruptSql, /status in \('pending','partial'\)/)
+  assert.match(interruptSql, /v_target\.status not in \('pending','partial'\)/)
+  assert.match(interruptSql, /v_target\.status='completed' then 'target_completed'/)
 })
