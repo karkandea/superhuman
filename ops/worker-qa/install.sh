@@ -49,12 +49,21 @@ if [[ "$bootstrap_profile" -eq 1 ]]; then
 
   rm -rf "$QA_PROFILE"
   mkdir -p "$QA_PROFILE"
-  rsync -a --delete \
-    --exclude='SingletonCookie' \
-    --exclude='SingletonLock' \
-    --exclude='SingletonSocket' \
-    --exclude='DevToolsActivePort' \
-    "$PROD_PROFILE/" "$QA_PROFILE/"
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a --delete \
+      --exclude='SingletonCookie' \
+      --exclude='SingletonLock' \
+      --exclude='SingletonSocket' \
+      --exclude='DevToolsActivePort' \
+      "$PROD_PROFILE/" "$QA_PROFILE/"
+  else
+    cp -a "$PROD_PROFILE/." "$QA_PROFILE/"
+    rm -f \
+      "$QA_PROFILE/SingletonCookie" \
+      "$QA_PROFILE/SingletonLock" \
+      "$QA_PROFILE/SingletonSocket" \
+      "$QA_PROFILE/DevToolsActivePort"
+  fi
   chown -R superhuman-ai:superhuman-ai "$QA_PROFILE"
   chmod 700 "$QA_PROFILE"
 
