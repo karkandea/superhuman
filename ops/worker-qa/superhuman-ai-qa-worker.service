@@ -12,7 +12,7 @@ WorkingDirectory=/opt/superhuman/workers/chatgpt-consumer
 EnvironmentFile=/etc/superhuman-ai/consumer-worker.env
 Environment=SUPERHUMAN_QA_WORKER_ID=superhuman-vps-qa
 Environment=SUPERHUMAN_QA_POLL_MS=2500
-Environment=SUPERHUMAN_QA_LEASE_SECONDS=900
+Environment=SUPERHUMAN_QA_LEASE_SECONDS=1800
 Environment=CHATGPT_BROWSER_PROFILE_DIR=/var/lib/superhuman-ai/chatgpt-qa-profile
 Environment=CHATGPT_CDP_PORT=9223
 Environment=CHATGPT_CDP_URL=http://127.0.0.1:9223
