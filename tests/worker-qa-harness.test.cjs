@@ -10,6 +10,7 @@ function source(relativePath) {
 }
 
 const migration = source('supabase/sql/add_worker_qa_harness.sql')
+const hardening = source('supabase/sql/harden_worker_qa_rate_limit.sql')
 const worker = source('workers/chatgpt-consumer/qa-worker.mjs')
 const scenarios = source('workers/chatgpt-consumer/qa-scenarios.mjs')
 const unit = source('ops/worker-qa/superhuman-ai-qa-worker.service')
@@ -33,6 +34,8 @@ test('QA control plane is service-role only and player roles cannot operate the 
   assert.match(migration, /grant execute on function public\.request_worker_qa_run\(text, integer\) to service_role/)
   assert.match(migration, /grant execute on function public\.cancel_worker_qa_run\(uuid\) to service_role/)
   assert.match(migration, /grant execute on function public\.get_worker_qa_run\(uuid\) to service_role/)
+  assert.match(hardening, /revoke all on function public\.schedule_worker_qa_rate_limit_retry\(uuid,text,integer,integer,text\) from public, anon, authenticated/)
+  assert.match(hardening, /grant execute on function public\.schedule_worker_qa_rate_limit_retry\(uuid,text,integer,integer,text\) to service_role/)
 })
 
 test('QA runner uses the real consumer provider and Playwright browser transport', () => {
@@ -81,7 +84,27 @@ test('QA claim yields to runnable production work and runs stay bounded', () => 
   assert.match(migration, /Production work wins resource priority/)
   assert.match(migration, /from public\.ai_inference_jobs j/)
   assert.match(migration, /p_repetitions > 50/)
-  assert.match(migration, /p_lease_seconds > 1800/)
+  assert.match(hardening, /p_lease_seconds > 1800/)
+})
+
+test('QA provider throttling pauses the iteration instead of burning the remaining batch', () => {
+  assert.match(hardening, /available_at timestamptz not null default now\(\)/)
+  assert.match(hardening, /provider_rate_limit_count integer not null default 0/)
+  assert.match(hardening, /schedule_worker_qa_rate_limit_retry/)
+  assert.match(hardening, /i\.status='queued' and i\.available_at <= now\(\)/)
+  assert.match(worker, /code === 'provider_rate_limited'/)
+  assert.match(worker, /scheduleRateLimitRetry/)
+  assert.match(worker, /RATE_LIMIT_COOLDOWN_SECONDS/)
+  assert.match(worker, /MAX_RATE_LIMIT_RETRIES/)
+  assert.match(unit, /SUPERHUMAN_QA_INTER_ITERATION_PAUSE_MS=30000/)
+  assert.match(unit, /SUPERHUMAN_QA_RATE_LIMIT_COOLDOWN_SECONDS=900/)
+  assert.match(unit, /SUPERHUMAN_QA_MAX_RATE_LIMIT_RETRIES=2/)
+})
+
+test('QA summary separates validator failures from transport or provider failures', () => {
+  assert.match(hardening, /status='failed' and error_code='validator_failed'/)
+  assert.match(hardening, /case when v_terminal=0 then 0 else round\(\(v_success::numeric\/v_terminal::numeric\)\*100,2\) end/)
+  assert.match(hardening, /'cancelledCount',v_cancelled/)
 })
 
 test('QA worker modules parse as JavaScript without launching live AI', () => {
