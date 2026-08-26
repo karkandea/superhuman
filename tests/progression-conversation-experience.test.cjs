@@ -62,7 +62,8 @@ test('initial progression requires real external research without leaking player
   assert.match(researchFunction, /sources: \[\{/)
   assert.match(provider, /webSearch: request\.operation === 'research_progression_context'/)
   assert.match(transport, /async function activateWebSearch/)
-  assert.match(transport, /web_search_unavailable/)
+  assert.match(transport, /verifyWebSearchActive/)
+  assert.match(transport, /tool_state_invalid/)
   assert.match(transport, /research=search-ui/)
 })
 

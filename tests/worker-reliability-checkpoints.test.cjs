@@ -25,7 +25,8 @@ test('browser transport never blindly retries after prompt submission', () => {
 
 test('browser transport verifies Search mode after UI selection', () => {
   assert.match(source, /verifyWebSearchActive/)
-  assert.match(source, /web_search_activation_unverified/)
+  assert.match(source, /webSearchSelected/)
+  assert.match(source, /tool_state_invalid/)
 })
 
 test('composer verification tolerates rich-editor whitespace normalization but rejects truncation', async () => {

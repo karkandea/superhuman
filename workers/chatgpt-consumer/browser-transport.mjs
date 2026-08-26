@@ -68,14 +68,24 @@ async function throwIfProviderRateLimited(page) {
 }
 
 async function verifyChatGptPage(page) {
+  if (!page || page.isClosed()) {
+    throw new WorkerError('page_not_ready', 'ChatGPT request page is missing or already closed', true)
+  }
+
   const url = page.url().toLowerCase()
   if (!url.startsWith('https://chatgpt.com/')) {
-    throw new WorkerError('chatgpt_page_invalid', `Unexpected browser page: ${page.url()}`, true)
+    throw new WorkerError('page_not_ready', `Unexpected browser page: ${page.url()}`, true)
   }
+
   await throwIfProviderRateLimited(page)
+  const readyState = await page.evaluate(() => document.readyState).catch(() => 'unavailable')
+  if (readyState === 'loading' || readyState === 'unavailable') {
+    throw new WorkerError('page_not_ready', `ChatGPT page DOM is not ready (readyState=${readyState})`, true)
+  }
+
   const body = (await page.locator('body').innerText().catch(() => '')).toLowerCase()
   if (url.includes('/auth/login') || /log in|sign up/.test(body)) {
-    throw new WorkerError('browser_auth_required', 'ChatGPT browser session is not authenticated', false)
+    throw new WorkerError('auth_invalid', 'ChatGPT browser session is not authenticated', false)
   }
   if (/verify you are human|checking your browser|security check/.test(body)) {
     throw new WorkerError('browser_challenge', 'ChatGPT browser challenge blocked the worker', true)
@@ -89,15 +99,22 @@ async function waitForComposer(page, deadline) {
     'div[contenteditable="true"][data-placeholder]',
     'div[contenteditable="true"]',
   ]
+  let sawVisibleComposer = false
 
   while (Date.now() < deadline) {
     await verifyChatGptPage(page)
     const composer = await firstVisible(page, selectors)
-    if (composer && await composer.isEditable().catch(() => false)) return composer
+    if (composer) {
+      sawVisibleComposer = true
+      if (await composer.isEditable().catch(() => false)) return composer
+    }
     await sleep(500)
   }
 
-  throw new WorkerError('composer_not_found', 'ChatGPT prompt composer was not found or was not editable', true)
+  if (sawVisibleComposer) {
+    throw new WorkerError('composer_not_editable', 'ChatGPT prompt composer was visible but never became editable', true)
+  }
+  throw new WorkerError('page_not_ready', 'ChatGPT page did not expose a usable prompt composer before timeout', true)
 }
 
 async function composerTextCandidates(composer) {
@@ -125,17 +142,10 @@ async function fillComposerVerified(composer, prompt, deadline) {
   if (composerTextMatches(prompt, candidates)) return
 
   const lengths = composerVerificationLengths(prompt, candidates)
-  if (fillError) {
-    throw new WorkerError(
-      'composer_fill_timeout',
-      `ChatGPT composer fill timed out and the verified state did not match the request (expectedChars=${lengths.expectedChars}, actualChars=${lengths.actualChars})`,
-      true,
-    )
-  }
-
+  const reason = fillError ? 'fill_timeout' : 'content_mismatch'
   throw new WorkerError(
-    'composer_fill_unverified',
-    `ChatGPT composer state did not match the request after fill (expectedChars=${lengths.expectedChars}, actualChars=${lengths.actualChars})`,
+    'composer_fill_failed',
+    `ChatGPT composer fill failed (${reason}; expectedChars=${lengths.expectedChars}, actualChars=${lengths.actualChars})`,
     true,
   )
 }
@@ -328,7 +338,7 @@ async function activateTemporaryChat(page, deadline) {
   })
   await verifyChatGptPage(page)
   if (!temporaryChatUrlActive(page)) {
-    throw new WorkerError('temporary_chat_unverified', 'Temporary Chat activation could not be verified', true)
+    throw new WorkerError('temporary_chat_not_active', 'Temporary Chat activation could not be verified', true)
   }
 }
 
@@ -342,7 +352,7 @@ async function webSearchSelected(page) {
 
 async function verifyWebSearchActive(page) {
   if (!await webSearchSelected(page)) {
-    throw new WorkerError('web_search_activation_unverified', 'ChatGPT Search selection could not be verified', true)
+    throw new WorkerError('tool_state_invalid', 'ChatGPT Search selection could not be verified', true)
   }
 }
 
@@ -378,7 +388,7 @@ async function activateWebSearch(page, deadline) {
   try {
     await composer.fill('/', { timeout: timeoutUntil(deadline) })
   } catch {
-    throw new WorkerError('web_search_unavailable', 'ChatGPT Search could not be activated from the composer', true)
+    throw new WorkerError('tool_state_invalid', 'ChatGPT Search could not be activated from the composer', true)
   }
   await sleep(200)
   const slashSearch = await firstVisible(page, [
@@ -390,7 +400,7 @@ async function activateWebSearch(page, deadline) {
   ])
   if (!slashSearch) {
     await composer.fill('').catch(() => {})
-    throw new WorkerError('web_search_unavailable', 'ChatGPT Search is not available for this browser session', true)
+    throw new WorkerError('tool_state_invalid', 'ChatGPT Search is not available for this browser session', true)
   }
   await slashSearch.click({ timeout: timeoutUntil(deadline) })
   await sleep(200)
@@ -497,11 +507,42 @@ async function preparePageForRequest(page, { conversationRef, temporaryChat, web
   return waitForComposer(page, deadline)
 }
 
+function recoveryStrategy(errorCode) {
+  if (errorCode === 'composer_not_editable') return 'reload_composer'
+  if (errorCode === 'tool_state_invalid') return 'reset_tool_state'
+  if (errorCode === 'temporary_chat_not_active') return 'reset_temporary_chat'
+  if (errorCode === 'page_not_ready') return 'reload_page'
+  if (errorCode === 'composer_fill_failed') return 'fresh_page'
+  return 'fresh_page'
+}
+
 async function recoverPreSubmissionPage(context, page, correlationId, attempt, error) {
-  checkpoint(correlationId, 'recovery', 'start', `attempt=${attempt} code=${error.code || 'unknown'}`)
+  const strategy = recoveryStrategy(error.code)
+  checkpoint(correlationId, 'recovery', 'start', `attempt=${attempt} code=${error.code || 'unknown'} strategy=${strategy}`)
+
+  if (strategy === 'reload_composer' || strategy === 'reload_page') {
+    try {
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 })
+      checkpoint(correlationId, 'recovery', 'ready', `attempt=${attempt} strategy=${strategy}`)
+      return page
+    } catch {
+      // Escalate to a new page below. The next attempt still rebuilds all invariants.
+    }
+  }
+
+  if (strategy === 'reset_tool_state' || strategy === 'reset_temporary_chat') {
+    try {
+      await page.goto(TEMPORARY_CHAT_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+      checkpoint(correlationId, 'recovery', 'ready', `attempt=${attempt} strategy=${strategy}`)
+      return page
+    } catch {
+      // Escalate to a new page below.
+    }
+  }
+
   await page?.close().catch(() => {})
   const nextPage = await context.newPage()
-  checkpoint(correlationId, 'recovery', 'ready', `attempt=${attempt}`)
+  checkpoint(correlationId, 'recovery', 'ready', `attempt=${attempt} strategy=fresh_page`)
   return nextPage
 }
 
@@ -513,37 +554,40 @@ export class PlaywrightChatGptTransport {
     let page = await context.newPage()
     let submitted = false
 
+    checkpoint(correlationId, 'step_isolation', 'start', 'page=fresh')
+
     try {
       let composer = null
+      let prepared = false
       for (let attempt = 1; attempt <= Math.max(1, PRE_SUBMISSION_RECOVERY_ATTEMPTS); attempt += 1) {
         try {
-          checkpoint(correlationId, 'browser_session', 'checking', `attempt=${attempt}`)
-          await verifyChatGptPage(page).catch(() => {})
           checkpoint(correlationId, 'browser_session', 'ready', `attempt=${attempt}`)
-
           checkpoint(correlationId, 'chatgpt_state', 'checking', `attempt=${attempt}`)
           composer = await preparePageForRequest(page, { conversationRef, temporaryChat, webSearch, deadline })
           checkpoint(correlationId, 'chatgpt_state', 'ready', `attempt=${attempt}`)
+
+          checkpoint(correlationId, 'prompt_fill', 'checking', `attempt=${attempt}`)
+          await fillComposerVerified(composer, prompt, deadline)
+          checkpoint(correlationId, 'prompt_fill', 'verified', `attempt=${attempt}`)
+          prepared = true
           break
         } catch (rawError) {
           const error = rawError instanceof WorkerError
             ? rawError
-            : new WorkerError('pre_submission_state_invalid', rawError instanceof Error ? rawError.message : String(rawError), true)
+            : new WorkerError('page_not_ready', rawError instanceof Error ? rawError.message : String(rawError), true)
           checkpoint(correlationId, 'chatgpt_state', 'failed', `attempt=${attempt} code=${error.code}`)
           if (submitted || !error.retryable || attempt >= Math.max(1, PRE_SUBMISSION_RECOVERY_ATTEMPTS)) throw error
           page = await recoverPreSubmissionPage(context, page, correlationId, attempt, error)
         }
       }
 
-      if (!composer) throw new WorkerError('composer_not_found', 'ChatGPT prompt composer was not found', true)
+      if (!composer || !prepared) throw new WorkerError('page_not_ready', 'ChatGPT pre-submission invariants were not prepared', true)
+      checkpoint(correlationId, 'step_isolation', 'ready', `temporaryChat=${temporaryChat} webSearch=${webSearch}`)
+
       const assistantMessages = page.locator('[data-message-author-role="assistant"]')
       const userMessages = page.locator('[data-message-author-role="user"]')
       const previousAssistantCount = await assistantMessages.count()
       const previousUserCount = await userMessages.count()
-
-      checkpoint(correlationId, 'prompt_fill', 'checking')
-      await fillComposerVerified(composer, prompt, deadline)
-      checkpoint(correlationId, 'prompt_fill', 'verified')
 
       if (materialized.paths.length > 0) {
         checkpoint(correlationId, 'attachments', 'checking', `count=${materialized.paths.length}`)
@@ -591,6 +635,7 @@ export class PlaywrightChatGptTransport {
       throw error
     } finally {
       await page?.close().catch(() => {})
+      checkpoint(correlationId, 'step_isolation', 'disposed', 'page=closed')
       await materialized.cleanup()
     }
   }
@@ -618,5 +663,5 @@ export async function loginMode() {
 }
 
 export function browserRuntimeSummary() {
-  return `ChatGPT profile: ${PROFILE_DIR}; cdp=${CDP_URL}; headless=${HEADLESS}; freshChats=temporary-ui; research=search-ui; preSubmitRecovery=${PRE_SUBMISSION_RECOVERY_ATTEMPTS}`
+  return `ChatGPT profile: ${PROFILE_DIR}; cdp=${CDP_URL}; headless=${HEADLESS}; freshChats=temporary-ui; research=search-ui; preSubmitRecovery=${PRE_SUBMISSION_RECOVERY_ATTEMPTS}; stepIsolation=fresh-page`
 }
