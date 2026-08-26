@@ -8,6 +8,8 @@ Type=simple
 User=superhuman-ai
 Group=superhuman-ai
 WorkingDirectory=/opt/superhuman/workers/chatgpt-consumer
+# Deliberately do not load production EnvironmentFile=/etc/superhuman-ai/consumer-worker.env here.
+# The QA browser owns an explicit browser-only environment so port/profile values cannot leak from production.
 Environment=HOME=/home/superhuman-ai
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 Environment=SUPERHUMAN_DISPLAY_NUMBER=100
