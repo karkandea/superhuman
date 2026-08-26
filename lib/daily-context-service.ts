@@ -21,6 +21,14 @@ export async function getDailyContextForDate(
   if (!playerId) throw new Error('playerId is required')
   if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) throw new Error('targetDate must use YYYY-MM-DD')
 
+  // Today is System-owned: this idempotent RPC creates the normal default and
+  // progression job when needed. Historical dates are a read-only no-op inside
+  // the RPC, so the same service remains safe for history screens.
+  const { error: ensureError } = await client.rpc('ensure_daily_progression', {
+    p_target_date: targetDate,
+  })
+  if (ensureError) throw new Error(`ensure Daily Context: ${ensureError.message}`)
+
   const { data, error } = await client
     .from('daily_contexts')
     .select('id,user_id,context_date,mode,context_text,created_at,updated_at')
