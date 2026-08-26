@@ -15,6 +15,8 @@ const traffic = source('supabase/sql/add_chatgpt_traffic_controller.sql')
 const worker = source('workers/chatgpt-consumer/qa-worker.mjs')
 const scenarios = source('workers/chatgpt-consumer/qa-scenarios.mjs')
 const unit = source('ops/worker-qa/superhuman-ai-qa-worker.service')
+const browserUnit = source('ops/worker-qa/superhuman-chatgpt-qa-browser.service')
+const browserLauncher = source('workers/chatgpt-consumer/browser-vps.sh')
 const installer = source('ops/worker-qa/install.sh')
 const startScript = source('ops/worker-qa/start.sh')
 
@@ -73,37 +75,46 @@ test('QA offers bounded step and full-chain scenarios with real Search mode', ()
   assert.match(scenarios, /operation: 'generate_daily_quests'/)
 })
 
-test('QA service and launch script force a dedicated browser profile and CDP port', () => {
+test('QA worker attaches only to its dedicated browser service', () => {
+  assert.match(unit, /After=network-online\.target superhuman-chatgpt-qa-browser\.service/)
+  assert.match(unit, /Requires=superhuman-chatgpt-qa-browser\.service/)
+  assert.doesNotMatch(unit, /Requires=superhuman-chatgpt-browser\.service/)
   assert.match(unit, /CHATGPT_BROWSER_PROFILE_DIR=\/var\/lib\/superhuman-ai\/chatgpt-qa-profile/)
   assert.match(unit, /CHATGPT_CDP_PORT=9223/)
   assert.match(unit, /CHATGPT_CDP_URL=http:\/\/127\.0\.0\.1:9223/)
-  assert.doesNotMatch(unit, /CHATGPT_BROWSER_PROFILE_DIR=\/var\/lib\/superhuman-ai\/chatgpt-profile\s*$/m)
-  assert.match(installer, /QA_PROFILE=\/var\/lib\/superhuman-ai\/chatgpt-qa-profile/)
-  assert.match(installer, /PROD_PROFILE=\/var\/lib\/superhuman-ai\/chatgpt-profile/)
-
-  // consumer-worker.env carries production browser values, so the executable
-  // QA boundary must force isolation again after systemd loads that file.
-  assert.match(startScript, /export SUPERHUMAN_CHATGPT_TRAFFIC_KIND=qa/)
+  assert.match(unit, /DISPLAY=:100/)
   assert.match(startScript, /export CHATGPT_BROWSER_PROFILE_DIR=\/var\/lib\/superhuman-ai\/chatgpt-qa-profile/)
   assert.match(startScript, /export CHATGPT_CDP_PORT=9223/)
   assert.match(startScript, /export CHATGPT_CDP_URL=http:\/\/127\.0\.0\.1:9223/)
-  assert.match(startScript, /\[qa-runtime\] profile=/)
+  assert.match(startScript, /export DISPLAY=:100/)
+  assert.match(startScript, /export CHATGPT_CHROME_BIN=\/bin\/false/)
+  assert.match(startScript, /browser=dedicated-service/)
+  assert.match(startScript, /cdp=ready/)
 })
 
-test('QA launcher resolves a Linux Chrome binary before isolated CDP startup', () => {
-  for (const candidate of [
-    '/usr/bin/google-chrome-stable',
-    '/usr/bin/google-chrome',
-    '/opt/google/chrome/chrome',
-    '/usr/bin/chromium',
-    '/usr/bin/chromium-browser',
-  ]) {
-    assert.match(startScript, new RegExp(candidate.replaceAll('/', '\\/')))
-  }
-  assert.match(startScript, /export CHATGPT_CHROME_BIN="\$QA_CHROME_BIN"/)
-  assert.match(startScript, /blocked: no executable Linux Chrome\/Chromium binary found/)
-  assert.match(startScript, /chrome=\$\{CHATGPT_CHROME_BIN\}/)
-  assert.doesNotMatch(startScript, /Applications\/Google Chrome\.app/)
+test('dedicated QA browser mirrors the proven VPS browser launcher on isolated display and CDP', () => {
+  assert.match(browserUnit, /EnvironmentFile=\/etc\/superhuman-ai\/consumer-worker\.env/)
+  assert.match(browserUnit, /SUPERHUMAN_DISPLAY_NUMBER=100/)
+  assert.match(browserUnit, /CHATGPT_BROWSER_PROFILE_DIR=\/var\/lib\/superhuman-ai\/chatgpt-qa-profile/)
+  assert.match(browserUnit, /CHATGPT_CDP_PORT=9223/)
+  assert.match(browserUnit, /ExecStart=\/bin\/bash \/opt\/superhuman\/workers\/chatgpt-consumer\/browser-vps\.sh/)
+  assert.match(browserLauncher, /Xvfb "\$DISPLAY"/)
+  assert.match(browserLauncher, /--remote-debugging-port="\$CHATGPT_CDP_PORT"/)
+  assert.match(browserLauncher, /--user-data-dir="\$CHATGPT_BROWSER_PROFILE_DIR"/)
+  assert.doesNotMatch(browserUnit, /9222/)
+  assert.doesNotMatch(browserUnit, /chatgpt-profile(?:\s|$)/)
+})
+
+test('QA installer health-gates browser before starting worker', () => {
+  assert.match(installer, /QA_BROWSER=superhuman-chatgpt-qa-browser\.service/)
+  assert.match(installer, /systemctl enable "\$QA_BROWSER"/)
+  assert.match(installer, /systemctl start "\$QA_BROWSER"/)
+  assert.match(installer, /QA_CDP_URL=http:\/\/127\.0\.0\.1:9223/)
+  assert.match(installer, /curl -fsS "\$QA_CDP_URL\/json\/version"/)
+  assert.match(installer, /QA browser failed to expose CDP/)
+  const browserStart = installer.indexOf('systemctl start "$QA_BROWSER"')
+  const workerRestart = installer.indexOf('systemctl restart "$QA_WORKER"')
+  assert.ok(browserStart >= 0 && workerRestart > browserStart)
 })
 
 test('QA claim yields to runnable production work and live runs stay canary-sized', () => {
