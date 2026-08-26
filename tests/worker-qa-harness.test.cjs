@@ -90,6 +90,22 @@ test('QA service and launch script force a dedicated browser profile and CDP por
   assert.match(startScript, /\[qa-runtime\] profile=/)
 })
 
+test('QA launcher resolves a Linux Chrome binary before isolated CDP startup', () => {
+  for (const candidate of [
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/google-chrome',
+    '/opt/google/chrome/chrome',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+  ]) {
+    assert.match(startScript, new RegExp(candidate.replaceAll('/', '\\/')))
+  }
+  assert.match(startScript, /export CHATGPT_CHROME_BIN="\$QA_CHROME_BIN"/)
+  assert.match(startScript, /blocked: no executable Linux Chrome\/Chromium binary found/)
+  assert.match(startScript, /chrome=\$\{CHATGPT_CHROME_BIN\}/)
+  assert.doesNotMatch(startScript, /Applications\/Google Chrome\.app/)
+})
+
 test('QA claim yields to runnable production work and live runs stay canary-sized', () => {
   assert.match(migration, /Production work wins resource priority/)
   assert.match(migration, /from public\.ai_inference_jobs j/)
