@@ -1,0 +1,33 @@
+[Unit]
+Description=Superhuman autonomous Worker QA harness
+After=network-online.target superhuman-chatgpt-browser.service
+Requires=superhuman-chatgpt-browser.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=superhuman-ai
+Group=superhuman-ai
+WorkingDirectory=/opt/superhuman/workers/chatgpt-consumer
+EnvironmentFile=/etc/superhuman-ai/consumer-worker.env
+Environment=SUPERHUMAN_QA_WORKER_ID=superhuman-vps-qa
+Environment=SUPERHUMAN_QA_POLL_MS=2500
+Environment=SUPERHUMAN_QA_LEASE_SECONDS=1800
+Environment=CHATGPT_BROWSER_PROFILE_DIR=/var/lib/superhuman-ai/chatgpt-qa-profile
+Environment=CHATGPT_CDP_PORT=9223
+Environment=CHATGPT_CDP_URL=http://127.0.0.1:9223
+Environment=CHATGPT_HEADLESS=false
+Environment=DISPLAY=:99
+ExecStart=/bin/bash /opt/superhuman/ops/worker-qa/start.sh
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+KillMode=control-group
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/superhuman-ai /opt/superhuman
+
+[Install]
+WantedBy=multi-user.target
