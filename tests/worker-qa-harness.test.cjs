@@ -16,6 +16,7 @@ const worker = source('workers/chatgpt-consumer/qa-worker.mjs')
 const scenarios = source('workers/chatgpt-consumer/qa-scenarios.mjs')
 const unit = source('ops/worker-qa/superhuman-ai-qa-worker.service')
 const installer = source('ops/worker-qa/install.sh')
+const startScript = source('ops/worker-qa/start.sh')
 
 test('Worker QA uses a queue namespace isolated from production inference jobs', () => {
   for (const table of ['worker_qa_runs', 'worker_qa_iterations', 'worker_qa_steps']) {
@@ -72,13 +73,21 @@ test('QA offers bounded step and full-chain scenarios with real Search mode', ()
   assert.match(scenarios, /operation: 'generate_daily_quests'/)
 })
 
-test('QA service uses a dedicated browser profile and CDP port', () => {
+test('QA service and launch script force a dedicated browser profile and CDP port', () => {
   assert.match(unit, /CHATGPT_BROWSER_PROFILE_DIR=\/var\/lib\/superhuman-ai\/chatgpt-qa-profile/)
   assert.match(unit, /CHATGPT_CDP_PORT=9223/)
   assert.match(unit, /CHATGPT_CDP_URL=http:\/\/127\.0\.0\.1:9223/)
   assert.doesNotMatch(unit, /CHATGPT_BROWSER_PROFILE_DIR=\/var\/lib\/superhuman-ai\/chatgpt-profile\s*$/m)
   assert.match(installer, /QA_PROFILE=\/var\/lib\/superhuman-ai\/chatgpt-qa-profile/)
   assert.match(installer, /PROD_PROFILE=\/var\/lib\/superhuman-ai\/chatgpt-profile/)
+
+  // consumer-worker.env carries production browser values, so the executable
+  // QA boundary must force isolation again after systemd loads that file.
+  assert.match(startScript, /export SUPERHUMAN_CHATGPT_TRAFFIC_KIND=qa/)
+  assert.match(startScript, /export CHATGPT_BROWSER_PROFILE_DIR=\/var\/lib\/superhuman-ai\/chatgpt-qa-profile/)
+  assert.match(startScript, /export CHATGPT_CDP_PORT=9223/)
+  assert.match(startScript, /export CHATGPT_CDP_URL=http:\/\/127\.0\.0\.1:9223/)
+  assert.match(startScript, /\[qa-runtime\] profile=/)
 })
 
 test('QA claim yields to runnable production work and live runs stay canary-sized', () => {
