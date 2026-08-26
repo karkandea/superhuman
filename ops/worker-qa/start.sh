@@ -9,17 +9,18 @@ export SUPERHUMAN_QA_WORKER_ID="${SUPERHUMAN_QA_WORKER_ID:-superhuman-vps-qa}"
 export CHATGPT_BROWSER_PROFILE_DIR=/var/lib/superhuman-ai/chatgpt-qa-profile
 export CHATGPT_CDP_PORT=9223
 export CHATGPT_CDP_URL=http://127.0.0.1:9223
-export CHATGPT_REQUIRE_EXISTING_CDP=true
 export CHATGPT_HEADLESS=false
 export DISPLAY=:100
+
+# The browser lifecycle belongs exclusively to the dedicated QA browser service.
+# If CDP disappears after startup, shared browser code must fail/recover through
+# systemd instead of creating an unmanaged second Chrome process.
+export CHATGPT_CHROME_BIN=/bin/false
 
 cd /opt/superhuman/workers/chatgpt-consumer
 
 echo "[qa-runtime] profile=${CHATGPT_BROWSER_PROFILE_DIR} cdp=${CHATGPT_CDP_URL} trafficKind=${SUPERHUMAN_CHATGPT_TRAFFIC_KIND} display=${DISPLAY} browser=dedicated-service"
 
-# The QA browser is owned by superhuman-chatgpt-qa-browser.service. Never spawn
-# another Chrome from the worker process: wait for the dedicated CDP endpoint
-# and fail closed if the browser service is not ready.
 cdp_ready=0
 for _ in $(seq 1 60); do
   if curl -fsS "${CHATGPT_CDP_URL}/json/version" >/dev/null 2>&1; then
