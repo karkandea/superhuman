@@ -7,15 +7,24 @@ if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
 fi
 
 REPO=/opt/superhuman
-UNIT_SOURCE="$REPO/ops/worker-qa/superhuman-ai-qa-worker.service"
-UNIT_TARGET=/etc/systemd/system/superhuman-ai-qa-worker.service
+QA_WORKER_UNIT_SOURCE="$REPO/ops/worker-qa/superhuman-ai-qa-worker.service"
+QA_WORKER_UNIT_TARGET=/etc/systemd/system/superhuman-ai-qa-worker.service
+QA_BROWSER_UNIT_SOURCE="$REPO/ops/worker-qa/superhuman-chatgpt-qa-browser.service"
+QA_BROWSER_UNIT_TARGET=/etc/systemd/system/superhuman-chatgpt-qa-browser.service
 PROD_PROFILE=/var/lib/superhuman-ai/chatgpt-profile
 QA_PROFILE=/var/lib/superhuman-ai/chatgpt-qa-profile
 PROD_WORKER=superhuman-ai-worker.service
 PROD_BROWSER=superhuman-chatgpt-browser.service
 QA_WORKER=superhuman-ai-qa-worker.service
+QA_BROWSER=superhuman-chatgpt-qa-browser.service
+QA_CDP_URL=http://127.0.0.1:9223
 
-for path in "$REPO" "$UNIT_SOURCE" /etc/superhuman-ai/consumer-worker.env "$PROD_PROFILE"; do
+for path in \
+  "$REPO" \
+  "$QA_WORKER_UNIT_SOURCE" \
+  "$QA_BROWSER_UNIT_SOURCE" \
+  /etc/superhuman-ai/consumer-worker.env \
+  "$PROD_PROFILE"; do
   if [[ ! -e "$path" ]]; then
     echo "Missing required path: $path" >&2
     exit 1
@@ -37,6 +46,7 @@ if [[ "$bootstrap_profile" -eq 1 ]]; then
   echo "Pausing production worker/browser briefly for a consistent profile snapshot."
 
   systemctl stop "$QA_WORKER" 2>/dev/null || true
+  systemctl stop "$QA_BROWSER" 2>/dev/null || true
   systemctl stop "$PROD_WORKER"
   systemctl stop "$PROD_BROWSER"
 
@@ -73,13 +83,52 @@ if [[ "$bootstrap_profile" -eq 1 ]]; then
   trap - EXIT
 fi
 
-install -m 0644 "$UNIT_SOURCE" "$UNIT_TARGET"
+install -m 0644 "$QA_BROWSER_UNIT_SOURCE" "$QA_BROWSER_UNIT_TARGET"
+install -m 0644 "$QA_WORKER_UNIT_SOURCE" "$QA_WORKER_UNIT_TARGET"
 systemctl daemon-reload
+systemctl enable "$QA_BROWSER"
 systemctl enable "$QA_WORKER"
-systemctl restart "$QA_WORKER"
 
+# Browser lifecycle is independent from the QA worker. Keep the worker stopped
+# until the dedicated CDP endpoint is healthy so preflight never races browser
+# startup or falls back to an unmanaged Chrome process.
+systemctl stop "$QA_WORKER" 2>/dev/null || true
+systemctl stop "$QA_BROWSER" 2>/dev/null || true
+rm -f \
+  "$QA_PROFILE/SingletonCookie" \
+  "$QA_PROFILE/SingletonLock" \
+  "$QA_PROFILE/SingletonSocket" \
+  "$QA_PROFILE/DevToolsActivePort" 2>/dev/null || true
+chown -R superhuman-ai:superhuman-ai "$QA_PROFILE"
+chmod 700 "$QA_PROFILE"
+
+systemctl start "$QA_BROWSER"
+
+cdp_ready=0
+for _ in $(seq 1 60); do
+  if curl -fsS "$QA_CDP_URL/json/version" >/dev/null 2>&1; then
+    cdp_ready=1
+    break
+  fi
+  sleep 0.5
+done
+
+if [[ "$cdp_ready" -ne 1 ]]; then
+  echo "QA browser failed to expose CDP at $QA_CDP_URL" >&2
+  journalctl -u "$QA_BROWSER" --since '2 minutes ago' --no-pager | tail -n 80 >&2 || true
+  exit 1
+fi
+
+systemctl restart "$QA_WORKER"
 sleep 3
 
+echo "=== QA browser ==="
+systemctl is-active "$QA_BROWSER"
+echo
+echo "=== QA CDP ==="
+curl -fsS "$QA_CDP_URL/json/version" | head -c 500
+echo
+echo
 echo "=== QA worker ==="
 systemctl is-active "$QA_WORKER"
 echo
@@ -92,5 +141,8 @@ echo
 echo "=== QA profile ==="
 stat -c '%U:%G %a %n' "$QA_PROFILE"
 echo
-echo "=== QA startup log ==="
+echo "=== QA browser startup log ==="
+journalctl -u "$QA_BROWSER" --since '2 minutes ago' --no-pager | tail -n 50
+echo
+echo "=== QA worker startup log ==="
 journalctl -u "$QA_WORKER" --since '2 minutes ago' --no-pager | tail -n 50
