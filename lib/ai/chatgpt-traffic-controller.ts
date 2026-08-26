@@ -91,12 +91,20 @@ export async function acquireChatGptTrafficSlot(correlationId: string): Promise<
     const reason = String(row?.reason || 'busy')
     const retryAfter = retryAfterSeconds(row)
 
-    // QA never waits while the shared account is cooling down. It returns the
-    // iteration to its own long cooldown path without sending another prompt.
+    // QA never waits while the shared account is cooling down or production owns
+    // priority. It returns the iteration to a non-terminal deferred/cooldown path
+    // without sending another prompt.
     if (CLIENT_KIND === 'qa' && (reason === 'global_cooldown' || reason === 'qa_cooldown')) {
       throw new ChatGptTrafficError(
         'provider_rate_limited',
         `Shared ChatGPT traffic circuit is cooling down; QA must retry later (${retryAfter}s)`,
+        retryAfter,
+      )
+    }
+    if (CLIENT_KIND === 'qa' && reason === 'production_priority') {
+      throw new ChatGptTrafficError(
+        'traffic_deferred',
+        'ChatGPT traffic was temporarily deferred because production owns priority',
         retryAfter,
       )
     }
