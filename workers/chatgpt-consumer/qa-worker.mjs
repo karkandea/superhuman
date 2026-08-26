@@ -228,6 +228,7 @@ async function processIteration(client, claim) {
     const stepStartedAt = Date.now()
     let checkpoints = []
     let response = null
+    let telemetryCommitted = false
 
     try {
       const captured = await captureCheckpoints(() => provider.invokeStructured(spec.request))
@@ -238,6 +239,7 @@ async function processIteration(client, claim) {
 
       allCheckpoints.push(...checkpoints.map(event => ({ ...event, qaStep: spec.name, qaStepOrder: stepOrder })))
       totalRecoveryCount += stepRecoveryCount
+      telemetryCommitted = true
       outputs[spec.name] = jsonSafe(response.output)
 
       await finishStep(client, stepId, {
@@ -261,7 +263,7 @@ async function processIteration(client, claim) {
     } catch (error) {
       checkpoints = Array.isArray(error.qaCheckpoints) ? error.qaCheckpoints : checkpoints
       const stepRecoveryCount = recoveryCount(checkpoints)
-      if (checkpoints.length) {
+      if (!telemetryCommitted && checkpoints.length) {
         allCheckpoints.push(...checkpoints.map(event => ({ ...event, qaStep: spec.name, qaStepOrder: stepOrder })))
         totalRecoveryCount += stepRecoveryCount
       }
