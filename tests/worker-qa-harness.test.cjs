@@ -11,6 +11,7 @@ function source(relativePath) {
 
 const migration = source('supabase/sql/add_worker_qa_harness.sql')
 const hardening = source('supabase/sql/harden_worker_qa_rate_limit.sql')
+const traffic = source('supabase/sql/add_chatgpt_traffic_controller.sql')
 const worker = source('workers/chatgpt-consumer/qa-worker.mjs')
 const scenarios = source('workers/chatgpt-consumer/qa-scenarios.mjs')
 const unit = source('ops/worker-qa/superhuman-ai-qa-worker.service')
@@ -80,10 +81,11 @@ test('QA service uses a dedicated browser profile and CDP port', () => {
   assert.match(installer, /PROD_PROFILE=\/var\/lib\/superhuman-ai\/chatgpt-profile/)
 })
 
-test('QA claim yields to runnable production work and runs stay bounded', () => {
+test('QA claim yields to runnable production work and live runs stay canary-sized', () => {
   assert.match(migration, /Production work wins resource priority/)
   assert.match(migration, /from public\.ai_inference_jobs j/)
-  assert.match(migration, /p_repetitions > 50/)
+  assert.match(traffic, /p_repetitions > 2/)
+  assert.match(traffic, /Live Worker Lab runs are canaries, not load tests/)
   assert.match(hardening, /p_lease_seconds > 1800/)
 })
 
@@ -96,9 +98,10 @@ test('QA provider throttling pauses the iteration instead of burning the remaini
   assert.match(worker, /scheduleRateLimitRetry/)
   assert.match(worker, /RATE_LIMIT_COOLDOWN_SECONDS/)
   assert.match(worker, /MAX_RATE_LIMIT_RETRIES/)
-  assert.match(unit, /SUPERHUMAN_QA_INTER_ITERATION_PAUSE_MS=30000/)
+  assert.match(unit, /SUPERHUMAN_QA_INTER_ITERATION_PAUSE_MS=1000/)
   assert.match(unit, /SUPERHUMAN_QA_RATE_LIMIT_COOLDOWN_SECONDS=900/)
   assert.match(unit, /SUPERHUMAN_QA_MAX_RATE_LIMIT_RETRIES=2/)
+  assert.match(unit, /SUPERHUMAN_CHATGPT_TRAFFIC_KIND=qa/)
 })
 
 test('QA summary separates validator failures from transport or provider failures', () => {

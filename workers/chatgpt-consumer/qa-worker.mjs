@@ -12,7 +12,7 @@ const WORKER_ID = process.env.SUPERHUMAN_QA_WORKER_ID || `superhuman-worker-qa:$
 const POLL_MS = Number(process.env.SUPERHUMAN_QA_POLL_MS || 2500)
 const LEASE_SECONDS = Number(process.env.SUPERHUMAN_QA_LEASE_SECONDS || 1800)
 const GENERATION_TIMEOUT_MS = Number(process.env.CHATGPT_GENERATION_TIMEOUT_MS || 180000)
-const INTER_ITERATION_PAUSE_MS = Number(process.env.SUPERHUMAN_QA_INTER_ITERATION_PAUSE_MS || 30000)
+const INTER_ITERATION_PAUSE_MS = Number(process.env.SUPERHUMAN_QA_INTER_ITERATION_PAUSE_MS || 1000)
 const RATE_LIMIT_COOLDOWN_SECONDS = Number(process.env.SUPERHUMAN_QA_RATE_LIMIT_COOLDOWN_SECONDS || 900)
 const MAX_RATE_LIMIT_RETRIES = Number(process.env.SUPERHUMAN_QA_MAX_RATE_LIMIT_RETRIES || 2)
 const RELEASE_SHA = process.env.SUPERHUMAN_QA_RELEASE_SHA || currentReleaseSha()
@@ -56,6 +56,13 @@ function createSupabase() {
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+async function sleepInterruptible(ms) {
+  const deadline = Date.now() + Math.max(0, Number(ms || 0))
+  while (!stopping && Date.now() < deadline) {
+    await sleep(Math.min(250, deadline - Date.now()))
+  }
 }
 
 function normalizeRpcRow(data) {
@@ -206,6 +213,19 @@ async function scheduleRateLimitRetry(client, claim, error) {
   return typeof data === 'string' ? data : String(data || '')
 }
 
+async function scheduleTrafficDeferred(client, claim, error) {
+  const requestedDelay = Number(error?.retryAfterSeconds || 30)
+  const delaySeconds = Math.max(5, Math.min(900, Number.isFinite(requestedDelay) ? requestedDelay : 30))
+  const { data, error: rpcError } = await client.rpc('schedule_worker_qa_traffic_deferred', {
+    p_iteration_id: claim.iteration_id,
+    p_worker_id: WORKER_ID,
+    p_delay_seconds: delaySeconds,
+    p_reason: boundedMessage(error),
+  })
+  if (rpcError) throw new Error(`schedule Worker QA traffic defer: ${rpcError.message}`)
+  return { status: typeof data === 'string' ? data : String(data || ''), delaySeconds }
+}
+
 async function processIteration(client, claim) {
   const startedAt = Date.now()
   const allCheckpoints = []
@@ -319,6 +339,11 @@ async function processIteration(client, claim) {
       console.warn(`[qa ${claim.run_id} #${claim.iteration_no}] provider rate limited; status=${nextStatus} cooldown=${RATE_LIMIT_COOLDOWN_SECONDS}s`)
       return
     }
+    if (code === 'traffic_deferred') {
+      const deferred = await scheduleTrafficDeferred(client, claim, error)
+      console.log(`[qa ${claim.run_id} #${claim.iteration_no}] traffic deferred; status=${deferred.status} delay=${deferred.delaySeconds}s`)
+      return
+    }
 
     await completeIteration(client, claim, {
       status: 'failed',
@@ -338,17 +363,17 @@ async function main() {
   const client = createSupabase()
   console.log(`Superhuman Worker QA online as ${WORKER_ID}`)
   console.log(`QA fixture=${WORKER_QA_FIXTURE_VERSION}; release=${RELEASE_SHA}`)
-  console.log(`QA pacing: betweenIterations=${INTER_ITERATION_PAUSE_MS}ms; rateLimitCooldown=${RATE_LIMIT_COOLDOWN_SECONDS}s; rateLimitRetries=${MAX_RATE_LIMIT_RETRIES}`)
+  console.log(`QA pacing: controller=shared; betweenIterations=${INTER_ITERATION_PAUSE_MS}ms; rateLimitCooldown=${RATE_LIMIT_COOLDOWN_SECONDS}s; rateLimitRetries=${MAX_RATE_LIMIT_RETRIES}`)
   console.log(browserRuntimeSummary())
 
   while (!stopping) {
     const claim = await claimIteration(client)
     if (!claim) {
-      await sleep(POLL_MS)
+      await sleepInterruptible(POLL_MS)
       continue
     }
     await processIteration(client, claim)
-    if (!stopping && INTER_ITERATION_PAUSE_MS > 0) await sleep(INTER_ITERATION_PAUSE_MS)
+    if (!stopping && INTER_ITERATION_PAUSE_MS > 0) await sleepInterruptible(INTER_ITERATION_PAUSE_MS)
   }
 }
 
