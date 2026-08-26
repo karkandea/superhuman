@@ -62,7 +62,6 @@ async function openQaPage() {
     const page = await context.newPage()
     return { browser, context, page, close: async () => {
       await page.close().catch(() => {})
-      await browser.close().catch(() => {})
     } }
   }
 
