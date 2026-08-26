@@ -1,6 +1,7 @@
 [Unit]
 Description=Superhuman autonomous Worker QA harness
 After=network-online.target superhuman-chatgpt-browser.service
+Requires=superhuman-chatgpt-browser.service
 Wants=network-online.target
 
 [Service]
