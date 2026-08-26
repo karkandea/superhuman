@@ -11,6 +11,7 @@ function source(relativePath) {
 const transport = source('workers/chatgpt-consumer/browser-transport.mjs')
 const recoverySql = source('supabase/sql/classify_browser_invariant_recovery.sql')
 const worker = source('workers/chatgpt-consumer/worker-v2.mjs')
+const reasoningSession = source('lib/ai/reasoning-session.ts')
 
 
 test('every consumer AI invocation owns a fresh page and disposes it before the next step', () => {
@@ -19,6 +20,12 @@ test('every consumer AI invocation owns a fresh page and disposes it before the 
   assert.match(transport, /checkpoint\(correlationId, 'step_isolation', 'start', 'page=fresh'\)/)
   assert.match(transport, /checkpoint\(correlationId, 'step_isolation', 'disposed', 'page=closed'\)/)
   assert.match(transport, /finally \{[\s\S]*await page\?\.close\(\)/)
+})
+
+
+test('only onboarding calibration may reuse a conversation; normal progression steps start fresh', () => {
+  assert.match(reasoningSession, /if \(request\.operation !== 'calibrate_player_initialization'\) return base/)
+  assert.match(reasoningSession, /const base: ConsumerConversationHint = \{ temporaryChat: true \}/)
 })
 
 
