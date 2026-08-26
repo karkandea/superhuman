@@ -13,9 +13,13 @@ EnvironmentFile=/etc/superhuman-ai/consumer-worker.env
 Environment=SUPERHUMAN_QA_WORKER_ID=superhuman-vps-qa
 Environment=SUPERHUMAN_QA_POLL_MS=2500
 Environment=SUPERHUMAN_QA_LEASE_SECONDS=1800
-Environment=SUPERHUMAN_QA_INTER_ITERATION_PAUSE_MS=30000
+Environment=SUPERHUMAN_QA_INTER_ITERATION_PAUSE_MS=1000
 Environment=SUPERHUMAN_QA_RATE_LIMIT_COOLDOWN_SECONDS=900
 Environment=SUPERHUMAN_QA_MAX_RATE_LIMIT_RETRIES=2
+Environment=SUPERHUMAN_CHATGPT_TRAFFIC_KIND=qa
+Environment=SUPERHUMAN_QA_BASE_INTERVAL_SECONDS=60
+Environment=SUPERHUMAN_CHATGPT_TRAFFIC_LEASE_SECONDS=600
+Environment=SUPERHUMAN_CHATGPT_TRAFFIC_MAX_WAIT_MS=600000
 Environment=CHATGPT_BROWSER_PROFILE_DIR=/var/lib/superhuman-ai/chatgpt-qa-profile
 Environment=CHATGPT_CDP_PORT=9223
 Environment=CHATGPT_CDP_URL=http://127.0.0.1:9223
@@ -24,7 +28,7 @@ Environment=DISPLAY=:99
 ExecStart=/bin/bash /opt/superhuman/ops/worker-qa/start.sh
 Restart=always
 RestartSec=5
-TimeoutStopSec=20
+TimeoutStopSec=210
 KillMode=control-group
 NoNewPrivileges=true
 PrivateTmp=true
