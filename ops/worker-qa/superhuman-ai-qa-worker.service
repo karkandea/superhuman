@@ -1,7 +1,7 @@
 [Unit]
 Description=Superhuman autonomous Worker QA harness
-After=network-online.target superhuman-chatgpt-browser.service
-Requires=superhuman-chatgpt-browser.service
+After=network-online.target superhuman-chatgpt-qa-browser.service
+Requires=superhuman-chatgpt-qa-browser.service
 Wants=network-online.target
 
 [Service]
@@ -24,7 +24,7 @@ Environment=CHATGPT_BROWSER_PROFILE_DIR=/var/lib/superhuman-ai/chatgpt-qa-profil
 Environment=CHATGPT_CDP_PORT=9223
 Environment=CHATGPT_CDP_URL=http://127.0.0.1:9223
 Environment=CHATGPT_HEADLESS=false
-Environment=DISPLAY=:99
+Environment=DISPLAY=:100
 ExecStart=/bin/bash /opt/superhuman/ops/worker-qa/start.sh
 Restart=always
 RestartPreventExitStatus=78
