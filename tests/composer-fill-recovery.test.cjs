@@ -9,9 +9,16 @@ function source(relativePath) {
 
 test('composer readiness requires an editable ChatGPT input', () => {
   const transport = source('workers/chatgpt-consumer/browser-transport.mjs')
+  const start = transport.indexOf('async function waitForComposer')
+  const end = transport.indexOf('async function composerTextCandidates', start)
+  const readiness = transport.slice(start, end)
 
-  assert.match(transport, /composer && await composer\.isEditable\(\)\.catch\(\(\) => false\)/)
-  assert.match(transport, /composer_not_found/)
+  assert.ok(start >= 0 && end > start)
+  assert.match(readiness, /const composer = await firstVisible\(page, selectors\)/)
+  assert.match(readiness, /if \(composer\)/)
+  assert.match(readiness, /await composer\.isEditable\(\)\.catch\(\(\) => false\)/)
+  assert.match(readiness, /composer_not_editable/)
+  assert.match(readiness, /page_not_ready/)
 })
 
 test('a Playwright fill timeout is verified before being treated as failure', () => {
@@ -25,9 +32,10 @@ test('a Playwright fill timeout is verified before being treated as failure', ()
   assert.match(fill, /fillError = error/)
   assert.match(fill, /const candidates = await composerTextCandidates\(composer\)/)
   assert.match(fill, /if \(composerTextMatches\(prompt, candidates\)\) return/)
-  assert.ok(fill.indexOf('composerTextMatches(prompt, candidates)') < fill.indexOf('if (fillError)'))
-  assert.match(fill, /composer_fill_timeout/)
-  assert.match(fill, /composer_fill_unverified/)
+  assert.ok(fill.indexOf('composerTextMatches(prompt, candidates)') < fill.indexOf("const reason = fillError ? 'fill_timeout' : 'content_mismatch'"))
+  assert.match(fill, /composer_fill_failed/)
+  assert.match(fill, /fill_timeout/)
+  assert.match(fill, /content_mismatch/)
 })
 
 test('prompt submission still happens only after verified composer fill', () => {
