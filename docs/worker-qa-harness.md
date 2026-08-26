@@ -6,11 +6,13 @@ Worker Lab QA runs the real ChatGPT consumer browser stack without using a Super
 
 The harness is operated through service-role-only Supabase RPCs.
 
-Create a run:
+Create a live canary run:
 
 ```sql
-select public.request_worker_qa_run('progression_target_normal', 20) as qa_run_id;
+select public.request_worker_qa_run('progression_target_normal', 1) as qa_run_id;
 ```
+
+Live runs are intentionally capped at **1-2 repetitions**. Worker Lab is an integration canary, not a load-test target for the shared ChatGPT account.
 
 Supported scenarios:
 
@@ -46,7 +48,22 @@ The QA worker runs as `superhuman-ai-qa-worker.service` and uses:
 
 The QA profile is bootstrapped once from the authenticated production Chrome profile while the production browser is briefly stopped, then operates independently.
 
-The QA claim RPC also yields while runnable production AI jobs exist so Worker Lab does not compete for machine/provider capacity when production work is waiting.
+Browser-profile isolation does **not** imply provider-quota isolation. Production and QA are treated as consumers of one shared ChatGPT account resource.
+
+## Shared traffic controller
+
+All real consumer calls, including output-repair calls, pass through one Supabase-backed traffic controller.
+
+The controller enforces:
+
+- one in-flight ChatGPT request across production + QA
+- production priority before any new QA request
+- global circuit breaker after provider rate-limit signals
+- a longer QA-specific cooldown after provider rate limits
+- adaptive QA pacing using `qa_next_allowed_at`
+- shared `last_success_at`, `last_rate_limit_at`, `cooldown_until`, and `rate_limit_streak`
+
+A QA claim also yields before starting an iteration while production work, provider cooldown, QA cooldown, pacing, or another active traffic lease exists.
 
 ## Evidence
 
@@ -82,12 +99,13 @@ Each step additionally stores:
 
 ## QA loop
 
-Recommended reliability loop:
+Recommended loop:
 
-1. Trigger the same scenario/fixture for 10-20 repetitions.
-2. Wait until the run is terminal.
-3. Compare technical success rate, failure distribution, recovery usage, p95 latency and output quality.
-4. After a worker patch, rerun the exact scenario and fixture version.
-5. Use production-account E2E only after Worker Lab is green.
+1. Run ordinary mock/fixture regression coverage for state-machine and contract changes.
+2. Trigger **one live canary** for the affected real browser/provider path.
+3. If the canary is clean, optionally run one second live canary after the shared pacing window.
+4. If provider rate-limit protection appears, stop live QA; let the shared circuit breaker cool the account instead of retrying aggressively.
+5. After a worker patch, repeat the same mock/fixture coverage and 1-2 live canaries.
+6. Use production-account product E2E only after Worker Lab is green.
 
-A green Worker Lab result is evidence about browser/consumer-worker reliability. It does not replace final product E2E validation.
+A green Worker Lab canary is evidence that the real browser/provider integration still works. Reliability confidence for state-machine behavior comes primarily from deterministic mock/fixture regression coverage, not high-frequency live ChatGPT repetition.
