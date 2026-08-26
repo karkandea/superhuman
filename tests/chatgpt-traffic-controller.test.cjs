@@ -10,8 +10,10 @@ function source(relativePath) {
 
 const migration = source('supabase/sql/add_chatgpt_traffic_controller.sql')
 const claimGuard = source('supabase/sql/guard_worker_qa_claim_with_traffic_state.sql')
+const deferred = source('supabase/sql/add_worker_qa_traffic_deferred_retry.sql')
 const controller = source('lib/ai/chatgpt-traffic-controller.ts')
 const provider = source('lib/ai/chatgpt-consumer-provider.ts')
+const qaWorker = source('workers/chatgpt-consumer/qa-worker.mjs')
 const qaUnit = source('ops/worker-qa/superhuman-ai-qa-worker.service')
 
 test('production and QA share one service-role-only ChatGPT traffic state', () => {
@@ -76,10 +78,22 @@ test('live Worker Lab is capped to canary size instead of load testing ChatGPT',
   assert.match(migration, /mock\/replay coverage for larger batches/)
 })
 
+test('production-priority deferral requeues QA without counting a reliability failure', () => {
+  assert.match(controller, /reason === 'production_priority'/)
+  assert.match(controller, /'traffic_deferred'/)
+  assert.match(deferred, /schedule_worker_qa_traffic_deferred/)
+  assert.match(deferred, /status='queued'/)
+  assert.match(deferred, /traffic_defer_count=traffic_defer_count\+1/)
+  assert.match(deferred, /error_code='traffic_deferred'/)
+  assert.match(qaWorker, /code === 'traffic_deferred'/)
+  assert.match(qaWorker, /scheduleTrafficDeferred/)
+})
+
 test('QA runtime identifies itself to the shared controller and shuts down gracefully', () => {
   assert.match(qaUnit, /SUPERHUMAN_CHATGPT_TRAFFIC_KIND=qa/)
   assert.match(qaUnit, /SUPERHUMAN_QA_BASE_INTERVAL_SECONDS=60/)
   assert.match(qaUnit, /SUPERHUMAN_QA_INTER_ITERATION_PAUSE_MS=1000/)
   assert.match(qaUnit, /TimeoutStopSec=210/)
+  assert.match(qaWorker, /sleepInterruptible/)
   assert.doesNotMatch(qaUnit, /SUPERHUMAN_CHATGPT_TRAFFIC_KIND=production/)
 })
