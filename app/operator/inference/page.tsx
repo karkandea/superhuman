@@ -255,7 +255,7 @@ export default function ManualInferenceOperatorPage() {
 }
 
 const labelStyle = { display: 'block', color: S.muted, fontSize: 8, fontWeight: 800, letterSpacing: '.08em' } as const
-const textareaStyle = { width: '100%', boxSizing: 'border-box', resize: 'vertical' as const, border: `1px solid ${S.line}`, background: '#0f1319', color: S.ink, borderRadius: 9, padding: 11, outline: 'none', fontFamily: '"IBM Plex Mono", monospace', fontSize: 9.5, lineHeight: 1.55 }
+const textareaStyle = { width: '100%', boxSizing: 'border-box', resize: 'vertical' as const, border: `1px solid ${S.line}`, background: '#0f1319', color: S.ink, borderRadius: 9, padding: 11, outline: 'none', fontFamily: '"IBM Plex Mono", monospace', fontSize: 9.5, lineHeight: 1.55 } as const
 
 function buttonStyle(subtle: boolean) {
   return {
