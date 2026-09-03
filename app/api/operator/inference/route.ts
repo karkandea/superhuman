@@ -36,7 +36,7 @@ export async function GET(request: Request) {
     const client = serverClient()
     const { data: turns, error } = await client
       .from('manual_inference_turns')
-      .select('id,job_id,user_id,target_date,operation,schema_version,request_id,prompt,requires_web_search,status,model_id,validation_error,created_at,submitted_at,updated_at')
+      .select('id,job_id,user_id,target_date,operation,schema_version,request_id,prompt,attachments,requires_web_search,status,model_id,validation_error,created_at,submitted_at,updated_at')
       .in('status', ['pending', 'invalid'])
       .order('created_at', { ascending: true })
       .limit(50)
@@ -64,6 +64,7 @@ export async function GET(request: Request) {
         schemaVersion: turn.schema_version,
         requestId: turn.request_id,
         prompt: turn.prompt,
+        attachments: Array.isArray(turn.attachments) ? turn.attachments : [],
         requiresWebSearch: Boolean(turn.requires_web_search),
         status: turn.status,
         modelId: turn.model_id,
