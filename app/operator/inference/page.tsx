@@ -47,27 +47,10 @@ export default function ManualInferenceOperatorPage() {
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    const saved = window.sessionStorage.getItem('superhuman.operator.token') || ''
-    if (saved) setToken(saved)
-  }, [])
-
-  useEffect(() => {
-    if (token) window.sessionStorage.setItem('superhuman.operator.token', token)
-  }, [token])
-
   const selected = useMemo(
     () => turns.find(turn => turn.id === selectedId) ?? turns[0] ?? null,
     [selectedId, turns],
   )
-
-  useEffect(() => {
-    if (!selectedId && turns[0]) setSelectedId(turns[0].id)
-    if (selectedId && !turns.some(turn => turn.id === selectedId)) {
-      setSelectedId(turns[0]?.id ?? null)
-      setResponse('')
-    }
-  }, [selectedId, turns])
 
   const loadTurns = useCallback(async (quiet = false) => {
     if (!token.trim()) return
@@ -90,7 +73,6 @@ export default function ManualInferenceOperatorPage() {
 
   useEffect(() => {
     if (!token.trim()) return
-    void loadTurns()
     const timer = window.setInterval(() => { void loadTurns(true) }, 3000)
     return () => window.clearInterval(timer)
   }, [loadTurns, token])
