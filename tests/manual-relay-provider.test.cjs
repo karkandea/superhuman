@@ -2,6 +2,7 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
+const { execFileSync } = require('node:child_process')
 
 const root = path.join(__dirname, '..')
 const read = relative => fs.readFileSync(path.join(root, relative), 'utf8')
@@ -21,6 +22,12 @@ test('manual relay keeps the structured provider protocol and never launches bro
   assert.match(worker, /pause_ai_inference_job_for_operator/)
   assert.doesNotMatch(worker, /PlaywrightChatGptTransport/)
   assert.doesNotMatch(worker, /browser-transport/)
+})
+
+test('manual worker entrypoint is valid JavaScript syntax', () => {
+  execFileSync(process.execPath, ['--check', path.join(root, 'workers/chatgpt-consumer/manual-worker.mjs')], {
+    stdio: 'pipe',
+  })
 })
 
 test('manual relay migration has a durable operator wait-resume lifecycle', () => {
