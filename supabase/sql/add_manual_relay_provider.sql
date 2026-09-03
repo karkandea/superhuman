@@ -22,6 +22,7 @@ create table if not exists public.manual_inference_turns (
   request_hash text not null,
   request_id text not null,
   prompt text not null,
+  attachments jsonb not null default '[]'::jsonb check (jsonb_typeof(attachments) = 'array'),
   requires_web_search boolean not null default false,
   status text not null default 'pending' check (status in ('pending','submitted','consumed','invalid','cancelled')),
   raw_response text,
@@ -34,6 +35,10 @@ create table if not exists public.manual_inference_turns (
   updated_at timestamptz not null default now(),
   unique(job_id, request_hash)
 );
+
+-- Idempotent for environments where an earlier draft of this migration was applied.
+alter table public.manual_inference_turns
+  add column if not exists attachments jsonb not null default '[]'::jsonb;
 
 create index if not exists manual_inference_turns_status_idx
   on public.manual_inference_turns(status, created_at asc);
