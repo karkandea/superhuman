@@ -2,6 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
+type OperatorAttachment = {
+  id: string
+  kind: string
+  fileName: string
+  mimeType: string
+  sourceUrl: string
+  label?: string | null
+}
+
 type OperatorTurn = {
   id: string
   jobId: string
@@ -12,6 +21,7 @@ type OperatorTurn = {
   schemaVersion: string
   requestId: string
   prompt: string
+  attachments: OperatorAttachment[]
   requiresWebSearch: boolean
   status: 'pending' | 'invalid'
   modelId?: string | null
@@ -201,6 +211,26 @@ export default function ManualInferenceOperatorPage() {
                     <button type="button" onClick={() => { void copyPrompt() }} style={buttonStyle(true)}>{copied ? 'COPIED' : 'COPY PROMPT'}</button>
                   </div>
                   <textarea readOnly value={selected.prompt} style={{ ...textareaStyle, minHeight: 300, color: '#cbd3df' }} />
+
+                  {selected.attachments.length > 0 && (
+                    <div style={{ marginTop: 12, border: '1px solid #485468', background: '#111722', borderRadius: 9, padding: 11 }}>
+                      <div style={{ color: S.gold, fontSize: 8, fontWeight: 800, letterSpacing: '.08em' }}>ATTACHMENTS — ADD THESE TO CHATGPT MANUALLY</div>
+                      <div style={{ color: S.muted, fontSize: 8, lineHeight: 1.5, marginTop: 5 }}>Attachment links can be short-lived. Open/download them before sending the prompt.</div>
+                      <div style={{ display: 'grid', gap: 7, marginTop: 9 }}>
+                        {selected.attachments.map(attachment => (
+                          <a
+                            key={attachment.id}
+                            href={attachment.sourceUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            style={{ display: 'block', border: `1px solid ${S.line}`, borderRadius: 8, padding: '8px 9px', color: S.gold, textDecoration: 'none', fontSize: 9 }}
+                          >
+                            {attachment.fileName} · {attachment.mimeType}
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 210px', gap: 10 }}>
                     <div>
