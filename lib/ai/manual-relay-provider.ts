@@ -53,13 +53,14 @@ function requestHash(request: StructuredModelRequest) {
     instructions: request.instructions,
     context: request.context,
     responseContract: request.responseContract,
+    // Signed attachment URLs are intentionally excluded: they are transport details that can
+    // refresh between resumes. Stable attachment identity keeps the same operator turn replayable.
     attachments: (request.attachments ?? []).map(attachment => ({
       id: attachment.id,
       kind: attachment.kind,
       fileName: attachment.fileName,
       mimeType: attachment.mimeType,
       label: attachment.label ?? null,
-      sourceUrl: attachment.sourceUrl,
     })),
   }
   return createHash('sha256').update(JSON.stringify(stableValue(durableRequest))).digest('hex')
@@ -93,6 +94,14 @@ export class ManualRelayProvider implements AiProvider {
   private async createTurn(request: StructuredModelRequest, hash: string): Promise<ManualInferenceTurnRow> {
     const requestId = `${this.options.jobId}:${hash.slice(0, 20)}`
     const prompt = buildConsumerChatPrompt(request, requestId)
+    const attachments = (request.attachments ?? []).map(attachment => ({
+      id: attachment.id,
+      kind: attachment.kind,
+      fileName: attachment.fileName,
+      mimeType: attachment.mimeType,
+      sourceUrl: attachment.sourceUrl,
+      label: attachment.label ?? null,
+    }))
     const { data, error } = await this.client
       .from('manual_inference_turns')
       .insert({
@@ -104,6 +113,7 @@ export class ManualRelayProvider implements AiProvider {
         request_hash: hash,
         request_id: requestId,
         prompt,
+        attachments,
         requires_web_search: request.operation === 'research_progression_context',
         status: 'pending',
       })
@@ -127,32 +137,13 @@ export class ManualRelayProvider implements AiProvider {
       throw new ManualInferencePendingError(turn.id, request.operation, 'Submitted response is empty')
     }
 
+    let payload: unknown
     try {
-      const envelope = parseConsumerChatEnvelope(turn.raw_response, {
+      payload = parseConsumerChatEnvelope(turn.raw_response, {
         requestId: turn.request_id,
         operation: request.operation,
         schemaVersion: request.schemaVersion,
-      })
-
-      const { error } = await this.client
-        .from('manual_inference_turns')
-        .update({
-          status: 'consumed',
-          parsed_response: envelope.payload,
-          validation_error: null,
-          consumed_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', turn.id)
-      if (error) throw new Error(`consume manual inference turn: ${error.message}`)
-
-      return {
-        output: envelope.payload,
-        providerId: this.id,
-        modelId: turn.model_id?.trim() || 'chatgpt-manual',
-        requestId: turn.request_id,
-        conversationRef: `manual-relay:${turn.id}`,
-      }
+      }).payload
     } catch (error) {
       const validationError = boundedError(error)
       const { error: updateError } = await this.client
@@ -166,6 +157,26 @@ export class ManualRelayProvider implements AiProvider {
         .eq('id', turn.id)
       if (updateError) throw new Error(`mark manual inference turn invalid: ${updateError.message}`)
       throw new ManualInferencePendingError(turn.id, request.operation, validationError)
+    }
+
+    const { error } = await this.client
+      .from('manual_inference_turns')
+      .update({
+        status: 'consumed',
+        parsed_response: payload,
+        validation_error: null,
+        consumed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', turn.id)
+    if (error) throw new Error(`consume manual inference turn: ${error.message}`)
+
+    return {
+      output: payload,
+      providerId: this.id,
+      modelId: turn.model_id?.trim() || 'chatgpt-manual',
+      requestId: turn.request_id,
+      conversationRef: `manual-relay:${turn.id}`,
     }
   }
 
