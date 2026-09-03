@@ -58,9 +58,19 @@ cp -a "$REPO_DIR/.next/static" "$TMP_RELEASE/.next/"
 if [[ -d "$REPO_DIR/public" ]]; then
   cp -a "$REPO_DIR/public" "$TMP_RELEASE/public"
 fi
-printf 'SUPERHUMAN_RELEASE_SHA=%s\n' "$SHA" > "$TMP_RELEASE/.runtime.env"
+
+# Server-only operator credentials are copied into the release runtime env, never into
+# NEXT_PUBLIC_* build variables. When absent, the public player app still deploys normally,
+# but /operator/inference remains unavailable until the server env is configured.
+umask 077
+{
+  printf 'SUPERHUMAN_RELEASE_SHA=%s\n' "$SHA"
+  printf 'SUPABASE_URL=%s\n' "${SUPABASE_URL:-$NEXT_PUBLIC_SUPABASE_URL}"
+  printf 'SUPABASE_SECRET_KEY=%s\n' "${SUPABASE_SECRET_KEY:-${SUPABASE_SERVICE_ROLE_KEY:-}}"
+  printf 'SUPERHUMAN_OPERATOR_TOKEN=%s\n' "${SUPERHUMAN_OPERATOR_TOKEN:-}"
+} > "$TMP_RELEASE/.runtime.env"
 chown -R "$SERVICE_USER:$SERVICE_USER" "$TMP_RELEASE"
-chmod 0644 "$TMP_RELEASE/.runtime.env"
+chmod 0600 "$TMP_RELEASE/.runtime.env"
 
 rm -rf "$RELEASE_DIR"
 mv "$TMP_RELEASE" "$RELEASE_DIR"
