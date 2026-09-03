@@ -30,6 +30,7 @@
     "lib/ai/progression-intelligence.ts",
     "lib/ai/daily-quest-intelligence.ts",
     "lib/ai/chatgpt-consumer-provider.ts",
+    "lib/ai/manual-relay-provider.ts",
     "lib/ai/inference-job-service.ts",
     "lib/context-retrieval.ts",
     "lib/supabase/progression-store.ts",
