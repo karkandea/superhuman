@@ -48,7 +48,7 @@ export default function ManualInferenceOperatorPage() {
   const [error, setError] = useState<string | null>(null)
 
   const selected = useMemo(
-    () => turns.find(turn => turn.id === selectedId) ?? turns[0] ?? null,
+    () => turns.find(turn => turn.id === selectedId) ?? null,
     [selectedId, turns],
   )
 
@@ -63,7 +63,9 @@ export default function ManualInferenceOperatorPage() {
       })
       const body = await result.json() as { turns?: OperatorTurn[]; error?: string }
       if (!result.ok) throw new Error(body.error || `Operator queue request failed (${result.status})`)
-      setTurns(body.turns ?? [])
+      const nextTurns = body.turns ?? []
+      setTurns(nextTurns)
+      setSelectedId(current => current && nextTurns.some(turn => turn.id === current) ? current : null)
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Operator queue failed to load')
     } finally {
@@ -100,6 +102,7 @@ export default function ManualInferenceOperatorPage() {
       const body = await result.json() as { error?: string }
       if (!result.ok) throw new Error(body.error || `Submit failed (${result.status})`)
       setResponse('')
+      setSelectedId(null)
       await loadTurns(true)
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : 'Response could not be submitted')
@@ -168,13 +171,14 @@ export default function ManualInferenceOperatorPage() {
 
           <section style={{ border: `1px solid ${S.line}`, background: S.panel, borderRadius: 12, overflow: 'hidden' }}>
             {!selected ? (
-              <div style={{ padding: 22, color: S.muted, fontSize: 10 }}>Select a pending inference turn.</div>
+              <div style={{ padding: 22, color: S.muted, fontSize: 10 }}>Select a pending inference turn explicitly before copying or submitting anything.</div>
             ) : (
               <>
                 <div style={{ padding: 14, borderBottom: `1px solid ${S.line}`, display: 'flex', gap: 12, justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' }}>
                   <div>
                     <div style={{ color: S.gold, fontSize: 11, fontWeight: 800 }}>{selected.playerName} · {selected.operation}</div>
-                    <div style={{ color: S.muted2, fontSize: 8, marginTop: 4 }}>{selected.requestId}</div>
+                    <div style={{ color: S.muted2, fontSize: 8, marginTop: 4 }}>{selected.targetDate} · turn {selected.id}</div>
+                    <div style={{ color: S.muted2, fontSize: 8, marginTop: 3 }}>{selected.requestId}</div>
                   </div>
                   {selected.requiresWebSearch && (
                     <div style={{ border: '1px solid #6c5730', background: '#211b10', color: S.gold, borderRadius: 99, padding: '6px 9px', fontSize: 8, fontWeight: 800 }}>WEB SEARCH REQUIRED</div>
