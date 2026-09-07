@@ -55,4 +55,8 @@ test('operator UI requires an operator token and resumes only after a pasted res
   assert.match(page, /PASTE CHATGPT RESPONSE/)
   assert.match(page, /SUBMIT & CONTINUE/)
   assert.match(page, /WEB SEARCH REQUIRED/)
+  assert.match(page, /selected\.targetDate/)
+  assert.match(page, /turn \{selected\.id\}/)
+  assert.match(page, /turns\.find\(turn => turn\.id === selectedId\) \?\? null/)
+  assert.doesNotMatch(page, /turns\[0\] \?\? null/)
 })
