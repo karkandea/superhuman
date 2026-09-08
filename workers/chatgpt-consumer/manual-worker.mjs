@@ -678,6 +678,16 @@ async function processJob(client, job) {
     }
 
     const error = classifyError(rawError)
+
+    if (error.code === 'model_output_invalid') {
+      const turnId = await provider.reopenLastConsumedTurn(error.message)
+      if (turnId) {
+        await pauseForOperator(client, job, turnId)
+        console.log(`[job ${job.id}] waiting for corrected operator response on manual inference turn ${turnId}: ${error.message}`)
+        return
+      }
+    }
+
     const refs = provider.consumeConversationRefs()
 
     if (activeStep) {
