@@ -202,7 +202,7 @@ async function runExternalResearch(
       'The supplied worldContext is deliberately de-personalized. Treat it only as problem framing, not as permission to discover personal facts.',
       'Prefer recent primary or authoritative sources when the topic is time-sensitive. Use multiple independent sources when trade-offs or market claims are involved.',
       'Return only evidence that can materially change a progression decision. Preserve uncertainty and disagreements between sources.',
-      'Every material claim in findings must be supportable by the returned source list. Never invent URLs or citations.',
+      'Every material claim in findings must be supportable by the returned source list. Return 1–8 distinct sources total. Every source URL must be a plain direct http(s) URL, never Markdown link syntax. Never invent URLs or citations.',
     ].join(' '),
     context: {
       date: input.date,
@@ -216,7 +216,7 @@ async function runExternalResearch(
       findings: 'compact synthesis focused on decision-relevant evidence and trade-offs',
       sources: [{
         title: 'source title',
-        url: 'direct http(s) source URL actually used',
+        url: 'plain direct http(s) source URL actually used; never Markdown link syntax',
         publishedAt: 'optional date/version string when available',
         keyPoint: 'the exact decision-relevant point supported by this source',
       }],
