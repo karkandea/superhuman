@@ -16,6 +16,7 @@ test('manual relay keeps the structured provider protocol and never launches bro
   assert.match(provider, /parseConsumerChatEnvelope/)
   assert.match(provider, /manual_inference_turns/)
   assert.match(provider, /requestHash/)
+  assert.match(provider, /key !== 'generatedAt'/)
   assert.match(provider, /ManualInferencePendingError/)
 
   assert.match(worker, /ManualRelayProvider/)
