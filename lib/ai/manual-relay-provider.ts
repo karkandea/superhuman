@@ -47,11 +47,19 @@ function stableValue(value: unknown): unknown {
 }
 
 function requestHash(request: StructuredModelRequest) {
+  const durableContext =
+    request.context && typeof request.context === 'object' && !Array.isArray(request.context)
+      ? Object.fromEntries(
+          Object.entries(request.context as Record<string, unknown>)
+            .filter(([key]) => key !== 'generatedAt'),
+        )
+      : request.context
+
   const durableRequest = {
     operation: request.operation,
     schemaVersion: request.schemaVersion,
     instructions: request.instructions,
-    context: request.context,
+    context: durableContext,
     responseContract: request.responseContract,
     // Signed attachment URLs are intentionally excluded: they are transport details that can
     // refresh between resumes. Stable attachment identity keeps the same operator turn replayable.
