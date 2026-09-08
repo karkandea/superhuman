@@ -6,7 +6,7 @@ const path = require('node:path')
 
 const { FakeAiProvider } = require('../.domain-test-dist/lib/ai/fake-ai-provider.js')
 const { generateDailyQuestsWithIntelligence } = require('../.domain-test-dist/lib/ai/daily-quest-intelligence.js')
-const { deterministicQuestXp } = require('../.domain-test-dist/lib/quest-intelligence-policy.js')
+const { deterministicQuestXp, validateQuestIntelligenceDecision } = require('../.domain-test-dist/lib/quest-intelligence-policy.js')
 
 const SIGNALS = [
   { id: 's-goal', userId: 'p1', type: 'goal', summary: 'Improve finances', importance: 5, confidence: 0.9, observedAt: '2026-08-23T00:00:00Z' },
@@ -135,6 +135,43 @@ test('failed repair stops after two total model calls and exposes validator code
   assert.equal(telemetry[1].type, 'complete')
   assert.equal(telemetry[1].status, 'failed')
   assert.equal(telemetry[1].validatorCode, 'candidate_pool_invalid')
+})
+
+test('selected progress quest must stay inside the active Progression Target', () => {
+  const alternateMap = {
+    ...MAP,
+    goals: [
+      ...MAP.goals,
+      { nodeId: 'g2', summary: 'Alternate goal', priority: 3, confidence: 0.8, sourceSignalIds: ['s-goal'] },
+    ],
+    proximalOutcomes: [
+      ...MAP.proximalOutcomes,
+      { nodeId: 'o2', goalId: 'g2', summary: 'Alternate outcome', importance: 3, confidence: 0.8, sourceSignalIds: ['s-goal'] },
+    ],
+    bottlenecks: [
+      ...MAP.bottlenecks,
+      { nodeId: 'b2', outcomeIds: ['o2'], summary: 'Alternate blocker', importance: 3, confidence: 0.8, sourceSignalIds: ['s-blocker'] },
+    ],
+  }
+  const candidates = Array.from({ length: 4 }, (_, i) => candidate(i + 1))
+  candidates[0] = {
+    ...candidates[0],
+    strategicChain: {
+      goalId: 'g2',
+      proximalOutcomeId: 'o2',
+      driverType: 'bottleneck',
+      driverId: 'b2',
+      causalReason: 'Valid map chain but outside the active target.',
+    },
+  }
+
+  assert.throws(
+    () => validateQuestIntelligenceDecision({
+      candidates,
+      selections: [{ candidateId: 'c1', kind: 'main', selectionReason: 'Wrong target.' }],
+    }, new Set(['s-goal', 's-blocker']), { progressionMap: alternateMap, progressionTarget: TARGET }),
+    /Progression Target primary goal/,
+  )
 })
 
 test('quest v4 contract keeps semantic decisions in model and mechanics in code', async () => {
