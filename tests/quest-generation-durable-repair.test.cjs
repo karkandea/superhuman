@@ -103,6 +103,7 @@ test('quest output validator gets exactly one targeted repair before persistence
   assert.equal(setup.persisted()[0].priority, 5)
   assert.equal(setup.persisted()[0].xp, deterministicQuestXp('medium', 'main'))
   assert.equal(provider.calls[1].request.context.questRepair.validatorCode, 'candidate_pool_invalid')
+  assert.equal(provider.calls[1].request.context.progressionTarget.id, TARGET.id)
   assert.deepEqual(telemetry, [
     { type: 'start', validatorCode: 'candidate_pool_invalid' },
     { type: 'complete', status: 'succeeded', validatorCode: 'candidate_pool_invalid', requestId: 'repair-request' },
@@ -182,6 +183,7 @@ test('quest v4 contract keeps semantic decisions in model and mechanics in code'
   const candidateContract = request.responseContract.candidates[0]
   const selectionContract = request.responseContract.selections[0]
   assert.equal(request.schemaVersion, 'daily-quest.v4')
+  assert.equal(request.context.progressionTarget.id, TARGET.id)
   assert.equal('xp' in candidateContract, false)
   assert.equal('rationale' in candidateContract, false)
   assert.equal('scores' in candidateContract, false)
