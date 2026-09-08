@@ -215,7 +215,7 @@ async function runExternalResearch(
       required: ['findings', 'sources'],
       findings: 'compact synthesis focused on decision-relevant evidence and trade-offs',
       sources: [{
-        title: '1–8 distinct external sources total; source title',
+        title: 'source title',
         url: 'direct http(s) source URL actually used',
         publishedAt: 'optional date/version string when available',
         keyPoint: 'the exact decision-relevant point supported by this source',
