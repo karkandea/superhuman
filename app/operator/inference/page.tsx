@@ -39,6 +39,7 @@ const S = {
 export default function ManualInferenceOperatorPage() {
   const [token, setToken] = useState('')
   const [turns, setTurns] = useState<OperatorTurn[]>([])
+  const [search, setSearch] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [response, setResponse] = useState('')
   const [modelId, setModelId] = useState('chatgpt-manual')
@@ -46,6 +47,21 @@ export default function ManualInferenceOperatorPage() {
   const [submitting, setSubmitting] = useState(false)
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const filteredTurns = useMemo(() => {
+    const query = search.trim().toLowerCase()
+    if (!query) return turns
+    return turns.filter(turn => [
+      turn.playerName,
+      turn.targetDate,
+      turn.id,
+      turn.jobId,
+      turn.operation,
+      turn.status,
+      turn.requestId,
+      turn.schemaVersion,
+    ].some(value => value.toLowerCase().includes(query)))
+  }, [search, turns])
 
   const selected = useMemo(
     () => turns.find(turn => turn.id === selectedId) ?? null,
@@ -143,13 +159,29 @@ export default function ManualInferenceOperatorPage() {
           <section style={{ border: `1px solid ${S.line}`, background: S.panel, borderRadius: 12, overflow: 'hidden' }}>
             <div style={{ padding: '11px 12px', borderBottom: `1px solid ${S.line}`, display: 'flex', justifyContent: 'space-between', gap: 8 }}>
               <span style={{ fontSize: 10, fontWeight: 800 }}>PENDING TURNS</span>
-              <span style={{ color: turns.length ? S.gold : S.muted2, fontSize: 10 }}>{turns.length}</span>
+              <span style={{ color: turns.length ? S.gold : S.muted2, fontSize: 10 }}>
+                {search.trim() ? `${filteredTurns.length}/${turns.length}` : turns.length}
+              </span>
+            </div>
+            <div style={{ padding: 10, borderBottom: `1px solid ${S.line}` }}>
+              <input
+                type="search"
+                value={search}
+                onChange={event => setSearch(event.target.value)}
+                placeholder="Search player, date, turn ID, operation…"
+                aria-label="Search pending turns"
+                style={{ width: '100%', boxSizing: 'border-box', border: `1px solid ${S.line}`, background: '#0f1319', color: S.ink, borderRadius: 8, padding: '9px 10px', outline: 'none', fontFamily: 'inherit', fontSize: 9 }}
+              />
             </div>
             {turns.length === 0 ? (
               <div style={{ padding: 18, color: S.muted, fontSize: 10, lineHeight: 1.6 }}>
                 {token.trim() ? 'No inference turn is waiting for manual relay.' : 'Enter the operator token to load the queue.'}
               </div>
-            ) : turns.map(turn => {
+            ) : filteredTurns.length === 0 ? (
+              <div style={{ padding: 18, color: S.muted, fontSize: 10, lineHeight: 1.6 }}>
+                No pending turn matches “{search.trim()}”.
+              </div>
+            ) : filteredTurns.map(turn => {
               const active = selected?.id === turn.id
               return (
                 <button
