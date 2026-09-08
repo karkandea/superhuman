@@ -247,6 +247,7 @@ export function questIntelligencePolicyInstructions() {
     'QUEST POLICY / CONSTITUTION V3:',
     'Choose only what most deserves the player’s attention today; do not mirror every goal.',
     'Candidates must follow Distal Goal -> Proximal Outcome -> current Bottleneck/Opportunity -> candidate action. Maintenance may protect baseline capacity without inventing a bottleneck.',
+    'The Progression Target is binding for selection: when target mode is progress, every selected non-maintenance quest must match target.primaryGoalId when present, use one of target.proximalOutcomeIds when present, and use one of the target bottleneck/opportunity drivers when the target names drivers. The broader candidate pool may explore alternatives, but selections may not reopen the strategic target.',
     'Apply feasibility/receptivity before selecting. A strategically attractive option that cannot realistically be executed today must be feasibleToday=false and cannot be selected.',
     'Every candidate needs an executable contract: concrete action, observable completion condition, appropriate context, and reasonable dose.',
     'Create 8–15 distinct evidence-backed candidates when today’s Progression Target calls for intervention. Four usable candidates is the bounded degraded minimum; never invent filler just to hit a count.',
@@ -342,6 +343,22 @@ export function validateQuestIntelligenceDecision(
 
     const kind = raw.kind
     if (!['main', 'side', 'maintenance', 'bonus'].includes(String(kind))) throw new Error(`Quest selection ${index} has invalid kind`)
+
+    if (validation.progressionTarget.mode === 'progress' && candidate.strategicChain.driverType !== 'maintenance') {
+      const chain = candidate.strategicChain
+      const target = validation.progressionTarget
+      if (target.primaryGoalId && chain.goalId !== target.primaryGoalId) {
+        throw new Error(`Quest selection ${index} strategic chain does not match Progression Target primary goal`)
+      }
+      if (target.proximalOutcomeIds.length > 0 && (!chain.proximalOutcomeId || !target.proximalOutcomeIds.includes(chain.proximalOutcomeId))) {
+        throw new Error(`Quest selection ${index} strategic chain does not match a Progression Target proximal outcome`)
+      }
+      const targetDriverIds = new Set([...target.bottleneckIds, ...target.opportunityIds])
+      if (targetDriverIds.size > 0 && (!chain.driverId || !targetDriverIds.has(chain.driverId))) {
+        throw new Error(`Quest selection ${index} strategic chain does not match a Progression Target driver`)
+      }
+    }
+
     return {
       candidateId,
       kind: kind as QuestKind,
