@@ -296,7 +296,9 @@ export async function generateDailyQuestsWithIntelligence(
     throw new Error('Player Response Model changed before Daily Quest reasoning')
   }
 
-  const providerContext: ProgressionIntelligenceContext = {
+  const providerContext: ProgressionIntelligenceContext & {
+    progressionTarget: NonNullable<typeof intelligence.progressionTarget>
+  } = {
     playerId: input.playerId,
     date: input.date,
     generatedAt: new Date().toISOString(),
@@ -307,6 +309,7 @@ export async function generateDailyQuestsWithIntelligence(
     questResponses,
     progressionMap: progressionMapSnapshot,
     playerResponseModel: playerResponseModelSnapshot,
+    progressionTarget: intelligence.progressionTarget,
   }
 
   const provider = requireProvider(dependencies.provider)
@@ -314,7 +317,7 @@ export async function generateDailyQuestsWithIntelligence(
     operation: 'generate_daily_quests',
     schemaVersion: DAILY_QUEST_INTELLIGENCE_SCHEMA_VERSION,
     instructions: [
-      'The Progression Target has already decided what deserves movement today. Do not reopen or replace that strategic decision.',
+      'The Progression Target has already decided what deserves movement today. Read context.progressionTarget as a binding constraint; do not reopen or replace that strategic decision.',
       'Use Progression Map as the causal source of candidate actions and Player Response Model only for personalized delivery/difficulty calibration.',
       'Use Daily Context as today feasibility/receptivity state, never permanent memory.',
       'Every candidate must cite sourceSignalIds from context.signals and provide a valid strategicChain, feasibility gate, and executionContract.',
