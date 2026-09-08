@@ -73,6 +73,7 @@ function boundedError(error: unknown) {
 
 export class ManualRelayProvider implements AiProvider {
   readonly id = 'manual-relay'
+  private lastConsumedTurnId: string | null = null
 
   constructor(
     private readonly client: SupabaseClient,
@@ -170,6 +171,7 @@ export class ManualRelayProvider implements AiProvider {
       })
       .eq('id', turn.id)
     if (error) throw new Error(`consume manual inference turn: ${error.message}`)
+    this.lastConsumedTurnId = turn.id
 
     return {
       output: payload,
@@ -189,6 +191,7 @@ export class ManualRelayProvider implements AiProvider {
     }
 
     if (turn.status === 'consumed' && turn.parsed_response !== null) {
+      this.lastConsumedTurnId = turn.id
       return {
         output: turn.parsed_response,
         providerId: this.id,
@@ -203,6 +206,28 @@ export class ManualRelayProvider implements AiProvider {
     }
 
     throw new ManualInferencePendingError(turn.id, request.operation, turn.validation_error)
+  }
+
+  async reopenLastConsumedTurn(validationError: unknown): Promise<string | null> {
+    const turnId = this.lastConsumedTurnId
+    if (!turnId) return null
+
+    const { data, error } = await this.client
+      .from('manual_inference_turns')
+      .update({
+        status: 'invalid',
+        parsed_response: null,
+        validation_error: boundedError(validationError),
+        consumed_at: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', turnId)
+      .eq('status', 'consumed')
+      .select('id')
+      .maybeSingle()
+
+    if (error) throw new Error(`reopen manual inference turn: ${error.message}`)
+    return data?.id ? String(data.id) : null
   }
 
   consumeConversationRefs(): string[] {
