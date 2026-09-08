@@ -82,7 +82,7 @@ async function ensureSession(client: SupabaseClient, playerId: string, date: str
 }
 
 async function setState(client: SupabaseClient, sessionId: string, state: string, metadata: Record<string, unknown> = {}) {
-  await rpcRow(client, 'set_progression_session_state_operator', {
+  return rpcRow<SessionRow>(client, 'set_progression_session_state_operator', {
     p_session_id: sessionId,
     p_state: state,
     p_metadata: metadata,
@@ -133,6 +133,17 @@ async function persistResearch(
   result: ProgressionResearchResult,
   response: AiProviderResponse,
 ) {
+  if (response.requestId) {
+    const { data: existing, error: existingError } = await client
+      .from('progression_research')
+      .select('id')
+      .eq('session_id', sessionId)
+      .eq('request_id', response.requestId)
+      .maybeSingle()
+    if (existingError) throw new Error(`load persisted progression research: ${existingError.message}`)
+    if (existing) return
+  }
+
   await rpcRow(client, 'persist_progression_research_operator', {
     p_session_id: sessionId,
     p_topic: plan.topic,
@@ -364,7 +375,7 @@ export async function chooseProgressionTarget(
   const usedQuestions = await questionCount(client, session.id)
 
   for (let pass = 0; pass < 3; pass += 1) {
-    await setState(client, session.id, 'deciding', { pass: pass + 1 })
+    const decidingSession = await setState(client, session.id, 'deciding', { pass: pass + 1 })
     const { response, decision } = await chooseMove(dependencies.provider, {
       playerId: input.playerId,
       date: input.date,
@@ -375,7 +386,7 @@ export async function chooseProgressionTarget(
       progressionMap,
       playerResponseModel,
       research,
-      session,
+      session: decidingSession,
       researchBudgetRemaining: Math.max(0, PROGRESSION_RESEARCH_MAX_PER_SESSION - research.length),
       questionBudgetRemaining: Math.max(0, 3 - usedQuestions),
     })

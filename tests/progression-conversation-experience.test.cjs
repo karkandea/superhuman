@@ -50,6 +50,15 @@ test('progression move is a bounded decision gate instead of an always-quest age
   assert.match(runtime, /Player Brief \+ private signals \+ observed quest results remain the source of truth about the player/)
 })
 
+test('manual relay progression resume keeps decision hashing stable and research persistence replay-safe', () => {
+  const runtime = source('lib/ai/progression-conversation-intelligence-core.ts')
+  assert.match(runtime, /return rpcRow<SessionRow>\(client, 'set_progression_session_state_operator'/)
+  assert.match(runtime, /const decidingSession = await setState\(client, session\.id, 'deciding'/)
+  assert.match(runtime, /session: decidingSession/)
+  assert.match(runtime, /\.eq\('request_id', response\.requestId\)/)
+  assert.match(runtime, /if \(existing\) return/)
+})
+
 test('initial progression requires real external research without leaking player identity into the research payload', () => {
   const runtime = source('lib/ai/progression-conversation-intelligence-core.ts')
   const transport = source('workers/chatgpt-consumer/browser-transport.mjs')
