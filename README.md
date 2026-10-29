@@ -70,6 +70,6 @@ npm run build
 - Supabase RLS and service-role restrictions are critical security boundaries, not optional local conveniences.
 - The provider interface is transport-agnostic in the domain; the configured consumer-browser worker is experimental and should not be mistaken for a supported first-party API.
 - Automated tests cover contracts and recovery paths; real user sign-in, transport operation, and production deployment still require environment-specific checks.
-- Historical operational documents may include internal deployment or personal-context details. **Review and sanitize those documents before treating this repository as a polished public portfolio artifact.**
+- The accompanying public rollout notes have sensitive identity and infrastructure values redacted. Older Git commits may still contain historical versions; treat that history as exposed until a separately approved remediation is completed.
 
 This repository demonstrates **stateful AI orchestration, provenance, failure recovery, and privacy-aware data ownership**, with the above operational limits explicitly acknowledged.
