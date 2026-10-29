@@ -1,13 +1,15 @@
 # Production Rollout Verification — 2026-08-18
 
-Target Supabase project: `superhuman` (`ispfhvdelglwvixaspza`).
+> Public, sanitized engineering record. Personal identifiers and operational connection details are intentionally omitted. Previous Git revisions may still contain earlier values.
+
+Target Supabase project: `superhuman` (`[REDACTED_PROJECT_REF]`).
 
 ## Identity
 
-- Arkan remains canonical player `f26ca205-54f6-43ce-9fa7-417b747faabe`.
-- Auth email: `karkandea@gmail.com`.
+- the primary player remains canonical player `[REDACTED_PLAYER_ID]`.
+- Auth email: `[REDACTED_EMAIL]`.
 - Supabase Auth uses the same UUID as `public.users.id`.
-- Ais (`5d93e7e4-fcb2-479d-bab2-a8c7924c5e8d`) was removed by explicit product decision together with its cascading 1 daily log and 4 time slots. It had no checklist items, weekly goals, or weekly progress.
+- a former test player (`[REDACTED_PLAYER_ID]`) was removed by explicit product decision together with its cascading 1 daily log and 4 time slots. It had no checklist items, weekly goals, or weekly progress.
 
 ## Applied Supabase migrations
 
@@ -25,10 +27,10 @@ Final audit:
 - anon policies across legacy + progression sensitive tables: 0
 - anon table grants across those tables: 0
 - RLS-disabled sensitive tables: 0
-- non-owner claim sees no Arkan profile/checklist/daily-log rows
+- non-owner claim sees no the primary player profile/checklist/daily-log rows
 - unauthenticated legacy table read returns PostgreSQL `42501 permission denied`
 
-Owner-claim legacy regression verified the existing Arkan rows remained readable: 26 checklist items, 13 daily logs, 4 time slots, 4 weekly goals, and 4 weekly-progress rows at verification time.
+Owner-claim regression verified that previously stored records remained accessible; individual activity counts are omitted from this public report.
 
 ## Life Vault / progression verification
 
@@ -58,7 +60,7 @@ Main commits:
 - `458809e95cc7ca9096119935c1b404fd59db3ff6` — replace username picker with magic-link login
 - `58edf22eb70552bda34fa9b2ff913b5da13bb2fa` — support publishable/legacy public Supabase key configuration
 
-Production Vercel deployment `dpl_BZyCa33T3Djy51JvLaqBHv5sQeWG` is READY. Build passed Next.js compile, TypeScript, and static generation. `https://superhuman.dualangka.com` responds 200 and serves the new Auth bootstrap UI (`AUTHENTICATING SYSTEM...`).
+Production Vercel deployment `[REDACTED_DEPLOYMENT_ID]` is READY. Build passed Next.js compile, TypeScript, and static generation. `https://superhuman.dualangka.com` responds 200 and serves the new Auth bootstrap UI (`AUTHENTICATING SYSTEM...`).
 
 ## Remaining verification limitation
 
