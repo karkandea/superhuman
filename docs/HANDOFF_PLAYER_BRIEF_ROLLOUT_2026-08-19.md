@@ -1,5 +1,7 @@
 # Superhuman — Player Brief Rollout Handoff
 
+> Public, sanitized engineering record. Personal identifiers and operational connection details are intentionally omitted. Previous Git revisions may still contain earlier values.
+
 Date: 2026-08-19
 Purpose: canonical handoff for the next engineering room. Read this before making further implementation decisions.
 
@@ -53,7 +55,7 @@ No-op is valid and should not bump Player Brief version.
 
 Player Brief is a persistent, versioned canonical snapshot. Example mental model:
 
-`PLAYER BRIEF — Arkan — v37`
+`PLAYER BRIEF — the primary player — v37`
 
 Contains compact current-state representation such as:
 
@@ -75,56 +77,27 @@ Important implementation rule: Player Brief is built deterministically by backen
 
 Canonical player UUID:
 
-`f26ca205-54f6-43ce-9fa7-417b747faabe`
+`[REDACTED_PLAYER_ID]`
 
 Canonical email:
 
-`karkandea@gmail.com`
+`[REDACTED_EMAIL]`
 
 Correct Supabase project only:
 
 - project: `superhuman`
-- ref: `ispfhvdelglwvixaspza`
+- ref: `[REDACTED_PROJECT_REF]`
 - region: `ap-northeast-2`
-- URL: `https://ispfhvdelglwvixaspza.supabase.co`
+- URL: `https://[REDACTED_PROJECT_REF].supabase.co`
 
 Never touch the unrelated `duajiwa` project.
 
-## Production infrastructure
+## Deployment architecture (public summary)
 
-Web:
-
-`https://superhuman.dualangka.com`
-
-Vercel project:
-
-`prj_yOE5MpruVIdtO15COY3uOlERkZEh`
-
-Vercel team:
-
-`team_6UCG76Tzj4UwIURyL7qCfPPc`
-
-VPS:
-
-- host: `103.175.207.127`
-- Ubuntu 22.04
-- worker user: `superhuman-ai`
-- repo: `/opt/superhuman`
-- browser profile: `/var/lib/superhuman-ai/chatgpt-profile`
-- env: `/etc/superhuman-ai/consumer-worker.env`
-
-Services:
-
-- `superhuman-chatgpt-browser.service`
-- `superhuman-ai-worker.service`
-
-Consumer browser path:
-
-- browser runs headful Chrome through Xvfb
-- CDP: `127.0.0.1:9222`
-- browser session is persisted
-- consumer ChatGPT browser path is unofficial; batching/retry logic must not be used to circumvent provider restrictions.
-
+- A web frontend is deployed separately from a background reasoning worker.
+- The worker uses an isolated service account and browser transport, with service supervision and bounded retry behavior.
+- Host addresses, private file paths, runtime identities, project IDs, and operating instructions are kept in owner-only documentation.
+- The consumer browser path is experimental; throttling protections must not be circumvented.
 ## Existing activity-window orchestration already live before Player Brief work
 
 Implemented and rolled out previously:
@@ -251,7 +224,7 @@ The new delta RPC is also service-role-only.
 
 ## Production DB rollout / QA
 
-Production migrations were applied only to `ispfhvdelglwvixaspza`.
+Production migrations were applied only to `[REDACTED_PROJECT_REF]`.
 
 Observed migration history entries included:
 
@@ -260,10 +233,10 @@ Observed migration history entries included:
 
 The compact Player Brief hardening has also been applied/merged, and production state at latest verification was:
 
-- Player Brief rows for Arkan: 2
+- Player Brief ownership and versioning verified; individual record counts are omitted.
 - current Player Brief version: 2
 - current reason: `compact_brief_hardening`
-- current brief payload size: 12,430 bytes
+- Current brief remained within its configured size bound.
 - nonterminal inference jobs: 0
 - pending knowledge: 0
 
@@ -273,10 +246,7 @@ Existing player data was preserved during rollout.
 
 Earlier observed baseline counts around the rollout:
 
-- knowledge entries: 1
-- derived understanding: 15
-- signals: 15
-- Daily Quests: 4
+- Private player activity counts omitted from this public handoff.
 
 Compact Player Brief keeps the current state bounded while granular details remain in `derived_understanding`.
 
@@ -352,7 +322,7 @@ Production DB is safe during this mixed-version state because the compatibility 
 
 Still required:
 
-- pull latest `main` to `/opt/superhuman`
+- pull latest `main` to `[PRIVATE_APP_PATH]`
 - install worker deps if needed
 - restart `superhuman-ai-worker.service`
 - confirm service active
@@ -420,4 +390,4 @@ Do not run `npm audit fix --force` automatically.
 
 ## One-line state for next room
 
-Player Brief architecture is implemented, merged, migrated, compacted, and DB-safe; production currently has Arkan Player Brief v2 with zero pending queue. Remaining work is latest-worker VPS cutover, one observed real Player Brief delta E2E afterward, and exact npm-generated root `package-lock.json` repair.
+Player Brief architecture is implemented, merged, migrated, compacted, and DB-safe; production currently has the primary player Player Brief v2 with zero pending queue. Remaining work is latest-worker VPS cutover, one observed real Player Brief delta E2E afterward, and exact npm-generated root `package-lock.json` repair.
