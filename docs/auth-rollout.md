@@ -1,24 +1,26 @@
 # Auth + Ownership Rollout
 
+> Public, sanitized engineering record. Personal identifiers and operational connection details are intentionally omitted. Previous Git revisions may still contain earlier values.
+
 ## Production status — 2026-08-18
 
 Target project was explicitly re-confirmed before every production operation:
 
 - Supabase project: `superhuman`
-- project ref: `ispfhvdelglwvixaspza`
+- project ref: `[REDACTED_PROJECT_REF]`
 - region: `ap-northeast-2`
 
 The legacy player set is now intentionally one player:
 
 | Player | Canonical UUID | Auth email | Status |
 | --- | --- | --- | --- |
-| Arkan | `f26ca205-54f6-43ce-9fa7-417b747faabe` | `karkandea@gmail.com` | linked to Supabase Auth |
+| the primary player | `[REDACTED_PLAYER_ID]` | `[REDACTED_EMAIL]` | linked to Supabase Auth |
 
-Ais (`5d93e7e4-fcb2-479d-bab2-a8c7924c5e8d`) was explicitly removed from production by product decision. Preflight showed only 1 `daily_logs` row and 4 `time_slots` rows; all relevant legacy ownership FKs use `ON DELETE CASCADE`, so those rows were removed with the player. No checklist items, weekly goals, or weekly progress belonged to Ais.
+a former test player (`[REDACTED_PLAYER_ID]`) was explicitly removed from production by product decision. Preflight showed only 1 `daily_logs` row and 4 `time_slots` rows; all relevant legacy ownership FKs use `ON DELETE CASCADE`, so those rows were removed with the player. No checklist items, weekly goals, or weekly progress belonged to a former test player.
 
 ## Ownership model
 
-The existing player UUID remains the canonical owner ID. Arkan's Supabase Auth identity uses the exact same UUID as `public.users.id`, so existing checklist/history foreign keys required no ID rewrite or data-copy migration.
+The existing player UUID remains the canonical owner ID. the primary player's Supabase Auth identity uses the exact same UUID as `public.users.id`, so existing checklist/history foreign keys required no ID rewrite or data-copy migration.
 
 Authorization is based on `auth.uid()`, never user-editable metadata or the human-readable username route.
 
@@ -37,10 +39,10 @@ The repository keeps reviewed SQL under `supabase/sql/`; Supabase MCP `apply_mig
 
 The preferred path remains `scripts/create-auth-user.mjs`, which calls the supported `auth.admin.createUser` API with the existing UUID. In this execution environment the Supabase connector did not expose Auth Admin actions and no service-role secret was available to run the script.
 
-Arkan was therefore bootstrapped once, transactionally, directly into the managed Auth user + email identity tables after verifying the current schema. The first attempt referenced a generated `confirmed_at` column and failed with a full transaction rollback; the corrected attempt omitted generated fields and created exactly one confirmed email identity. Post-checks verified:
+the primary player was therefore bootstrapped once, transactionally, directly into the managed Auth user + email identity tables after verifying the current schema. The first attempt referenced a generated `confirmed_at` column and failed with a full transaction rollback; the corrected attempt omitted generated fields and created exactly one confirmed email identity. Post-checks verified:
 
 - `auth.users.id = public.users.id`
-- email = `karkandea@gmail.com`
+- email = `[REDACTED_EMAIL]`
 - email confirmed
 - provider = `email`
 - provider id = canonical player UUID
@@ -58,11 +60,11 @@ After `enforce_auth_ownership`:
 - all 6 legacy tables have RLS enabled
 - anon policies: 0
 - anon table grants on legacy tables: 0
-- owner claim can read Arkan's existing data
-- deleted/non-owner UUID claim sees 0 Arkan profile/checklist/log rows
+- owner claim can read the primary player's existing data
+- deleted/non-owner UUID claim sees 0 the primary player profile/checklist/log rows
 - anon `SELECT public.users` fails with PostgreSQL `42501 permission denied`
 
-Existing Arkan data remained visible under the owner claim: 26 checklist items, 13 daily logs, 4 time slots, 4 weekly goals, and 4 weekly-progress rows at verification time.
+Previously stored owner data remained accessible under the owner claim; personal activity counts are omitted from this public report.
 
 ## Life Vault / progression verification
 
@@ -70,7 +72,7 @@ The secure Player Knowledge and progression migrations were applied only after t
 
 Transactional production QA (fully rolled back) verified:
 
-1. authenticated Arkan can ingest a manual natural-language life update;
+1. authenticated the primary player can ingest a manual natural-language life update;
 2. the owner can read the inserted raw knowledge;
 3. a non-owner claim sees 0 rows;
 4. raw knowledge can produce a derived understanding with mandatory raw-source provenance;

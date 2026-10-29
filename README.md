@@ -1,36 +1,75 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Superhuman — AI Personal Progression System
 
-## Getting Started
+An experimental personal-progression application that turns player-provided context into an auditable daily quest system. It explores how long-lived goals, evidence-backed understanding, and explicit revision rules can work together without reshuffling a user's plan on every refresh.
 
-First, run the development server:
+> **Status:** Research-heavy product engineering project. Some operations depend on a separately configured browser/worker transport. This is not an official OpenAI integration, a general-purpose hosted AI API, or a claim of unattended production reliability.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## Core product loop
+
+```text
+Player knowledge → derived understanding → signals
+       → bounded retrieval → daily quests → outcomes
+                               ↘ materiality review → explicit revision
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+**Stable by default:** a player's daily quest batch is persisted for a given day. New knowledge updates understanding, but changes an existing plan only when a materiality assessment justifies it.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Engineering highlights
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Area | Implementation |
+| --- | --- |
+| Web | Next.js 16 App Router, React 19, TypeScript |
+| Identity | Supabase Auth; ownership aligned to authenticated user IDs |
+| Persistence | Postgres/Supabase tables, RLS policies, SQL migrations |
+| Reasoning boundary | Provider abstraction, bounded context retrieval, strict operation/schema validation |
+| Reliability | Persisted workflow state, correlated requests, retry/recovery and checkpoint logic |
+| Traceability | Knowledge and signal provenance, context snapshots, quest revisions and results |
+| Testing | Deterministic fake-provider tests; live-model checks separated from routine tests |
 
-## Learn More
+## Project map
 
-To learn more about Next.js, take a look at the following resources:
+- [`app`](app) — player routes, authentication screens and operator surfaces.
+- [`lib`](lib) — progression domain, orchestration, retrieval, policies and AI-provider boundary.
+- [`supabase/sql`](supabase/sql) — SQL migrations and persistence policies.
+- [`workers`](workers) and [`ops`](ops) — separate reasoning transport and operational tooling.
+- [`tests`](tests) — domain, contract, recovery and worker-regression tests.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Local setup
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Requirements: a Node.js version supported by Next.js 16, npm, and a dedicated Supabase development project with the required schema/policies. Do not connect development or synthetic tests to live user data.
 
-## Deploy on Vercel
+```bash
+npm ci
+# Configure NEXT_PUBLIC_SUPABASE_URL and a public Supabase publishable/anon key
+# in a private .env.local; never place service-role credentials in NEXT_PUBLIC_*.
+npm run dev
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+The web app requires the appropriate database schema and RLS setup. AI-backed operations additionally need separately provisioned worker/provider infrastructure; `npm run dev` alone does not create a working production reasoning service. Follow the architecture and rollout documentation before operating the full stack.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Safe verification
+
+```bash
+npm run lint
+npm test
+npm run build
+```
+
+`npm test` uses deterministic fake-provider fixtures and a guard against accidental live ChatGPT calls. Live-model smoke checks are exceptional and must be separately authorized, bounded and non-sensitive.
+
+## Design documentation
+
+- [System architecture and data ownership](docs/system-architecture.md)
+- [Quest stability and revision policy](docs/QUEST_POLICY.md)
+- [Progression intelligence](docs/PROGRESSION_INTELLIGENCE.md)
+- [AI testing policy](docs/ai-testing.md)
+- [Worker reliability and system voice](docs/AI_WORKER_RELIABILITY_AND_SYSTEM_VOICE.md)
+
+## Boundaries and review notes
+
+- Supabase RLS and service-role restrictions are critical security boundaries, not optional local conveniences.
+- The provider interface is transport-agnostic in the domain; the configured consumer-browser worker is experimental and should not be mistaken for a supported first-party API.
+- Automated tests cover contracts and recovery paths; real user sign-in, transport operation, and production deployment still require environment-specific checks.
+- The accompanying public rollout notes have sensitive identity and infrastructure values redacted. Older Git commits may still contain historical versions; treat that history as exposed until a separately approved remediation is completed.
+
+This repository demonstrates **stateful AI orchestration, provenance, failure recovery, and privacy-aware data ownership**, with the above operational limits explicitly acknowledged.
